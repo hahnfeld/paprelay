@@ -112,6 +112,44 @@ class SampleSeriesTest {
     }
 
     @Test
+    fun `what is left unread is counted exactly`() {
+        // Sixteen one-bit codes at modulus 1.
+        val zeros = byteArrayOf(0, 0, 0, 0, 0x00, 0x00)
+        val eight = SampleSeries.decode(zeros, modulus = 1, maxSamples = 2 + 8)
+        assertEquals(8, eight.unreadBits)
+        assertTrue(eight.definitelyMore)
+        val seven = SampleSeries.decode(zeros, modulus = 1, maxSamples = 2 + 9)
+        assertEquals(7, seven.unreadBits)
+        assertFalse(seven.definitelyMore)
+        // Stopping inside the seeds leaves the rest of the seeds and all of the codes.
+        assertEquals(16 + 16, SampleSeries.decode(zeros, modulus = 1, maxSamples = 1).unreadBits)
+        assertEquals(16 + 32, SampleSeries.decode(zeros, modulus = 1, maxSamples = 0).unreadBits)
+        // A block stored uncompressed counts its samples the same way.
+        val plain = byteArrayOf(1, 0, 2, 0)
+        assertEquals(16, SampleSeries.decode(plain, modulus = 4, maxSamples = 1).unreadBits)
+        assertEquals(0, SampleSeries.decode(plain, modulus = 4, maxSamples = 2).unreadBits)
+    }
+
+    @Test
+    fun `nothing is reported unread when decoding ran to the end`() {
+        // Padding of ones is left over after the last code; it was reached, not skipped.
+        assertEquals(0, SampleSeries.decode(byteArrayOf(10, 0, 12, 0, 0x06, 0xBF.toByte()), modulus = 4).unreadBits)
+        // One six-bit code (1110 00: d=+6), then two zero bits that begin a code and cannot
+        // finish it. They were looked at and found to be padding.
+        val cutCode = SampleSeries.decode(byteArrayOf(10, 0, 12, 0, 0xE0.toByte()), modulus = 4)
+        assertContentEquals(intArrayOf(10, 12, 20), cutCode.samples)
+        assertEquals(0, cutCode.unreadBits)
+        // Two three-bit codes fill all the block can hold; the two bits after them are padding.
+        val full = SampleSeries.decode(ByteArray(5), modulus = 4)
+        assertEquals(4, full.samples.size)
+        assertEquals(0, full.unreadBits)
+        assertFalse(full.definitelyMore)
+        // Seven bits that cannot hold a nine-bit code are padding; eight cannot be.
+        assertEquals(0, SampleSeries.decode(ByteArray(6), modulus = 256).unreadBits)
+        assertFailsWith<SpoolDecodeException> { SampleSeries.decode(ByteArray(5), modulus = 256) }
+    }
+
+    @Test
     fun `leftover bits mean more samples only when there are eight or more of them`() {
         val samples = intArrayOf(10, 12, 14, 15, 19, 30)
         // Asked for fewer than the block holds: thirteen bits are left, which cannot all be padding.

@@ -40,6 +40,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import com.everysoft.paprelay.R
 
@@ -146,10 +147,20 @@ fun FlowDiagram(
             // The short middle caption is measured first; the two ends then share what is left,
             // so a long name wraps only when the screen really has no room for it.
             val phone = measurables[1].measure(constraints.copy(minWidth = 0, minHeight = 0, maxWidth = width / 3))
-            val side = ((width - phone.width) / 2 - 8.dp.roundToPx()).coerceAtLeast(0)
-            val ends = constraints.copy(minWidth = 0, minHeight = 0, maxWidth = side)
-            val machine = measurables[0].measure(ends)
-            val health = measurables[2].measure(ends)
+            // The phone is not at the centre of the row, so the room on its two sides differs.
+            val phoneCentre = spots.phoneAt + spots.phoneWidth / 2
+            val gap = 8.dp.roundToPx()
+            val leftRoom = (phoneCentre - phone.width / 2f - gap).toInt().coerceAtLeast(0)
+            val rightRoom = (width - phoneCentre - phone.width / 2f - gap).toInt().coerceAtLeast(0)
+            fun end(measurable: androidx.compose.ui.layout.Measurable, room: Int): androidx.compose.ui.layout.Placeable {
+                // A caption that has to wrap is given only the width of its longest word,
+                // so its lines stay under its drawing instead of spreading towards the phone.
+                val wraps = measurable.maxIntrinsicWidth(Constraints.Infinity) > room
+                val allowed = if (wraps) measurable.minIntrinsicWidth(Constraints.Infinity).coerceAtMost(room) else room
+                return measurable.measure(constraints.copy(minWidth = 0, minHeight = 0, maxWidth = allowed))
+            }
+            val machine = end(measurables[0], if (rtl) rightRoom else leftRoom)
+            val health = end(measurables[2], if (rtl) leftRoom else rightRoom)
             fun centred(placeable: androidx.compose.ui.layout.Placeable, centre: Float): Int =
                 (centre - placeable.width / 2f).toInt().coerceIn(0, (width - placeable.width).coerceAtLeast(0))
             layout(width, maxOf(machine.height, phone.height, health.height)) {

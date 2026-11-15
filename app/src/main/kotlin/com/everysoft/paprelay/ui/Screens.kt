@@ -181,6 +181,7 @@ fun HomeScreen(
     running: Boolean,
     hasReport: Boolean,
     busy: Boolean,
+    stopping: Boolean,
     healthAllowed: Boolean,
     permissionRefused: Boolean,
     onOpenSettings: () -> Unit,
@@ -230,7 +231,10 @@ fun HomeScreen(
         // Wraps instead of clipping at large font sizes.
         FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (running) {
-                OutlinedButton(onClick = onStop) { Text(stringResource(R.string.action_stop)) }
+                // Stopping can take a moment: a step that must not be cut short is finished first.
+                OutlinedButton(onClick = onStop, enabled = !stopping) {
+                    Text(stringResource(if (stopping) R.string.action_stopping else R.string.action_stop))
+                }
             } else {
                 // Held back while a pairing is being forgotten, so a check cannot start on it.
                 Button(onClick = onRunFull, enabled = !busy && pairing != PairingState.Loading) { Text(stringResource(R.string.action_run_check)) }

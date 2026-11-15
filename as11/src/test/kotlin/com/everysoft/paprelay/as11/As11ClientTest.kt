@@ -9,6 +9,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
@@ -49,6 +50,14 @@ class As11ClientTest {
         fun sever() {
             pipe.close()
         }
+    }
+
+    /** A link on which what the machine sends takes a while to arrive. */
+    private class SlowAnswers(private val inner: As11Transport) : As11Transport {
+        @Volatile
+        var delayMs = 0L
+        override val incoming: Flow<ByteArray> = inner.incoming.onEach { if (delayMs > 0) kotlinx.coroutines.delay(delayMs) }
+        override suspend fun send(frame: ByteArray) = inner.send(frame)
     }
 
     /** A link on which the machine also sends a plaintext heartbeat at a steady interval. */
@@ -173,6 +182,62 @@ class As11ClientTest {
         // The machine has adopted the pairing, so the app must come away holding it too.
         assertNotNull(machine.pairedClientId)
         assertEquals(machine.pairedClientId, result?.clientId)
+    }
+
+    @Test
+    fun `stopping while the machine's confirmation is on its way back does not lose the pairing`() = runTest {
+        val link = SlowAnswers(machine.connect())
+        val client = clientOn(link)
+        var result: PairingCredentials? = null
+        val pairing = launch {
+            result = client.pair {
+                kotlinx.coroutines.delay(100)
+                link.delayMs = 2_000
+                "0420"
+            }
+        }
+        advanceTimeBy(1_000)
+        // The machine has taken the code and answered; the answer has not arrived yet.
+        assertNotNull(machine.pairedClientId)
+        assertNull(result)
+        pairing.cancel()
+        pairing.join()
+        assertEquals(machine.pairedClientId, result?.clientId)
+    }
+
+    @Test
+    fun `any failed confirmation spends the link, and a spent link never asks for a code`() = runTest {
+        machine.faults.wrongServerProof = true
+        val impostor = connect()
+        assertFailsWith<As11AuthException.MachineUnauthenticated> { impostor.pair { "0420" } }
+        assertTrue(impostor.terminated.isCompleted)
+        var asked = false
+        assertFailsWith<As11AuthException.MachineUnauthenticated> {
+            impostor.pair {
+                asked = true
+                "0420"
+            }
+        }
+        // On the test's single thread the prompt could not have started anyway; the check in
+        // pair() that guarantees this on a thread pool is not something this test can fail on.
+        assertFalse(asked)
+
+        machine.faults.wrongServerProof = false
+        machine.faults.silentMethods += "ConfirmKeyExchange"
+        val silent = connect()
+        assertFailsWith<As11TimeoutException> { silent.pair { "0420" } }
+        assertTrue(silent.terminated.isCompleted)
+        assertFailsWith<As11TimeoutException> { silent.pair { "0420" } }
+    }
+
+    @Test
+    fun `a connection pairs once`() = runTest {
+        val client = connect()
+        client.pair { "0420" }
+        val issued = machine.pairedClientId
+        // A second exchange would replace the pairing the caller has just been given.
+        assertFailsWith<IllegalStateException> { client.pair { "0420" } }
+        assertEquals(issued, machine.pairedClientId)
     }
 
     @Test

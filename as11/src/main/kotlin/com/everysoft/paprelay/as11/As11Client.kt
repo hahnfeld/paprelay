@@ -288,6 +288,11 @@ public class As11Client(
      * the machine one guess at the code. After pairing, open a new connection
      * before calling [startSession], as the reference client does.
      *
+     * Once the code has been sent to the machine this call cannot be cancelled,
+     * because the machine may already have replaced its pairing. It can
+     * therefore return credentials to a caller that has been cancelled, and
+     * that caller must store them before it suspends in any cancellable way.
+     *
      * @throws As11AuthException.PasskeyRejected if the machine rejects the code.
      * @throws As11AuthException.PasskeyInvalid if what was typed is not a code; nothing is sent.
      * @throws As11PairingCancelledException if [askPasskey] is cancelled or takes too long.
@@ -295,6 +300,9 @@ public class As11Client(
      */
     public suspend fun pair(askPasskey: suspend () -> String): PairingCredentials = rpcLock.withLock {
         check(sessionKey.get() == null) { "already in a session" }
+        check(!pairedOnThisLink) { "already paired on this connection" }
+        // A link that has ended must not put a code prompt in front of the user.
+        failure.get()?.let { throw it }
         val srp = Srp6aClient(random)
         val proof = coroutineScope {
             val entry = async {

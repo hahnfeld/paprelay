@@ -27,6 +27,7 @@ import com.everysoft.paprelay.as11.GetItem
 import com.everysoft.paprelay.as11.Hex
 import com.everysoft.paprelay.as11.SpoolAddress
 import com.everysoft.paprelay.as11.SpoolName
+import com.everysoft.paprelay.ble.BluetoothOffException
 import com.everysoft.paprelay.ble.GattLink
 import com.everysoft.paprelay.ble.MachineScanner
 import com.everysoft.paprelay.ble.Sighting
@@ -145,6 +146,14 @@ class DeviceCheck(
     private val _machineChoice = MutableStateFlow<MachineChoice?>(null)
     val machineChoice: StateFlow<MachineChoice?> = _machineChoice
 
+    /** True from the moment Stop is pressed until the run has actually ended. */
+    private val _stopping = MutableStateFlow(false)
+    val stopping: StateFlow<Boolean> = _stopping
+
+    /** True while the pairing is being removed. */
+    private val _forgetting = MutableStateFlow(false)
+    val forgetting: StateFlow<Boolean> = _forgetting
+
     fun reportText(): String = synchronized(report) { report.toString() }
 
     fun hasReport(): Boolean = synchronized(report) { report.isNotEmpty() }
@@ -159,8 +168,9 @@ class DeviceCheck(
      */
     @Synchronized
     fun start(full: Boolean) {
-        // A cancelled run is still unwinding until it completes; wait for that.
-        if (job?.isCompleted == false) return
+        // A cancelled run is still unwinding until it completes; wait for that. And a run
+        // must not begin on a pairing that is in the middle of being forgotten.
+        if (job?.isCompleted == false || _forgetting.value) return
         _running.value = true
         job = scope.launch {
             try {
@@ -179,14 +189,36 @@ class DeviceCheck(
             } finally {
                 _passkeyRequest.value = null
                 _machineChoice.value = null
+                _stopping.value = false
                 _running.value = false
             }
         }
     }
 
+    /** Asks the run to stop. It may take a while: a step that must not be cut short is finished first. */
     @Synchronized
     fun cancel() {
-        job?.cancel()
+        val running = job?.takeIf { !it.isCompleted } ?: return
+        _stopping.value = true
+        running.cancel()
+    }
+
+    /**
+     * Removes the stored pairing and what the check downloaded. Ignored while
+     * a run is in progress; no run can start until it has finished.
+     */
+    @Synchronized
+    fun forgetMachine() {
+        if (job?.isCompleted == false || _forgetting.value) return
+        _forgetting.value = true
+        scope.launch {
+            try {
+                store.clear()
+                clearData()
+            } finally {
+                _forgetting.value = false
+            }
+        }
     }
 
     /**
@@ -196,7 +228,7 @@ class DeviceCheck(
      * attempt it is the one thing worth saving. Called when the machine is
      * forgotten; does nothing to a run in progress.
      */
-    suspend fun clearData() {
+    private suspend fun clearData() {
         withContext(Dispatchers.IO) { dataDirectory().deleteRecursively() }
         synchronized(this) {
             if (job?.isCompleted != false) _steps.value = template()
@@ -209,7 +241,13 @@ class DeviceCheck(
             val allowed = withTimeoutOrNull(HEALTH_ANSWER_MS) { healthConnect.hasPermission() }
                 ?: throw HealthConnectUnresponsiveException()
             if (!allowed) throw CheckFailure(Message(R.string.detail_hc_no_permission), onPhone = true)
-            val result = healthConnect.writeAndRemove()
+            val result = try {
+                healthConnect.writeAndRemove()
+            } catch (e: android.os.RemoteException) {
+                // Health Connect's own "something went wrong inside" arrives as this, with no code.
+                note("  ${code(e)}")
+                throw CheckFailure(Message(R.string.error_hc_failed), onPhone = true)
+            }
             note("  wrote ${result.written}, removed ${result.removed}")
             if (!result.removed) throw CheckFailure(Message(R.string.detail_hc_value_left), onPhone = true)
             if (result.written != 1) throw CheckFailure(Message(R.string.detail_hc_not_written), onPhone = true)
@@ -426,7 +464,8 @@ class DeviceCheck(
                             bytes += round.data.size
                             progress(DOWNLOAD, Message(R.string.detail_downloading, friendly(spool), (totalBytes + bytes) / 1024))
                             address = SpoolAddress.Continuation(round.next ?: break)
-                            if (rounds == MAX_ROUNDS) throw IllegalStateException("more rounds than this check reads in one go")
+                            // Reaching the check's own limit is not a fault of anything: reading works.
+                            if (rounds == MAX_ROUNDS) note("  ${spool.wireName}: stopped at the check's limit of $MAX_ROUNDS rounds; the machine has more")
                         }
                         totalBytes += bytes
                         succeeded++
@@ -494,6 +533,11 @@ class DeviceCheck(
             true
         } catch (e: CancellationException) {
             throw e
+        } catch (e: As11PairingCancelledException) {
+            // The user backed out of typing the code. Nothing failed, least of all the machine.
+            note("  ${code(e)}")
+            set(id, StepState.CANCELLED, explain(e))
+            false
         } catch (e: Observation) {
             set(id, StepState.NOTED, e.detail)
             // An observation is not a failure: later steps still run.
@@ -506,7 +550,7 @@ class DeviceCheck(
     }
 
     /** Whether a failure lies with this phone and not with the machine or the link to it. */
-    private fun isPhoneSide(e: Throwable): Boolean = when (e) {
+    private fun isPhoneSide(e: Throwable): Boolean = bluetoothOff(e) || when (e) {
         is CheckFailure -> e.onPhone
         is As11NonceStoreException, is As11DefectException -> true
         is As11Exception -> false
@@ -525,10 +569,18 @@ class DeviceCheck(
     }
 
     private fun closeOpenSteps(running: StepState, why: Message) {
+        // A run that ends between two steps ended at the next one; without this the
+        // screen would show nothing but blank rows.
+        var marked = _steps.value.any { it.state == StepState.RUNNING }
         for (step in _steps.value) {
             when (step.state) {
                 StepState.RUNNING -> set(step.id, running, why)
-                StepState.PENDING -> set(step.id, StepState.SKIPPED, null)
+                StepState.PENDING -> if (marked) {
+                    set(step.id, StepState.SKIPPED, null)
+                } else {
+                    marked = true
+                    set(step.id, running, why)
+                }
                 else -> Unit
             }
         }
@@ -596,7 +648,7 @@ class DeviceCheck(
          * What went wrong, in words fit for the screen. Written out case by case:
          * class names are meaningless in a release build, where they are shortened.
          */
-        fun explain(e: Throwable): Message = when (e) {
+        fun explain(e: Throwable): Message = if (bluetoothOff(e)) Message(R.string.detail_bluetooth_off) else when (e) {
             is CheckFailure -> e.detail
             is As11Exception -> when (e) {
                 is As11TransportException -> Message(R.string.error_connection)
@@ -619,7 +671,14 @@ class DeviceCheck(
                 is As11DefectException -> Message(R.string.error_internal)
             }
             is HealthConnectUnresponsiveException -> Message(R.string.error_hc_unresponsive)
-            else -> healthConnectError(e)?.let { Message(R.string.error_hc_reported, it.errorCode) } ?: when (e) {
+            else -> healthConnectError(e)?.let {
+                // Its "not permitted" is the one fault the user can put right, so it keeps its own advice.
+                if (it.errorCode == android.health.connect.HealthConnectException.ERROR_SECURITY) {
+                    Message(R.string.error_permission)
+                } else {
+                    Message(R.string.error_hc_reported, it.errorCode)
+                }
+            } ?: when (e) {
                 is IOException -> Message(R.string.error_storage)
                 is SecurityException -> Message(R.string.error_permission)
                 else -> Message(R.string.error_internal)
@@ -632,6 +691,14 @@ class DeviceCheck(
                 .take(MAX_CAUSE_DEPTH)
                 .filterIsInstance<android.health.connect.HealthConnectException>()
                 .firstOrNull()
+
+        /**
+         * Whether Bluetooth being off on this phone is what ended things. A link that
+         * fails for that reason reaches the check wrapped in the protocol layer's own
+         * "link failed", so the causes are searched too.
+         */
+        fun bluetoothOff(e: Throwable): Boolean =
+            generateSequence(e) { it.cause?.takeIf { cause -> cause !== it } }.take(MAX_CAUSE_DEPTH).any { it is BluetoothOffException }
 
         const val MAX_CAUSE_DEPTH = 8
 

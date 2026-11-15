@@ -13,6 +13,7 @@
     <string name="action_forget">Forget machine</string>
     <string name="action_export">Save report</string>
     <string name="action_stop">Stop</string>
+    <string name="action_stopping">Stopping…</string>
     <string name="action_use_this">Use this machine</string>
     <string name="action_open_settings">Open app settings</string>
 
@@ -24,9 +25,10 @@
     <string name="flow_description">%1$s. %2$s.</string>
     <!-- %1$s is the sentence above. Added when the fault is in the phone itself. -->
     <string name="flow_with_phone_fault">%1$s This phone has a problem.</string>
+    <!-- The ten sentences below are placed into flow_description, which adds the full stop. Do not end them with one. -->
     <string name="flow_machine_none">The machine is not paired</string>
     <string name="flow_machine_ready">The machine is paired</string>
-    <string name="flow_machine_active">The phone is talking to the machine</string>
+    <string name="flow_machine_active">The phone is reading from the machine</string>
     <string name="flow_machine_ok">The phone received data from the machine</string>
     <string name="flow_machine_failed">The phone could not read from the machine</string>
     <string name="flow_health_none">Health Connect is not allowed yet</string>
@@ -79,7 +81,7 @@
     <!-- Step details -->
     <string name="detail_hc_ok">A test value was written and removed.</string>
     <string name="detail_hc_unavailable">Health Connect is not available on this phone.</string>
-    <string name="detail_hc_no_permission">PAPRelay is not allowed to write to Health Connect. Run the check again and allow it.</string>
+    <string name="detail_hc_no_permission">PAPRelay is not allowed to write to Health Connect. Run the check again and allow it. If Android does not ask, open Health Connect, choose App permissions, then PAPRelay, and allow it there.</string>
     <string name="detail_hc_value_left">A test value was written but could not be removed. Delete it in Health Connect, under PAPRelay.</string>
     <string name="detail_hc_not_written">Health Connect did not store the test value.</string>
     <string name="detail_bluetooth_off">Bluetooth is off.</string>
@@ -120,8 +122,8 @@
     <string name="log_breathing_events">breathing events</string>
     <string name="log_per_minute">minute-by-minute data</string>
     <string name="detail_download_ok">The saved data was downloaded and verified (%1$d kB).</string>
-    <!-- %1$d is how many of the %2$d parts worked. -->
-    <string name="detail_download_partial">The check downloaded and verified %1$d / %2$d. The report has the reason.</string>
+    <!-- %1$d is how many of the %2$d logs worked. -->
+    <string name="detail_download_partial">Not every log was downloaded and verified (%1$d / %2$d). The report has the reason.</string>
     <string name="detail_took_too_long">The check took too long and was stopped.</string>
     <string name="detail_stopped">The check was stopped.</string>
 
@@ -145,6 +147,7 @@
     <string name="error_storage">This phone could not save or read data.</string>
     <string name="error_permission">A permission is missing. Allow it in the app settings.</string>
     <string name="error_hc_reported">Health Connect reported an error (code %1$d).</string>
+    <string name="error_hc_failed">Health Connect had an internal error. Run the check again.</string>
     <string name="error_hc_unresponsive">Health Connect did not answer. Run the check again.</string>
     <string name="error_internal">PAPRelay had an internal error. Please save the report.</string>
 
@@ -158,10 +161,10 @@
     <!-- One choice: the machine\'s name, then its signal strength. -->
     <string name="choice_option">%1$s · %2$s</string>
     <string name="forget_title">Forget this machine?</string>
-    <string name="forget_body">PAPRelay deletes its pairing and the data from the device check. Data already in Health Connect stays there.</string>
+    <string name="forget_body">PAPRelay deletes its pairing and the data it downloaded. The last report can still be saved until you close the app. Data already in Health Connect stays there.</string>
     <string name="export_failed">The report could not be saved.</string>
 
-    <string name="early_build_notice">Early version. Not yet tested on a real machine.</string>
+    <string name="early_build_notice">This is an early version. It is not yet tested on a real machine.</string>
 
     <!-- About -->
     <string name="about_title">About</string>
@@ -183,7 +186,7 @@
     <string name="privacy_heading_where">Where your data goes</string>
     <string name="privacy_where">Your data goes nowhere else. PAPRelay has no internet permission, no accounts, no analytics and no advertising. Data leaves the app only through Health Connect and through files you choose to save.</string>
     <string name="privacy_heading_read">What PAPRelay reads from Health Connect</string>
-    <string name="privacy_read">Nothing from other apps. It asks only for permission to write, and reads back only its own records to keep them correct.</string>
+    <string name="privacy_read">PAPRelay reads nothing from other apps. It asks only for permission to write, and reads back only its own records to keep them correct.</string>
     <string name="privacy_heading_delete">Removing your data</string>
     <string name="privacy_delete">Uninstalling PAPRelay deletes everything it stored. Records it wrote to Health Connect can be removed in Health Connect, under App permissions, PAPRelay.</string>
 </resources>

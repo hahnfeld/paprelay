@@ -22,7 +22,7 @@ Open PAPRelay and choose **Run device check**. Grant the Bluetooth permission
 and the Health Connect permission when asked. When the machine shows a
 four-digit code, type it in.
 
-When it finishes, choose **Export report** and save the file. The report holds
+When it finishes, choose **Save report** and save the file. The report holds
 no pairing key, no code, no full serial number, no Bluetooth address and no
 advertised name.
 
@@ -42,8 +42,8 @@ advertised name.
 ## Reconnect checks
 
 These decide whether syncing can resume by itself when the phone comes home.
-After a successful full check, use **Reconnect only** in each situation and
-export the report each time:
+After a successful full check, use **Check connection only** in each situation and
+save the report each time:
 
 1. Straight away.
 2. After turning Bluetooth off and on.

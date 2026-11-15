@@ -54,7 +54,7 @@ class MachineScanner(context: Context) {
      * @param stopAtAddress end the scan as soon as this address is seen.
      */
     suspend fun scan(durationMs: Long, platformFilter: Boolean, stopAtAddress: String? = null): List<Sighting> {
-        val scanner = adapter?.takeIf { it.isEnabled }?.bluetoothLeScanner ?: throw As11TransportException("Bluetooth is off")
+        val scanner = adapter?.takeIf { it.isEnabled }?.bluetoothLeScanner ?: throw BluetoothOffException("Bluetooth is off")
         val seen = ConcurrentHashMap<String, Sighting>()
         // Completes early: with an error code if the scan could not run, or with 0 once the wanted device is seen.
         val finished = CompletableDeferred<Int>()
@@ -92,7 +92,7 @@ class MachineScanner(context: Context) {
         }
         if (outcome != null && outcome != 0) throw As11TransportException("scan could not run, code $outcome")
         // A scan cut short by the radio going off looks exactly like an empty one.
-        if (adapter?.isEnabled != true) throw As11TransportException("Bluetooth was turned off")
+        if (adapter?.isEnabled != true) throw BluetoothOffException("Bluetooth was turned off")
         return seen.values.sortedByDescending { it.rssi }
     }
 

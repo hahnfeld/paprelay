@@ -194,7 +194,7 @@ public class As11SpoolUnavailableException(public val status: String) : As11Exce
 }
 
 /** The underlying link closed or failed. */
-public class As11TransportException(message: String, cause: Throwable? = null) : As11Exception(message, cause) {
+public open class As11TransportException(message: String, cause: Throwable? = null) : As11Exception(message, cause) {
     override val recovery: As11Recovery get() = As11Recovery.RETRY_LATER
 }
 

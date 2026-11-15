@@ -214,7 +214,7 @@ class GattLink private constructor(
          */
         suspend fun open(context: Context, device: BluetoothDevice, connectTimeoutMs: Long): GattLink {
             val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter
-            if (adapter?.isEnabled != true) throw As11TransportException("Bluetooth is off")
+            if (adapter?.isEnabled != true) throw BluetoothOffException("Bluetooth is off")
             return try {
                 attempt(context, device, connectTimeoutMs, attemptNumber = 1)
             } catch (e: RetryableConnectFailure) {
@@ -238,7 +238,7 @@ class GattLink private constructor(
             val thread = HandlerThread("paprelay-gatt").apply { start() }
             val callback = Callback()
             val watcher = AdapterWatcher(context.applicationContext) {
-                callback.fail(As11TransportException("Bluetooth was turned off"))
+                callback.fail(BluetoothOffException("Bluetooth was turned off"))
             }
             var gatt: BluetoothGatt? = null
             try {

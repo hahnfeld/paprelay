@@ -29,12 +29,13 @@ public class SampleBlock internal constructor(
     /**
      * Bits left unread because the caller's limit was reached; zero when
      * decoding ran to the end of the block. Eight or more means the block
-     * definitely holds more samples than were taken. One to seven may be
-     * nothing but padding, so they say nothing either way.
+     * definitely holds more data than was taken (not necessarily whole
+     * samples: a limit also stops before damage further on is seen). One to
+     * seven may be nothing but padding, so they say nothing either way.
      */
     public val unreadBits: Long,
 ) {
-    /** True when the block certainly holds more samples than the caller's limit allowed. */
+    /** True when the block certainly holds more data than the caller's limit let through. */
     public val definitelyMore: Boolean get() = unreadBits >= 8
 
     /** The series cut to [count] samples, which must lie within what is possible. */
@@ -146,7 +147,14 @@ public object SampleSeries {
             out[count++] = sample.toInt()
             if (!mayBePadding) certain = count
         }
-        return SampleBlock(out.copyOf(count), certain, unreadBits = if (exhausted) 0 else totalBits - bit)
+        var unread = if (exhausted) 0 else totalBits - bit
+        if (!exhausted && count.toLong() == possible) {
+            // Everything the block can hold was read, so what is left is too short to be a
+            // sample. Up to seven such bits are padding; more means the block is damaged.
+            if (unread >= 8) throw SpoolDecodeException("sample block ends in the middle of a sample")
+            unread = 0
+        }
+        return SampleBlock(out.copyOf(count), certain, unreadBits = unread)
     }
 
     /** Largest quotient a real second difference of int16 samples can need, at modulus 1. */
