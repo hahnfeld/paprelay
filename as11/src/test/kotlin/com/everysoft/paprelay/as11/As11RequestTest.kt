@@ -91,9 +91,11 @@ class As11RequestTest {
         val json = As11Request.StartSpool(SpoolName.SUMMARY, SpoolAddress.Continuation(good)).encode(1)
         assertTrue(json.contains("""{"Summary":{"cursor":3}}"""))
 
-        assertFailsWith<As11ProtocolException> {
+        val refused = assertFailsWith<As11ProtocolException> {
             As11Request.StartSpool(SpoolName.ONE_MINUTE, SpoolAddress.Continuation(good)).encode(1)
         }
+        // The conversation is fine; it is this answer that is unusable, so reconnecting would not help.
+        assertEquals(As11Recovery.DO_NOT_RETRY, refused.recovery)
         val twoLogs = JsonObject(good + ("TherapyOneMinutePeriodic" to JsonPrimitive(1)))
         assertFailsWith<As11ProtocolException> {
             As11Request.StartSpool(SpoolName.SUMMARY, SpoolAddress.Continuation(twoLogs)).encode(1)

@@ -50,7 +50,7 @@ class SampleSeriesTest {
         assertContentEquals(intArrayOf(10, 12, 14, 15, 19), block.samples)
         // Every code began well before the last seven bits, so nothing is in doubt.
         assertEquals(5, block.certain)
-        assertFalse(block.limited)
+        assertEquals(0, block.unreadBits)
     }
 
     @Test
@@ -103,15 +103,36 @@ class SampleSeriesTest {
     }
 
     @Test
-    fun `certain is exact when every real code ends before the last seven bits`() {
-        // Six bytes of codes, then a whole byte of padding ones is not possible, so build it by hand:
-        // seeds 0, 0 and eight codes of d=0 at modulus 1 (one bit each) fill a byte; add one more byte
-        // holding one real code and seven zero bits of padding.
-        val blob = byteArrayOf(0, 0, 0, 0, 0x00, 0x00)
-        val block = SampleSeries.decode(blob, modulus = 1)
-        // 16 one-bit codes fit. Those that began in the last seven bits are in doubt.
-        assertEquals(18, block.samples.size)
+    fun `samples whose code began in the last seven bits are the ones in doubt`() {
+        // Two bytes of zero bits at modulus 1: sixteen one-bit codes. The bytes cannot say
+        // how many of the last seven are padding, so exactly those seven are uncertain.
+        val block = SampleSeries.decode(byteArrayOf(0, 0, 0, 0, 0x00, 0x00), modulus = 1)
+        assertEquals(2 + 16, block.samples.size)
         assertEquals(2 + 9, block.certain)
+    }
+
+    @Test
+    fun `leftover bits mean more samples only when there are eight or more of them`() {
+        val samples = intArrayOf(10, 12, 14, 15, 19, 30)
+        // Asked for fewer than the block holds: thirteen bits are left, which cannot all be padding.
+        val cut = SampleSeries.decode(encode(samples, 4), 4, maxSamples = 3)
+        assertEquals(13, cut.unreadBits)
+        assertTrue(cut.definitelyMore)
+        // Asked for exactly what a zero-padded block holds: the few bits left are padding, and
+        // the block must not claim otherwise.
+        val real = intArrayOf(100, 110, 121)
+        val exact = SampleSeries.decode(encode(real, modulus = 2, padWith = 0), modulus = 2, maxSamples = real.size)
+        assertContentEquals(real, exact.samples)
+        assertTrue(exact.unreadBits in 1..7, "unread=${exact.unreadBits}")
+        assertFalse(exact.definitelyMore)
+    }
+
+    @Test
+    fun `a run of ones longer than any real sample could need is refused`() {
+        // 40 kB of ones: no terminating zero for far longer than a 16-bit difference can require.
+        val endless = byteArrayOf(0, 0, 0, 0) + ByteArray(40_000) { -1 }
+        val failure = assertFailsWith<SpoolDecodeException> { SampleSeries.decode(endless, modulus = 1, maxSamples = 10) }
+        assertTrue(failure.message!!.contains("not a valid Rice stream"), failure.message)
     }
 
     @Test
@@ -121,11 +142,12 @@ class SampleSeriesTest {
         for (count in 0..samples.size) {
             val block = SampleSeries.decode(blob, 4, maxSamples = count)
             assertContentEquals(samples.copyOf(count), block.samples, "count=$count")
-            assertEquals(count < samples.size, block.limited, "count=$count")
+            // This block's codes fill its bytes exactly, so bits are left over only when samples are.
+            assertEquals((count < samples.size), (block.unreadBits > 0), "count=$count")
         }
         val whole = SampleSeries.decode(blob, 4, maxSamples = 50)
         assertContentEquals(samples, whole.samples)
-        assertFalse(whole.limited)
+        assertEquals(0, whole.unreadBits)
         assertFailsWith<IllegalArgumentException> { SampleSeries.decode(blob, 4, maxSamples = -1) }
         assertFailsWith<IllegalArgumentException> { SampleSeries.decode(blob, 4, maxSamples = SampleSeries.MAX_SAMPLES + 1) }
     }
@@ -138,7 +160,7 @@ class SampleSeriesTest {
         // With an explicit count the caller has said how much to take, and is told there was more.
         val block = SampleSeries.decode(huge, modulus = 1, maxSamples = 1_440)
         assertEquals(1_440, block.samples.size)
-        assertTrue(block.limited)
+        assertTrue(block.definitelyMore)
     }
 
     @Test

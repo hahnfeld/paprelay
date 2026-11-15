@@ -26,9 +26,17 @@ public class SampleBlock internal constructor(
      * nothing is in doubt.
      */
     public val certain: Int,
-    /** True when the caller's limit cut the series short of what the block holds. */
-    public val limited: Boolean,
+    /**
+     * Bits left unread because the caller's limit was reached; zero when
+     * decoding ran to the end of the block. Eight or more means the block
+     * definitely holds more samples than were taken. One to seven may be
+     * nothing but padding, so they say nothing either way.
+     */
+    public val unreadBits: Long,
 ) {
+    /** True when the block certainly holds more samples than the caller's limit allowed. */
+    public val definitelyMore: Boolean get() = unreadBits >= 8
+
     /** The series cut to [count] samples, which must lie within what is possible. */
     public fun take(count: Int): IntArray {
         if (count < certain || count > samples.size) {
@@ -72,7 +80,7 @@ public object SampleSeries {
         if (blob.size <= 4) {
             val raw = decodeRaw(blob)
             val kept = if (raw.size > limit) raw.copyOf(limit) else raw
-            return SampleBlock(kept, kept.size, limited = raw.size > limit)
+            return SampleBlock(kept, kept.size, unreadBits = (raw.size - kept.size) * 16L)
         }
 
         val remainderBits = Integer.numberOfTrailingZeros(modulus)
@@ -85,7 +93,7 @@ public object SampleSeries {
         val out = IntArray(minOf(limit.toLong(), possible).toInt().coerceAtLeast(2))
         out[0] = int16(blob, 0)
         out[1] = int16(blob, 2)
-        if (limit < 2) return SampleBlock(out.copyOf(limit), limit, limited = true)
+        if (limit < 2) return SampleBlock(out.copyOf(limit), limit, unreadBits = totalBits + (2 - limit) * 16L)
         var count = 2
         var certain = 2
         var bit = 0L
@@ -138,9 +146,7 @@ public object SampleSeries {
             out[count++] = sample.toInt()
             if (!mayBePadding) certain = count
         }
-        // Stopped by the limit with at least one more whole code's worth of bits unread.
-        val limited = !exhausted && totalBits - bit >= 1 + remainderBits
-        return SampleBlock(out.copyOf(count), certain, limited)
+        return SampleBlock(out.copyOf(count), certain, unreadBits = if (exhausted) 0 else totalBits - bit)
     }
 
     /** Largest quotient a real second difference of int16 samples can need, at modulus 1. */

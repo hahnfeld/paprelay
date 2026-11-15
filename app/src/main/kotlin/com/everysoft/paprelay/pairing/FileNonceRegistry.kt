@@ -46,7 +46,8 @@ class FileNonceRegistry(file: File, private val ceiling: Int = 200_000) : NonceR
                 file.failWrite(stream)
                 throw e
             }
-            // finishWrite only logs a failed sync or rename, so the result is checked.
+            // finishWrite only logs a failed rename, so that much is checked. A failed sync
+            // to disk cannot be seen from here.
             if (entry !in read()) throw java.io.IOException("the session record was not stored")
         }
     }
@@ -54,6 +55,9 @@ class FileNonceRegistry(file: File, private val ceiling: Int = 200_000) : NonceR
     private fun read(): LinkedHashSet<String> = try {
         file.readFully().toString(Charsets.US_ASCII).lineSequence().filter { it.length == 64 }.toCollection(LinkedHashSet())
     } catch (e: FileNotFoundException) {
+        // Also thrown when the file is there but cannot be opened. Treating that as an
+        // empty record would forget every nonce, so it is reported instead.
+        if (file.baseFile.exists()) throw e
         LinkedHashSet()
     }
 

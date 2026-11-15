@@ -156,6 +156,115 @@ class As11ClientTest {
     }
 
     @Test
+    fun `stopping while the machine is confirming the code does not lose the pairing`() = runTest {
+        val client = connect()
+        var result: PairingCredentials? = null
+        val pairing = launch {
+            result = client.pair {
+                // The code is typed; from the next request on, the machine takes two seconds to answer.
+                kotlinx.coroutines.delay(100)
+                machine.faults.responseDelayMs = 2_000
+                "0420"
+            }
+        }
+        advanceTimeBy(1_000) // the confirmation is on its way to the machine
+        pairing.cancel()
+        pairing.join()
+        // The machine has adopted the pairing, so the app must come away holding it too.
+        assertNotNull(machine.pairedClientId)
+        assertEquals(machine.pairedClientId, result?.clientId)
+    }
+
+    @Test
+    fun `after the code has been sent, the link cannot be used for a second attempt`() = runTest {
+        val client = connect()
+        assertFailsWith<As11AuthException.PasskeyRejected> { client.pair { "0421" } }
+        // A new code needs a new connection; this one reports what ended it.
+        assertFailsWith<As11AuthException.PasskeyRejected> { client.pair { "0420" } }
+        assertTrue(client.terminated.isCompleted)
+        assertNull(machine.pairedClientId)
+    }
+
+    @Test
+    fun `a refusal is recognised whatever code the machine uses for it`() = runTest {
+        // The machine's codes are not documented. Its generic "internal error" is a plausible
+        // choice, and must not be mistaken for something to retry.
+        machine.faults.authErrorCode = -32603
+        assertFailsWith<As11AuthException.PasskeyRejected> { connect().pair { "0421" } }
+        val credentials = connect().pair { "0420" }
+        val stranger = PairingCredentials("client-unknown", credentials.pairingKey)
+        assertFailsWith<As11AuthException.PairingUnknown> { connect().startSession(stranger, NonceRegistry.AcceptAll) }
+        val wrongKey = PairingCredentials(credentials.clientId, ByteArray(32) { 9 })
+        assertFailsWith<As11AuthException.SessionProofRejected> { connect().startSession(wrongKey, NonceRegistry.AcceptAll) }
+    }
+
+    @Test
+    fun `a link that drops while the nonce is being recorded does not yield a session`() = runTest {
+        val credentials = connect().pair { "0420" }
+        val link = Severable(machine.connect(), backgroundScope)
+        val client = clientOn(link)
+        val registry = object : NonceRegistry {
+            override suspend fun isKnown(nonce: ByteArray) = false
+            override suspend fun remember(nonce: ByteArray) {
+                link.sever()
+                kotlinx.coroutines.delay(10) // let the client notice
+            }
+        }
+        assertFailsWith<As11TransportException> { client.startSession(credentials, registry) }
+        assertFalse(client.isSecure)
+    }
+
+    @Test
+    fun `sending an implausible amount on one connection ends it`() = runTest {
+        val client = securedClient()
+        client.maxSentBlocks = 12
+        var failure: As11Exception? = null
+        repeat(20) { if (failure == null) failure = runCatching { client.get(serial) }.exceptionOrNull() as? As11Exception }
+        assertIs<As11ProtocolException>(failure)
+        assertTrue(client.terminated.isCompleted)
+    }
+
+    @Test
+    fun `faults that a second attempt cannot cure are not marked for repeating`() = runTest {
+        machine.spools["Summary"] = listOf(bytes(5_000))
+        val client = securedClient()
+
+        machine.faults.garbageSpoolHash = true
+        assertEquals(
+            As11Recovery.DO_NOT_RETRY,
+            assertFailsWith<As11SpoolIntegrityException> { client.pullSpoolRound(SpoolName.SUMMARY, from) }.recovery,
+        )
+        machine.faults.garbageSpoolHash = false
+
+        machine.faults.omitSequenceNumbers = true
+        assertEquals(
+            As11Recovery.DO_NOT_RETRY,
+            assertFailsWith<As11SpoolIntegrityException> { client.pullSpoolRound(SpoolName.SUMMARY, from) }.recovery,
+        )
+        machine.faults.omitSequenceNumbers = false
+
+        machine.faults.forceSpoolStatus = "SPOOL_COMPLETE_MORE_DATA_PENDING"
+        assertEquals(
+            As11Recovery.DO_NOT_RETRY,
+            assertFailsWith<As11ProtocolException> { client.pullSpoolRound(SpoolName.SUMMARY, from) }.recovery,
+        )
+        machine.faults.forceSpoolStatus = "SPOOL_SOMETHING_NEW"
+        assertEquals(
+            As11Recovery.DO_NOT_RETRY,
+            assertFailsWith<As11ProtocolException> { client.pullSpoolRound(SpoolName.SUMMARY, from) }.recovery,
+        )
+        machine.faults.forceSpoolStatus = null
+
+        // A dropped fragment, by contrast, is worth asking for again, and none of this ended the conversation.
+        machine.faults.dropFragments += 0
+        assertEquals(
+            As11Recovery.REPEAT_ROUND,
+            assertFailsWith<As11SpoolIntegrityException> { client.pullSpoolRound(SpoolName.SUMMARY, from) }.recovery,
+        )
+        assertFalse(client.terminated.isCompleted)
+    }
+
+    @Test
     fun `a wrong passkey fails pairing and leaves the machine unpaired`() = runTest {
         assertFailsWith<As11AuthException.PasskeyRejected> { connect().pair { "0421" } }
         assertNull(machine.pairedClientId)

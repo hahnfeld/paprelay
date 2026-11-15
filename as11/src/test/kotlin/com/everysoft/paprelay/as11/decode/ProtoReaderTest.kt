@@ -8,6 +8,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class ProtoReaderTest {
     private fun bytes(vararg values: Int) = ByteArray(values.size) { values[it].toByte() }
@@ -72,6 +73,19 @@ class ProtoReaderTest {
             assertFailsWith<SpoolDecodeException> { ProtoReader.read(bad) }
         }
         assertFailsWith<SpoolDecodeException> { ProtoReader.read(bytes(0x08, 0x01, 0x08, 0x01, 0x08, 0x01), maxFields = 2) }
+    }
+
+    @Test
+    fun `a number that does not fit in 64 bits is refused`() {
+        // Ten bytes is the most a 64-bit number can take, and the tenth may carry only its top bit.
+        val widest = bytes(0x08) + ByteArray(9) { 0xFF.toByte() } + bytes(0x01)
+        assertEquals(-1L, ProtoReader.read(widest).single().value)
+
+        val tenthTooBig = bytes(0x08) + ByteArray(9) { 0x80.toByte() } + bytes(0x02)
+        assertEquals("number is too large", assertFailsWith<SpoolDecodeException> { ProtoReader.read(tenthTooBig) }.message)
+
+        val elevenBytes = bytes(0x08) + ByteArray(10) { 0x80.toByte() } + bytes(0x01)
+        assertTrue(assertFailsWith<SpoolDecodeException> { ProtoReader.read(elevenBytes) }.message!!.startsWith("number is too"))
     }
 
     @Test

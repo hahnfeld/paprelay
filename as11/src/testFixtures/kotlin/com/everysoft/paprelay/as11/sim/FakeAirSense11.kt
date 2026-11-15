@@ -121,6 +121,18 @@ public class FaultPlan {
     /** Send the integrity hash as an empty string. */
     public var emptySpoolHash: Boolean = false
 
+    /**
+     * The error code used when pairing or session setup is refused. The real
+     * machine's codes are not documented, so tests try more than one.
+     */
+    public var authErrorCode: Int? = null
+
+    /** Send an integrity hash that is not hexadecimal. */
+    public var garbageSpoolHash: Boolean = false
+
+    /** Leave the sequence number off data fragments. */
+    public var omitSequenceNumbers: Boolean = false
+
     /** Accept writes but never complete them. */
     public var hangSend: Boolean = false
 
@@ -269,7 +281,7 @@ public class FakeAirSense11(
                 val exchange = srp
                 val proof = unhex(params["clientConfirmation"]!!.jsonPrimitive.content)
                 if (exchange == null || !proof.contentEquals(exchange.expectedClientProof)) {
-                    Failure(-32000, "key exchange failed")
+                    Failure(faults.authErrorCode ?: -32000, "key exchange failed")
                 } else {
                     val id = "client-${++pairingsIssued}-${Integer.toHexString(random.nextInt())}"
                     pairedClientId = id
@@ -286,7 +298,7 @@ public class FakeAirSense11(
             "RequestSession" -> {
                 val key = pairingKey
                 if (key == null || params["clientId"]?.jsonPrimitive?.content != pairedClientId) {
-                    Failure(-32001, "unknown client")
+                    Failure(faults.authErrorCode ?: -32001, "unknown client")
                 } else {
                     val challenge = ByteArray(32).also(random::nextBytes)
                     val nonce = faults.fixedNonce ?: ByteArray(32).also(random::nextBytes)
@@ -302,7 +314,7 @@ public class FakeAirSense11(
                 val response = unhex(params["response"]!!.jsonPrimitive.content)
                 if (faults.rejectSession || !response.contentEquals(expectedSessionResponse)) {
                     pendingSessionKey = null
-                    Failure(-32002, "session integrity failed")
+                    Failure(faults.authErrorCode ?: -32002, "session integrity failed")
                 } else {
                     when (val reported = faults.sessionConfirmation) {
                         null -> JsonPrimitive(true)
@@ -390,14 +402,23 @@ public class FakeAirSense11(
                     buildJsonObject {
                         put("spoolId", JsonPrimitive(spoolId))
                         // Only data-bearing fragments are numbered.
-                        if (seq != null) put("seq", JsonPrimitive(seq))
+                        if (seq != null && !faults.omitSequenceNumbers) put("seq", JsonPrimitive(seq))
                         if (piece != null) put("data", JsonPrimitive(Base64.getEncoder().encodeToString(piece)))
                         put("status", JsonPrimitive(if (terminal) finalStatus else "SPOOL_INCOMPLETE"))
                         if (terminal) {
                             if (!faults.omitSpoolHash && data.isNotEmpty()) {
                                 val hash = sha256(data)
                                 if (faults.corruptSpoolHash) hash[5] = (hash[5].toInt() xor 0x40).toByte()
-                                put("spoolHash", JsonPrimitive(if (faults.emptySpoolHash) "" else hex(hash).lowercase()))
+                                put(
+                                    "spoolHash",
+                                    JsonPrimitive(
+                                        when {
+                                            faults.emptySpoolHash -> ""
+                                            faults.garbageSpoolHash -> "not-a-hash"
+                                            else -> hex(hash).lowercase()
+                                        },
+                                    ),
+                                )
                             }
                             if (more) {
                                 put(

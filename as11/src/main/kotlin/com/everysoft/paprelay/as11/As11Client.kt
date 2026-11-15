@@ -233,6 +233,9 @@ public class As11Client(
     /** Every ciphertext block this client has sent on this connection. Guarded by the deframer lock. */
     private val sentBlocks = HashSet<ByteBuffer>()
     private var lastRequestId = 0 // guarded by rpcLock
+
+    /** Lowered by tests; far beyond any real session otherwise. */
+    internal var maxSentBlocks = MAX_SENT_BLOCKS
     private val consecutiveUndecodable = AtomicInteger()
     private val totalUndecodable = AtomicInteger()
 
@@ -293,7 +296,7 @@ public class As11Client(
     public suspend fun pair(askPasskey: suspend () -> String): PairingCredentials = rpcLock.withLock {
         check(sessionKey.get() == null) { "already in a session" }
         val srp = Srp6aClient(random)
-        coroutineScope {
+        val proof = coroutineScope {
             val entry = async {
                 try {
                     askPasskey()
@@ -318,16 +321,17 @@ public class As11Client(
                 // Not sent: a malformed code would only spend the machine's one attempt.
                 throw As11AuthException.PasskeyInvalid()
             }
-            val proof = srp.computeProof(serverKey, salt, passkey)
-            // From here the machine may adopt the pairing at any moment, replacing the one
-            // it had. Being cancelled now would throw away credentials it has already
-            // accepted, so the last step runs to its own time limit regardless.
-            withContext(NonCancellable) { finishPairing(proof) }
+            srp.computeProof(serverKey, salt, passkey)
         }
+        // From here the machine may adopt the pairing at any moment, replacing the one it had.
+        // Being cancelled now would throw away credentials it has already accepted, so the
+        // last step runs to its own time limit regardless. It must sit outside the scope
+        // above: a cancelled scope discards whatever its body returns.
+        withContext(NonCancellable) { finishPairing(proof) }
     }
 
     private suspend fun finishPairing(proof: SrpProof): PairingCredentials {
-        return run {
+        return try {
             val confirm = try {
                 exchange(As11Request.ConfirmKeyExchange(proof.clientProof), timeouts.confirmMs).resultObject()
             } catch (e: As11RpcException) {
@@ -344,6 +348,11 @@ public class As11Client(
             }
             pairedOnThisLink = true
             PairingCredentials(clientId, proof.sharedKey)
+        } catch (e: Throwable) {
+            // Once the confirmation has been sent this link's one exchange is spent,
+            // however it ended: a second attempt needs a new connection and a new code.
+            fail(e as? As11Exception ?: As11TransportException("pairing was interrupted"))
+            throw e
         }
     }
 
@@ -883,7 +892,7 @@ public class As11Client(
     private fun rememberSent(sealed: ByteArray) {
         synchronized(deframer) {
             // Far beyond any real session; reached only if something is very wrong.
-            if (sentBlocks.size > MAX_SENT_BLOCKS) {
+            if (sentBlocks.size > maxSentBlocks) {
                 val cause = As11ProtocolException("too much was sent on one connection")
                 fail(cause)
                 throw cause

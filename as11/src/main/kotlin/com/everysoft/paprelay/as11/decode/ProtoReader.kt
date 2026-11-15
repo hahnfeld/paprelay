@@ -88,6 +88,8 @@ public object ProtoReader {
             if (at >= data.size) throw SpoolDecodeException("number runs past the end of the message")
             if (shift > 63) throw SpoolDecodeException("number is too long")
             val b = data[at++].toInt()
+            // The tenth byte carries the last bit of a 64-bit number; anything more does not fit.
+            if (shift == 63 && (b and 0x7E) != 0) throw SpoolDecodeException("number is too large")
             value = value or ((b and 0x7F).toLong() shl shift)
             if (b and 0x80 == 0) return Varint(value, at)
             shift += 7
