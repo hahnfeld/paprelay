@@ -219,6 +219,7 @@ class GattLink private constructor(
                 attempt(context, device, connectTimeoutMs, attemptNumber = 1)
             } catch (e: RetryableConnectFailure) {
                 delay(RETRY_PAUSE_MS)
+                if (adapter.isEnabled != true) throw BluetoothOffException("Bluetooth was turned off")
                 try {
                     attempt(context, device, connectTimeoutMs, attemptNumber = 2)
                 } catch (again: RetryableConnectFailure) {

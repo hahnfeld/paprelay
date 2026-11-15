@@ -40,6 +40,7 @@ import com.everysoft.paprelay.pairing.PairingStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -171,8 +172,10 @@ class DeviceCheck(
         // A cancelled run is still unwinding until it completes; wait for that. And a run
         // must not begin on a pairing that is in the middle of being forgotten.
         if (job?.isCompleted == false || _forgetting.value) return
+        _stopping.value = false
         _running.value = true
-        job = scope.launch {
+        // Atomic: a run stopped before it has been given a thread still reaches its clean-up.
+        job = scope.launch(start = CoroutineStart.ATOMIC) {
             try {
                 _steps.value = template()
                 synchronized(report) {
@@ -189,8 +192,10 @@ class DeviceCheck(
             } finally {
                 _passkeyRequest.value = null
                 _machineChoice.value = null
-                _stopping.value = false
+                // In this order, a Stop that arrives during clean-up cannot leave "stopping" set
+                // on a run that is no longer shown as running; start() clears it in any case.
                 _running.value = false
+                _stopping.value = false
             }
         }
     }
@@ -243,8 +248,14 @@ class DeviceCheck(
             if (!allowed) throw CheckFailure(Message(R.string.detail_hc_no_permission), onPhone = true)
             val result = try {
                 healthConnect.writeAndRemove()
-            } catch (e: android.os.RemoteException) {
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (healthConnect.testValueMayRemain) {
+                    note("  the test value may still be in Health Connect; PAPRelay removes it at its next start or check")
+                }
                 // Health Connect's own "something went wrong inside" arrives as this, with no code.
+                if (e !is android.os.RemoteException) throw e
                 note("  ${code(e)}")
                 throw CheckFailure(Message(R.string.error_hc_failed), onPhone = true)
             }
@@ -386,7 +397,8 @@ class DeviceCheck(
                     // A machine that is not advertising cannot be connected to, so do not wait long for it.
                     GattLink.open(context, device, if (seen != null) CONNECT_MS else UNSEEN_CONNECT_MS)
                 } catch (e: As11TransportException) {
-                    if (seen != null) throw e
+                    // Bluetooth going off is its own story, not a machine out of range.
+                    if (seen != null || phoneBluetoothOff(e)) throw e
                     note("  ${code(e)}")
                     throw CheckFailure(Message(R.string.detail_not_in_range))
                 }
@@ -438,7 +450,11 @@ class DeviceCheck(
                 }
             }
 
-            step(DOWNLOAD) {
+            if (session.terminated.isCompleted) {
+                // The connection ended in an earlier step, which has said why. Trying again here
+                // would only report the same thing a second time.
+                skip(DOWNLOAD, Message(R.string.detail_no_session))
+            } else step(DOWNLOAD) {
                 val directory = withContext(Dispatchers.IO) {
                     dataDirectory().apply {
                         deleteRecursively() // never mix rounds from different runs
@@ -475,6 +491,8 @@ class DeviceCheck(
                     } catch (e: Exception) {
                         // One log failing must not hide whether the others work.
                         note("  ${spool.wireName}: FAILED ${code(e)}")
+                        // With Bluetooth off there is nothing more to learn log by log; say so plainly.
+                        if (phoneBluetoothOff(e)) throw e
                         if (!isPhoneSide(e)) machineFault = true
                         if (session.terminated.isCompleted) {
                             note("  the connection ended; later logs were not attempted")
@@ -544,10 +562,22 @@ class DeviceCheck(
             true
         } catch (e: Exception) {
             note("  ${code(e)}")
-            set(id, StepState.FAILED, explain(e), onPhone = isPhoneSide(e))
+            if (phoneBluetoothOff(e)) {
+                set(id, StepState.FAILED, Message(R.string.detail_bluetooth_off), onPhone = true)
+            } else {
+                set(id, StepState.FAILED, explain(e), onPhone = isPhoneSide(e))
+            }
             false
         }
     }
+
+    /**
+     * Whether Bluetooth being off on this phone explains a failure. The radio's own
+     * report of a lost link can arrive before the notice that Bluetooth was switched
+     * off, so a link failure with Bluetooth now off is counted too.
+     */
+    private fun phoneBluetoothOff(e: Throwable): Boolean =
+        bluetoothOff(e) || ((e is As11TransportException || e is As11TimeoutException) && !scanner.bluetoothEnabled)
 
     /** Whether a failure lies with this phone and not with the machine or the link to it. */
     private fun isPhoneSide(e: Throwable): Boolean = bluetoothOff(e) || when (e) {
@@ -674,7 +704,7 @@ class DeviceCheck(
             else -> healthConnectError(e)?.let {
                 // Its "not permitted" is the one fault the user can put right, so it keeps its own advice.
                 if (it.errorCode == android.health.connect.HealthConnectException.ERROR_SECURITY) {
-                    Message(R.string.error_permission)
+                    Message(R.string.detail_hc_no_permission)
                 } else {
                     Message(R.string.error_hc_reported, it.errorCode)
                 }

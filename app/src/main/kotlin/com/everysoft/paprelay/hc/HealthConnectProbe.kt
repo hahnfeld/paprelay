@@ -53,7 +53,17 @@ class HealthConnectProbe(private val context: Context) {
         exclusive.withLock { writeAndRemoveLocked() }
     }
 
+    /**
+     * True if the last [writeAndRemove] could not confirm that its test value is
+     * gone. It is then removed by [removeLeftover] at the next app start, or by
+     * the next check. Cleared when a new attempt begins.
+     */
+    @Volatile
+    var testValueMayRemain: Boolean = false
+        private set
+
     private suspend fun writeAndRemoveLocked(): ProbeResult {
+        testValueMayRemain = false
         val client = HealthConnectClient.getOrCreate(context)
         val now = Instant.now()
         val record = RespiratoryRateRecord(
@@ -97,18 +107,20 @@ class HealthConnectProbe(private val context: Context) {
         if (finished == null) {
             // The write may still land after being given up on, so try once more to remove it.
             // If this fails too, the next successful check removes it: the record id is fixed.
-            withTimeoutOrNull(RETRY_LIMIT_MS) {
+            val retried = withTimeoutOrNull(RETRY_LIMIT_MS) {
                 runCatching {
                     client.deleteRecords(
                         RespiratoryRateRecord::class,
                         recordIdsList = emptyList(),
                         clientRecordIdsList = listOf(PROBE_ID),
                     )
-                }
+                }.isSuccess
             }
+            testValueMayRemain = retried != true
             // If the write had already been refused, that is the more useful thing to report.
             throw refusal ?: HealthConnectUnresponsiveException()
         }
+        testValueMayRemain = !removed
         refusal?.let { throw it }
         return ProbeResult(written, removed)
     }

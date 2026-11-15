@@ -90,9 +90,10 @@ class MachineScanner(context: Context) {
         } finally {
             runCatching { scanner.stopScan(callback) }
         }
-        if (outcome != null && outcome != 0) throw As11TransportException("scan could not run, code $outcome")
-        // A scan cut short by the radio going off looks exactly like an empty one.
+        // A scan cut short by the radio going off looks exactly like an empty one, or fails
+        // with a code of its own; either way the cause is Bluetooth, so that is checked first.
         if (adapter?.isEnabled != true) throw BluetoothOffException("Bluetooth was turned off")
+        if (outcome != null && outcome != 0) throw As11TransportException("scan could not run, code $outcome")
         return seen.values.sortedByDescending { it.rssi }
     }
 
