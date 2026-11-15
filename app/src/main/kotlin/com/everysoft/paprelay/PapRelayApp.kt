@@ -10,6 +10,7 @@ import com.everysoft.paprelay.pairing.PairingStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /** Process-wide objects. Deliberately plain: there is no dependency-injection framework. */
 class PapRelayApp : Application() {
@@ -18,5 +19,11 @@ class PapRelayApp : Application() {
     val healthConnect: HealthConnectProbe by lazy { HealthConnectProbe(this) }
     val deviceCheck: DeviceCheck by lazy {
         DeviceCheck(this, scope, pairingStore, MachineScanner(this), healthConnect)
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        // Read once, off the main thread; screens observe the result.
+        scope.launch { pairingStore.load() }
     }
 }

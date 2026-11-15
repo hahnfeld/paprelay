@@ -68,6 +68,7 @@ dependencies {
     implementation(libs.health.connect)
     implementation(libs.serialization.json)
 
-    testImplementation(kotlin("test"))
+    // Android's local unit tests run on JUnit 4.
+    testImplementation(kotlin("test-junit"))
     testImplementation(libs.coroutines.test)
 }

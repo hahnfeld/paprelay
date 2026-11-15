@@ -38,14 +38,17 @@
             </intent-filter>
         </activity>
 
-        <!-- Health Connect opens this to show why PAPRelay asks for its permissions. -->
+        <!-- The privacy text. Reached only through the alias below, which the system guards. -->
         <activity
             android:name=".ui.PrivacyActivity"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
-            </intent-filter>
-        </activity>
+            android:exported="false" />
+
+        <!-- Health Connect opens this to show why PAPRelay asks for its permissions. -->
+        <!-- Serves the separate Health Connect app on Android 13 and older. PAPRelay runs on
+             Android 14+, where Health Connect is part of the system, so it is not shipped. -->
+        <service
+            android:name="androidx.health.platform.client.impl.sdkservice.HealthDataSdkService"
+            tools:node="remove" />
 
         <activity-alias
             android:name=".ViewPermissionUsageActivity"

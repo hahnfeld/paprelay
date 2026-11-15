@@ -13,8 +13,8 @@ import android.content.Context
 import android.os.ParcelUuid
 import com.everysoft.paprelay.as11.Advertisement
 import com.everysoft.paprelay.as11.As11TransportException
-import com.everysoft.paprelay.as11.Hex
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.ConcurrentHashMap
 
 /** One device seen during a scan. */
@@ -22,11 +22,11 @@ class Sighting(
     val device: BluetoothDevice,
     val rssi: Int,
     val advertisement: Advertisement,
-    /** The payload exactly as received, for diagnosing parser disagreements. */
-    val rawHex: String,
+    /** The payload with names and addresses blanked, for diagnosing parser disagreements. */
+    val redactedHex: String,
     /** Whether Android's own parser recovered the vendor service from this payload. */
     val platformSawService: Boolean,
-    val platformName: String?,
+    val platformSawName: Boolean,
 )
 
 /** Finds AirSense 11 machines nearby. Callers must hold BLUETOOTH_SCAN. */
@@ -36,47 +36,61 @@ class MachineScanner(context: Context) {
 
     val bluetoothEnabled: Boolean get() = adapter?.isEnabled == true
 
-    fun device(address: String): BluetoothDevice? = adapter?.getRemoteDevice(address)
+    /**
+     * A handle for connecting without having seen the machine advertise. Android
+     * assumes a public address here; if the machine uses another kind, only a
+     * device obtained from a scan will connect.
+     */
+    fun deviceByAddress(address: String): BluetoothDevice? = adapter?.takeIf { it.isEnabled }?.getRemoteDevice(address)
 
     /**
-     * Scans for [durationMs] and returns the strongest sighting of each device
-     * that looks like an AirSense 11.
+     * Scans for up to [durationMs] and returns the strongest sighting of each
+     * device that looks like an AirSense 11.
      *
      * @param platformFilter when true, asks the system to filter on the vendor
      *   service. The machine's advertising payload is malformed, so this may
      *   find nothing where an unfiltered scan succeeds; comparing the two is how
      *   that is established.
+     * @param stopAtAddress end the scan as soon as this address is seen.
      */
-    suspend fun scan(durationMs: Long, platformFilter: Boolean): List<Sighting> {
-        val scanner = adapter?.bluetoothLeScanner ?: throw As11TransportException("Bluetooth is off")
+    suspend fun scan(durationMs: Long, platformFilter: Boolean, stopAtAddress: String? = null): List<Sighting> {
+        val scanner = adapter?.takeIf { it.isEnabled }?.bluetoothLeScanner ?: throw As11TransportException("Bluetooth is off")
         val seen = ConcurrentHashMap<String, Sighting>()
-        var failure = 0
+        // Completes early: with an error code if the scan could not run, or with 0 once the wanted device is seen.
+        val finished = CompletableDeferred<Int>()
         val callback = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 val record = result.scanRecord ?: return
                 val raw = record.bytes ?: return
                 val advertisement = Advertisement.parse(raw)
                 val platformSawService = record.serviceUuids?.contains(SERVICE) == true
-                if (!advertisement.looksLikeAirSense && !platformSawService) return
+                val wanted = stopAtAddress != null && result.device.address.equals(stopAtAddress, ignoreCase = true)
+                if (!advertisement.looksLikeAirSense && !platformSawService && !wanted) return
                 val sighting = Sighting(
-                    result.device, result.rssi, advertisement, Hex.encode(raw), platformSawService, record.deviceName,
+                    result.device,
+                    result.rssi,
+                    advertisement,
+                    Advertisement.redactedHex(raw),
+                    platformSawService,
+                    record.deviceName != null,
                 )
                 seen.merge(result.device.address, sighting) { old, new -> if (new.rssi > old.rssi) new else old }
+                if (wanted) finished.complete(0)
             }
 
             override fun onScanFailed(errorCode: Int) {
-                failure = errorCode
+                finished.complete(errorCode)
             }
         }
         val filters = if (platformFilter) listOf(ScanFilter.Builder().setServiceUuid(SERVICE).build()) else null
         val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
         scanner.startScan(filters, settings, callback)
-        try {
-            delay(durationMs)
+        val outcome = try {
+            withTimeoutOrNull(durationMs) { finished.await() }
         } finally {
             runCatching { scanner.stopScan(callback) }
         }
-        if (failure != 0 && seen.isEmpty()) throw As11TransportException("scan failed, code $failure")
+        if (outcome != null && outcome != 0) throw As11TransportException("scan could not run, code $outcome")
         return seen.values.sortedByDescending { it.rssi }
     }
 

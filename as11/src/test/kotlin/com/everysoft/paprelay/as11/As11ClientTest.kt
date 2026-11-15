@@ -51,6 +51,30 @@ class As11ClientTest {
         }
     }
 
+    /** A link that stops delivering for a while part-way through an answer, then carries on. */
+    private class Pausing(
+        private val inner: As11Transport,
+        scope: CoroutineScope,
+        private val pauseAfterChunks: Int,
+        private val pauseMs: Long,
+    ) : As11Transport {
+        private val pipe = Channel<ByteArray>(Channel.UNLIMITED)
+        var armed = false
+
+        init {
+            scope.launch {
+                var sinceArmed = 0
+                inner.incoming.collect {
+                    if (armed && ++sinceArmed == pauseAfterChunks) kotlinx.coroutines.delay(pauseMs)
+                    pipe.send(it)
+                }
+            }
+        }
+
+        override val incoming: Flow<ByteArray> = pipe.receiveAsFlow()
+        override suspend fun send(frame: ByteArray) = inner.send(frame)
+    }
+
     private fun TestScope.clientOn(transport: As11Transport): As11Client = As11Client(
         transport, backgroundScope, SecureRandom(), nowMs = { wallBase + currentTime }, elapsedMs = { currentTime },
     )
@@ -61,6 +85,14 @@ class As11ClientTest {
     private suspend fun TestScope.securedClient(chunkSize: Int = 244): As11Client {
         val credentials = connect(chunkSize).pair { "0420" }
         return connect(chunkSize).also { it.startSession(credentials, NonceRegistry.AcceptAll) }
+    }
+
+    private class RememberingRegistry : NonceRegistry {
+        val seen = HashSet<String>()
+        override suspend fun isKnown(nonce: ByteArray) = Hex.encode(nonce) in seen
+        override suspend fun remember(nonce: ByteArray) {
+            seen += Hex.encode(nonce)
+        }
     }
 
     private fun bytes(size: Int, seed: Long = 7): ByteArray = ByteArray(size).also { Random(seed).nextBytes(it) }
@@ -164,13 +196,33 @@ class As11ClientTest {
     @Test
     fun `a replayed session nonce is refused`() = runTest {
         val credentials = connect().pair { "0420" }
-        val seen = HashSet<String>()
-        val registry = NonceRegistry { seen.add(Hex.encode(it)) }
+        val registry = RememberingRegistry()
         machine.faults.fixedNonce = ByteArray(32) { 3 }
         connect().startSession(credentials, registry)
         val replayed = connect()
         assertFailsWith<As11AuthException.NonceReplayed> { replayed.startSession(credentials, registry) }
         assertFalse(replayed.isSecure)
+    }
+
+    @Test
+    fun `backing out of the passkey prompt is reported as a cancelled pairing`() = runTest {
+        val failure = assertFailsWith<As11PairingCancelledException> {
+            connect().pair { throw kotlinx.coroutines.CancellationException("dialog dismissed") }
+        }
+        assertEquals(As11Recovery.ASK_USER, failure.recovery)
+        assertNull(machine.pairedClientId)
+    }
+
+    @Test
+    fun `a passkey that is never entered times out`() = runTest {
+        assertFailsWith<As11PairingCancelledException> { connect().pair { awaitCancellation() } }
+    }
+
+    @Test
+    fun `a code that is not a code is refused without spending the machine's attempt`() = runTest {
+        assertFailsWith<As11AuthException.PasskeyRejected> { connect().pair { "12" } }
+        // The machine never saw a confirmation, so the right code still works on a new link.
+        assertNotNull(connect().pair { "0420" })
     }
 
     @Test
@@ -346,10 +398,94 @@ class As11ClientTest {
         val client = securedClient(chunkSize = 20)
         machine.faults.dropChunkOfNextEncryptedFrame = 1
         assertFailsWith<As11TimeoutException> { client.get(serial) }
-        // The half-received answer was given up on, so it cannot hide what follows.
-        assertTrue(client.abandonedFrames >= 1)
+        // The next answer is as long as the damaged one, so it overruns it and is found at once.
         assertEquals(machine.serialNumber, client.get(serial).values["SerialNumber"]!!.jsonPrimitive.content)
+        assertEquals(1, client.payloadCrcFailures)
         assertEquals(0, client.counters.snapshot()["unmatchedResponses"])
+    }
+
+    @Test
+    fun `a short answer hidden behind a long damaged frame is recovered`() = runTest {
+        machine.spools["Summary"] = listOf(bytes(2_000))
+        val client = securedClient()
+        // Lose a chunk of the single 2 kB fragment (the third encrypted frame of the round).
+        machine.faults.encryptedFramesBeforeChunkDrop = 2
+        machine.faults.dropChunkOfNextEncryptedFrame = 3
+        assertFailsWith<As11SpoolStalledException> { client.pullSpoolRound(SpoolName.SUMMARY, from) }
+        // This answer is far shorter than what the damaged frame still claims.
+        assertEquals(machine.serialNumber, client.get(serial).values["SerialNumber"]!!.jsonPrimitive.content)
+        assertEquals(1, client.abandonedFrames)
+        assertEquals(2_000, client.pullSpoolRound(SpoolName.SUMMARY, from).data.size)
+    }
+
+    @Test
+    fun `an answer that pauses mid-frame is waited for, not discarded`() = runTest {
+        val link = Pausing(machine.connect(chunkSize = 20), backgroundScope, pauseAfterChunks = 3, pauseMs = 4_000)
+        val credentials = connect().pair { "0420" }
+        val client = clientOn(link).also { it.startSession(credentials, NonceRegistry.AcceptAll) }
+        link.armed = true
+        assertEquals(machine.serialNumber, client.get(serial).values["SerialNumber"]!!.jsonPrimitive.content)
+        assertEquals(0, client.abandonedFrames)
+        assertEquals(0, client.discardedBytes)
+    }
+
+    @Test
+    fun `a peer that cannot answer on the encrypted channel never gets a session`() = runTest {
+        val credentials = connect().pair { "0420" }
+        machine.faults.silentMethods += "GetVersion"
+        val client = connect()
+        val failure = assertFailsWith<As11AuthException.SessionUnproven> {
+            client.startSession(credentials, NonceRegistry.AcceptAll)
+        }
+        assertEquals(As11Recovery.PAIRING_SUSPECT, failure.recovery)
+        assertFalse(client.isSecure)
+        assertTrue(client.terminated.isCompleted)
+    }
+
+    @Test
+    fun `a nonce is remembered only after the session is proven`() = runTest {
+        val credentials = connect().pair { "0420" }
+        val registry = RememberingRegistry()
+        machine.faults.silentMethods += "GetVersion"
+        assertFailsWith<As11AuthException.SessionUnproven> { connect().startSession(credentials, registry) }
+        assertTrue(registry.seen.isEmpty())
+        machine.faults.silentMethods.clear()
+        connect().startSession(credentials, registry)
+        assertEquals(1, registry.seen.size)
+    }
+
+    @Test
+    fun `trouble storing the nonce record is a typed, retryable failure`() = runTest {
+        val credentials = connect().pair { "0420" }
+        val broken = object : NonceRegistry {
+            override suspend fun isKnown(nonce: ByteArray): Boolean = throw java.io.IOException("disk full")
+            override suspend fun remember(nonce: ByteArray) = Unit
+        }
+        val failure = assertFailsWith<As11NonceStoreException> { connect().startSession(credentials, broken) }
+        assertEquals(As11Recovery.RETRY_LATER, failure.recovery)
+    }
+
+    @Test
+    fun `a round whose data was all lost is not mistaken for an empty log`() = runTest {
+        machine.spools["Summary"] = listOf(bytes(5_000))
+        machine.faults.separateTerminalFragment = true
+        machine.faults.dropFragments += listOf(0, 1)
+        val failure = assertFailsWith<As11SpoolIntegrityException> { securedClient().pullSpoolRound(SpoolName.SUMMARY, from) }
+        assertEquals(As11Recovery.REPEAT_ROUND, failure.recovery)
+    }
+
+    @Test
+    fun `sustained tampering exhausts the session's budget even when some frames get through`() = runTest {
+        val client = securedClient()
+        var outcome: As11Exception? = null
+        // Two damaged, one clean, repeatedly: never three in a row.
+        for (i in 0 until 30) {
+            machine.faults.corruptEncryptedFrames = if (i % 3 == 2) 0 else 1
+            outcome = runCatching { client.get(serial) }.exceptionOrNull() as? As11Exception
+            if (client.terminated.isCompleted) break
+        }
+        assertIs<As11ProtocolException>(client.terminated.await())
+        assertNotNull(outcome)
     }
 
     @Test
@@ -477,7 +613,8 @@ class As11ClientTest {
         client.getDateTime()
         client.pullSpoolRound(SpoolName.SUMMARY, from)
         assertEquals(
-            listOf("Get", "GetVersion", "GetDateTime", "StartSpool", "PullSpoolFragments"),
+            // The first GetVersion is the session proof.
+            listOf("GetVersion", "Get", "GetVersion", "GetDateTime", "StartSpool", "PullSpoolFragments"),
             machine.encryptedMethodsSeen,
         )
     }

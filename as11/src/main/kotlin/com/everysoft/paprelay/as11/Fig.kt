@@ -81,7 +81,7 @@ public object Fig {
  * Corrupt input never throws; it is skipped and counted so the caller can decide
  * whether the link is still trustworthy.
  *
- * Not thread-safe: callers serialise [push], [abandonPartialFrame] and [reset].
+ * Not thread-safe: callers serialise [push], [recoverHiddenFrames] and [reset].
  * The counters may be read from any thread.
  *
  * @param maxPayload largest payload length accepted from a header; larger values
@@ -101,7 +101,7 @@ public class FigDeframer(private val maxPayload: Int = DEFAULT_MAX_PAYLOAD) {
     public var payloadCrcFailures: Long = 0
         private set
 
-    /** Frames given up on because the rest of them never arrived. */
+    /** Frames dropped because later complete frames showed the rest of them was lost. */
     @Volatile
     public var abandonedFrames: Long = 0
         private set
@@ -120,18 +120,39 @@ public class FigDeframer(private val maxPayload: Int = DEFAULT_MAX_PAYLOAD) {
     }
 
     /**
-     * Gives up on the frame currently being waited for and rescans what is held.
+     * Delivers frames that are complete but stuck behind an unfinished one.
      *
      * A frame whose middle was lost declares a length that the stream will only
-     * satisfy with bytes belonging to later frames, so those frames would stay
-     * hidden behind it. Call this when the link has been quiet for long enough
-     * that the rest of the frame is clearly not coming.
+     * satisfy with bytes belonging to later frames, so those frames stay hidden
+     * behind it. This looks past the pending frame for one that is complete and
+     * passes both CRCs. Only then is the pending frame known to be dead and
+     * dropped; a frame that is merely arriving slowly is left alone.
      */
-    public fun abandonPartialFrame(): List<FigFrame> {
-        if (length == 0) return emptyList()
+    public fun recoverHiddenFrames(): List<FigFrame> {
+        val later = firstCompleteFrameFrom(1)
+        if (later < 0) return emptyList()
         abandonedFrames += 1
-        discardedBytes += 1
-        return scan(1)
+        discardedBytes += later.toLong()
+        return scan(later)
+    }
+
+    private fun firstCompleteFrameFrom(from: Int): Int {
+        var at = from
+        while (true) {
+            val sync = indexOfSync(at)
+            if (sync < 0) return -1
+            if (length - sync >= Fig.OVERHEAD) {
+                val payloadLength = Fig.getU16(buffer, sync + 6)
+                if (payloadLength <= maxPayload &&
+                    length - sync >= Fig.OVERHEAD + payloadLength &&
+                    Fig.crc32(buffer, sync + 4, 8) == Fig.getU32(buffer, sync + 12) &&
+                    Fig.crc32(buffer, sync + Fig.OVERHEAD, payloadLength) == Fig.getU32(buffer, sync + 8)
+                ) {
+                    return sync
+                }
+            }
+            at = sync + 1
+        }
     }
 
     private fun scan(from: Int): List<FigFrame> {

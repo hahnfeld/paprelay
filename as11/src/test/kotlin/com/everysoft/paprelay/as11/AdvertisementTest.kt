@@ -51,10 +51,32 @@ class AdvertisementTest {
     }
 
     @Test
+    fun `the report form hides names and addresses but keeps the structure`() {
+        val address = field(0x1B, byteArrayOf(0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66))
+        val redacted = Advertisement.redactedHex(flags + service + name + address)
+        assertEquals("020106" + "030356FD" + "0E09" + "xx".repeat(13) + "081B" + "xx".repeat(7), redacted)
+
+        // The machine's own trailer runs off the end; what is there of it is hidden too.
+        val broken = byteArrayOf(0x08, 0x1B, 0, 0x11, 0x22, 0x33)
+        assertEquals("020106" + "081B" + "xx".repeat(4), Advertisement.redactedHex(flags + broken))
+        // Nothing that looks like the name or address bytes survives.
+        for (secret in listOf("526573", "112233")) assertFalse(redacted.contains(secret))
+    }
+
+    @Test
+    fun `padding ends parsing and is flagged, as in the reference`() {
+        assertTrue(Advertisement.parse(flags + ByteArray(8)).truncated)
+        assertEquals("020106" + "00" + "xx".repeat(7), Advertisement.redactedHex(flags + ByteArray(8)))
+    }
+
+    @Test
     fun `arbitrary bytes never throw`() {
         val random = Random(3)
         repeat(5_000) {
-            Advertisement.parse(ByteArray(random.nextInt(70)).also(random::nextBytes)).looksLikeAirSense
+            val junk = ByteArray(random.nextInt(70)).also(random::nextBytes)
+            Advertisement.parse(junk).looksLikeAirSense
+            // Every input byte is accounted for, shown or blanked.
+            assertEquals(junk.size * 2, Advertisement.redactedHex(junk).length)
         }
     }
 }

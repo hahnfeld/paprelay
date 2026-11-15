@@ -10,6 +10,8 @@
     <string name="action_reconnect_check">Reconnect only</string>
     <string name="action_forget">Forget machine</string>
     <string name="action_export">Export report</string>
+    <string name="action_stop">Stop</string>
+    <string name="action_use_this">Use this machine</string>
 
     <string name="machine_heading">Machine</string>
     <string name="machine_unpaired">Not paired</string>
@@ -25,13 +27,32 @@
     <string name="state_running">Running</string>
     <string name="state_skipped">Skipped</string>
     <string name="state_pending">Waiting</string>
+    <string name="state_noted">Noted</string>
+
+    <string name="verdict_idle">Not run yet</string>
+    <string name="verdict_running">Running…</string>
+    <string name="verdict_passed">All checks passed</string>
+    <plurals name="verdict_failed">
+        <item quantity="one">%1$d check failed</item>
+        <item quantity="other">%1$d checks failed</item>
+    </plurals>
+    <string name="verdict_incomplete">Stopped before finishing</string>
+
+    <string name="machine_unreadable">Pairing needs to be redone</string>
+    <string name="machine_unreadable_hint">A pairing was stored but can no longer be read on this phone. Put the machine in pairing mode and run the check to pair again.</string>
+    <string name="machine_loading">Checking…</string>
+
+    <string name="choose_title">Which machine is yours?</string>
+    <string name="choose_body">More than one machine is in range. The one nearest the phone usually has the strongest signal.</string>
+
+    <string name="export_failed">The report could not be saved.</string>
 
     <string name="passkey_title">Enter the code on the machine</string>
     <string name="passkey_body">The machine is showing a 4-digit code. Pairing replaces the myAir app\'s connection to this machine.</string>
     <string name="passkey_label">Code</string>
 
     <string name="forget_title">Forget this machine?</string>
-    <string name="forget_body">PAPRelay will delete its pairing. Data already written to Health Connect stays there.</string>
+    <string name="forget_body">PAPRelay will delete its pairing and the data this check downloaded. Data already written to Health Connect stays there.</string>
 
     <string name="permission_bluetooth_denied">Bluetooth permission is needed to reach the machine.</string>
     <string name="early_build_notice">Early build. Not validated against a real machine yet.</string>

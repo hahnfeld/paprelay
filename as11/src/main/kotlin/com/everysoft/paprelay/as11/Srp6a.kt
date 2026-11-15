@@ -59,7 +59,7 @@ public class Srp6aClient internal constructor(privateExponent: ByteArray) {
      * @throws As11AuthException if they are values no honest machine would send.
      */
     public fun computeProof(serverPublicKeyHex: String, saltHex: String, passkey: String): SrpProof {
-        require(PASSKEY.matches(passkey)) { "passkey must be 4 to 8 digits" }
+        require(isValidPasskey(passkey)) { "passkey must be 4 to 8 digits" }
         val salt = Hex.decode(saltHex, MAX_SALT_BYTES)
         // The machine may omit leading zeros, so this is parsed as a number rather
         // than as a fixed-width byte string.
@@ -92,6 +92,10 @@ public class Srp6aClient internal constructor(privateExponent: ByteArray) {
         internal const val PRIVATE_EXPONENT_BYTES = 32
         private const val MAX_SALT_BYTES = 64
         private val PASSKEY = Regex("[0-9]{4,8}")
+
+        /** Whether [passkey] has the form of a code the machine could display. */
+        public fun isValidPasskey(passkey: String): Boolean = PASSKEY.matches(passkey)
+
         private val SERVER_KEY = Regex("[0-9A-Fa-f]{1,${PAD * 2}}")
 
         /** RFC 5054 Appendix A, 2048-bit group. */

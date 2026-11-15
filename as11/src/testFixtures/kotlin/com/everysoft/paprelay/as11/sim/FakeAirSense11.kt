@@ -98,6 +98,9 @@ public class FaultPlan {
     /** Lose this chunk (counting from 0) of the next encrypted frame, as a missed notification would. */
     public var dropChunkOfNextEncryptedFrame: Int? = null
 
+    /** Let this many encrypted frames through before [dropChunkOfNextEncryptedFrame] applies. */
+    public var encryptedFramesBeforeChunkDrop: Int = 0
+
     /** Accept writes but never complete them. */
     public var hangSend: Boolean = false
 
@@ -431,7 +434,13 @@ public class FakeAirSense11(
                 faults.corruptEncryptedFrames--
                 payload[payload.size - 1] = (payload[payload.size - 1].toInt() xor 0x01).toByte()
             }
-            emit(Fig.CHANNEL_RX_ENCRYPTED, payload, faults.dropChunkOfNextEncryptedFrame.also { faults.dropChunkOfNextEncryptedFrame = null })
+            val dropChunk = if (faults.encryptedFramesBeforeChunkDrop > 0) {
+                faults.encryptedFramesBeforeChunkDrop--
+                null
+            } else {
+                faults.dropChunkOfNextEncryptedFrame.also { faults.dropChunkOfNextEncryptedFrame = null }
+            }
+            emit(Fig.CHANNEL_RX_ENCRYPTED, payload, dropChunk)
         }
 
         private fun emit(channel: Int, payload: ByteArray, dropChunk: Int? = null) {

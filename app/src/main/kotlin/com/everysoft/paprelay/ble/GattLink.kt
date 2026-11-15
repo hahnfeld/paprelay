@@ -10,14 +10,19 @@
 package com.everysoft.paprelay.ble
 
 import android.annotation.SuppressLint
+import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
+import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothStatusCodes
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.Handler
 import android.os.HandlerThread
 import com.everysoft.paprelay.as11.As11ProtocolException
@@ -25,32 +30,34 @@ import com.everysoft.paprelay.as11.As11Transport
 import com.everysoft.paprelay.as11.As11TransportException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
 
 /** What the machine's GATT database looked like, for diagnostics. */
-data class GattSummary(val mtu: Int, val services: List<String>)
+data class GattSummary(val mtu: Int, val services: List<String>, val connectAttempts: Int)
 
 /**
  * One GATT connection to the machine, exposed as a byte pipe.
  *
  * Rules this class exists to enforce:
- * - one GATT operation in flight at a time, each with its own timeout;
- * - writes are ordinary write requests of at most MTU-3 bytes. A larger write
- *   would be turned into a "long write" by the stack, which the machine rejects
- *   and may not recover from;
- * - a connection object is never reused: after any disconnect it is closed.
+ * - one GATT request in flight at a time, each matched to its own completion
+ *   (see [GattOperations]);
+ * - writes are ordinary write requests, never longer than the link allows. A
+ *   longer write would be turned into a "long write" by the stack, which the
+ *   machine rejects and may not recover from;
+ * - a connection object is never reused: after any disconnect it is closed;
+ * - received bytes are buffered from the moment notifications are enabled, and
+ *   the stream ends with an error when the link drops or Bluetooth is turned off.
  *
  * Callers must hold BLUETOOTH_CONNECT.
  */
 @SuppressLint("MissingPermission")
 class GattLink private constructor(
+    private val context: Context,
     private val gatt: BluetoothGatt,
     private val callback: Callback,
     private val thread: HandlerThread,
@@ -60,19 +67,40 @@ class GattLink private constructor(
 
     private val closed = AtomicBoolean(false)
 
+    /** Android reports nothing on the connection when the radio is switched off, so listen for that too. */
+    private val adapterWatcher = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.STATE_ON)
+            if (state != BluetoothAdapter.STATE_ON) callback.fail(As11TransportException("Bluetooth was turned off"))
+        }
+    }
+
+    init {
+        context.registerReceiver(
+            adapterWatcher,
+            IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED),
+            Context.RECEIVER_NOT_EXPORTED,
+        )
+    }
+
     override val incoming: Flow<ByteArray> = callback.incoming.receiveAsFlow()
 
     override suspend fun send(frame: ByteArray) {
-        val chunk = callback.mtu - ATT_WRITE_OVERHEAD
+        val chunk = writeChunk(callback.mtu)
         var at = 0
         while (at < frame.size) {
             val end = minOf(frame.size, at + chunk)
             val piece = frame.copyOfRange(at, end)
-            val status = callback.operation("write", WRITE_TIMEOUT_MS) {
+            val status = callback.operations.run(GattOperation.WRITE, WRITE_TIMEOUT_MS) {
                 gatt.writeCharacteristic(tx, piece, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) ==
                     BluetoothStatusCodes.SUCCESS
             }
-            if (status != BluetoothGatt.GATT_SUCCESS) throw As11TransportException("write failed, status $status")
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                // Part of the frame is on the wire: the link cannot carry another request.
+                val cause = As11TransportException("write failed, status $status")
+                callback.fail(cause)
+                throw cause
+            }
             at = end
         }
     }
@@ -80,6 +108,7 @@ class GattLink private constructor(
     /** Disconnects and releases the connection. Safe to call more than once. */
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
+        runCatching { context.unregisterReceiver(adapterWatcher) }
         callback.fail(As11TransportException("closed"))
         runCatching { gatt.disconnect() }
         runCatching { gatt.close() }
@@ -87,36 +116,20 @@ class GattLink private constructor(
     }
 
     private class Callback : BluetoothGattCallback() {
+        val operations = GattOperations()
         val connected = CompletableDeferred<Unit>()
         val incoming = Channel<ByteArray>(Channel.UNLIMITED)
-        private val pending = AtomicReference<CompletableDeferred<Int>?>(null)
-        private val lock = Mutex()
-        private val failure = AtomicReference<As11TransportException?>(null)
+
+        /** Status of the first disconnect seen before the link came up, for retry decisions. */
+        @Volatile
+        var connectFailureStatus: Int? = null
 
         @Volatile
         var mtu: Int = DEFAULT_MTU
 
-        @Volatile
-        var rx: UUID? = null
-
-        /** Runs one GATT operation and waits for its completion callback. */
-        suspend fun operation(name: String, timeoutMs: Long, start: () -> Boolean): Int = lock.withLock {
-            failure.get()?.let { throw it }
-            val done = CompletableDeferred<Int>()
-            pending.set(done)
-            try {
-                failure.get()?.let { throw it }
-                if (!start()) throw As11TransportException("$name could not be started")
-                withTimeoutOrNull(timeoutMs) { done.await() } ?: throw As11TransportException("$name timed out")
-            } finally {
-                pending.set(null)
-            }
-        }
-
         fun fail(cause: As11TransportException) {
-            if (!failure.compareAndSet(null, cause)) return
             connected.completeExceptionally(cause)
-            pending.get()?.completeExceptionally(cause)
+            operations.fail(cause)
             incoming.close(cause)
         }
 
@@ -124,29 +137,31 @@ class GattLink private constructor(
             if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
                 connected.complete(Unit)
             } else {
+                if (!connected.isCompleted) connectFailureStatus = status
                 fail(As11TransportException("link lost, status $status"))
             }
         }
 
+        // The machine often starts the MTU exchange itself, so this can arrive unasked.
         override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
             if (status == BluetoothGatt.GATT_SUCCESS) this.mtu = mtu
-            pending.get()?.complete(status)
+            operations.complete(GattOperation.MTU, status)
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-            pending.get()?.complete(status)
+            operations.complete(GattOperation.DISCOVERY, status)
         }
 
         override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
-            pending.get()?.complete(status)
+            if (descriptor.uuid == CCCD) operations.complete(GattOperation.SUBSCRIBE, status)
         }
 
         override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
-            pending.get()?.complete(status)
+            if (characteristic.uuid == TX) operations.complete(GattOperation.WRITE, status)
         }
 
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
-            if (characteristic.uuid == rx) incoming.trySend(value)
+            if (characteristic.uuid == RX) incoming.trySend(value)
         }
 
         override fun onServiceChanged(gatt: BluetoothGatt) {
@@ -164,37 +179,81 @@ class GattLink private constructor(
         private const val DEFAULT_MTU = 23
         private const val REQUESTED_MTU = 517
         private const val ATT_WRITE_OVERHEAD = 3
+
+        /** The largest write the reference client has been seen to use (MTU 247). */
+        private const val MAX_WRITE_CHUNK = 244
         private const val WRITE_TIMEOUT_MS = 5_000L
         private const val MTU_TIMEOUT_MS = 5_000L
         private const val DISCOVERY_TIMEOUT_MS = 10_000L
 
+        /** Android's catch-all connection failure; often clears on a second attempt. */
+        private const val GATT_ERROR = 133
+        private const val RETRY_PAUSE_MS = 1_000L
+
+        /** How many bytes one write may carry at this MTU. */
+        fun writeChunk(mtu: Int): Int = (mtu - ATT_WRITE_OVERHEAD).coerceIn(DEFAULT_MTU - ATT_WRITE_OVERHEAD, MAX_WRITE_CHUNK)
+
         /**
          * Connects, negotiates the MTU, finds the machine's stream characteristics
-         * and enables notifications.
+         * and enables notifications. A first attempt that fails with Android's
+         * generic status 133 is retried once.
          *
          * @throws As11TransportException if the link cannot be brought up.
          * @throws As11ProtocolException if the device is not an AirSense 11.
          */
         suspend fun open(context: Context, device: BluetoothDevice, connectTimeoutMs: Long): GattLink {
+            val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter
+            if (adapter?.isEnabled != true) throw As11TransportException("Bluetooth is off")
+            return try {
+                attempt(context, device, connectTimeoutMs, attemptNumber = 1)
+            } catch (e: RetryableConnectFailure) {
+                delay(RETRY_PAUSE_MS)
+                try {
+                    attempt(context, device, connectTimeoutMs, attemptNumber = 2)
+                } catch (again: RetryableConnectFailure) {
+                    throw again.cause
+                }
+            }
+        }
+
+        private class RetryableConnectFailure(override val cause: As11TransportException) : Exception()
+
+        private suspend fun attempt(
+            context: Context,
+            device: BluetoothDevice,
+            connectTimeoutMs: Long,
+            attemptNumber: Int,
+        ): GattLink {
             val thread = HandlerThread("paprelay-gatt").apply { start() }
             val callback = Callback()
-            val gatt = device.connectGatt(
-                context.applicationContext,
-                false,
-                callback,
-                BluetoothDevice.TRANSPORT_LE,
-                BluetoothDevice.PHY_LE_1M_MASK,
-                Handler(thread.looper),
-            )
+            var gatt: BluetoothGatt? = null
             try {
-                withTimeoutOrNull(connectTimeoutMs) { callback.connected.await() }
-                    ?: throw As11TransportException("machine did not answer")
+                gatt = device.connectGatt(
+                    context.applicationContext,
+                    false,
+                    callback,
+                    BluetoothDevice.TRANSPORT_LE,
+                    BluetoothDevice.PHY_LE_1M_MASK,
+                    Handler(thread.looper),
+                ) ?: throw As11TransportException("Bluetooth could not start a connection")
 
-                // Until the exchange completes only the default MTU may be assumed.
-                runCatching { callback.operation("MTU exchange", MTU_TIMEOUT_MS) { gatt.requestMtu(REQUESTED_MTU) } }
-                    .onFailure { if (it !is As11TransportException) throw it }
+                try {
+                    withTimeoutOrNull(connectTimeoutMs) { callback.connected.await() }
+                        ?: throw As11TransportException("the machine did not answer")
+                } catch (e: As11TransportException) {
+                    if (callback.connectFailureStatus == GATT_ERROR) throw RetryableConnectFailure(e)
+                    throw e
+                }
 
-                val discovered = callback.operation("service discovery", DISCOVERY_TIMEOUT_MS) { gatt.discoverServices() }
+                // Optional: without it the link stays at the default size, which is slow but correct.
+                // A late completion cannot confuse later steps: each is matched to its own kind.
+                try {
+                    callback.operations.run(GattOperation.MTU, MTU_TIMEOUT_MS) { gatt.requestMtu(REQUESTED_MTU) }
+                } catch (e: As11TransportException) {
+                    if (!callback.connected.isCompleted || callback.incoming.isClosedForSend) throw e
+                }
+
+                val discovered = callback.operations.run(GattOperation.DISCOVERY, DISCOVERY_TIMEOUT_MS) { gatt.discoverServices() }
                 if (discovered != BluetoothGatt.GATT_SUCCESS) {
                     throw As11TransportException("service discovery failed, status $discovered")
                 }
@@ -203,7 +262,6 @@ class GattLink private constructor(
                 val rx = service.getCharacteristic(RX) ?: throw As11ProtocolException("device has no data characteristic")
                 val cccd = rx.getDescriptor(CCCD) ?: throw As11ProtocolException("data characteristic cannot notify")
 
-                callback.rx = RX
                 if (!gatt.setCharacteristicNotification(rx, true)) {
                     throw As11TransportException("notifications could not be enabled")
                 }
@@ -212,7 +270,7 @@ class GattLink private constructor(
                 } else {
                     BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
                 }
-                val subscribed = callback.operation("subscribe", WRITE_TIMEOUT_MS) {
+                val subscribed = callback.operations.run(GattOperation.SUBSCRIBE, WRITE_TIMEOUT_MS) {
                     gatt.writeDescriptor(cccd, enable) == BluetoothStatusCodes.SUCCESS
                 }
                 if (subscribed != BluetoothGatt.GATT_SUCCESS) {
@@ -224,11 +282,13 @@ class GattLink private constructor(
                         it.uuid.toString().substring(0, 8) + ":" + it.properties.toString(16)
                     }
                 }
-                return GattLink(gatt, callback, thread, tx, GattSummary(callback.mtu, services))
+                return GattLink(context.applicationContext, gatt, callback, thread, tx, GattSummary(callback.mtu, services, attemptNumber))
             } catch (e: Throwable) {
                 callback.fail(As11TransportException("setup abandoned"))
-                runCatching { gatt.disconnect() }
-                runCatching { gatt.close() }
+                gatt?.let {
+                    runCatching { it.disconnect() }
+                    runCatching { it.close() }
+                }
                 thread.quitSafely()
                 throw e
             }

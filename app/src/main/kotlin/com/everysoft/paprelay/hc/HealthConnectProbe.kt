@@ -8,8 +8,14 @@ import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.RespiratoryRateRecord
 import androidx.health.connect.client.records.metadata.Device
 import androidx.health.connect.client.records.metadata.Metadata
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.ZoneId
+
+/** Outcome of the Health Connect write test. */
+class ProbeResult(val written: Int, val removed: Boolean)
 
 /**
  * Proves that this build is allowed to write to Health Connect: writes one
@@ -24,8 +30,12 @@ class HealthConnectProbe(private val context: Context) {
     suspend fun hasPermission(): Boolean =
         writePermission in HealthConnectClient.getOrCreate(context).permissionController.getGrantedPermissions()
 
-    /** @return a short description of what happened. Throws if Health Connect refuses. */
-    suspend fun writeAndRemove(): String {
+    /**
+     * Writes the test value and removes it. The removal is attempted even if
+     * the check is cancelled, and twice if need be: a made-up reading must not
+     * be left in the user's health data. Throws if Health Connect refuses the write.
+     */
+    suspend fun writeAndRemove(): ProbeResult {
         val client = HealthConnectClient.getOrCreate(context)
         val now = Instant.now()
         val record = RespiratoryRateRecord(
@@ -38,9 +48,31 @@ class HealthConnectProbe(private val context: Context) {
                 device = Device(type = Device.TYPE_UNKNOWN, manufacturer = "PAPRelay", model = "write test"),
             ),
         )
-        val inserted = client.insertRecords(listOf(record)).recordIdsList.size
-        client.deleteRecords(RespiratoryRateRecord::class, recordIdsList = emptyList(), clientRecordIdsList = listOf(PROBE_ID))
-        return "wrote $inserted test record and removed it"
+        var written = 0
+        var removed = false
+        try {
+            written = client.insertRecords(listOf(record)).recordIdsList.size
+        } finally {
+            withContext(NonCancellable) {
+                repeat(2) {
+                    if (!removed) {
+                        removed = try {
+                            client.deleteRecords(
+                                RespiratoryRateRecord::class,
+                                recordIdsList = emptyList(),
+                                clientRecordIdsList = listOf(PROBE_ID),
+                            )
+                            true
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            false
+                        }
+                    }
+                }
+            }
+        }
+        return ProbeResult(written, removed)
     }
 
     private companion object {

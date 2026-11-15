@@ -56,7 +56,7 @@ class FigTest {
     }
 
     @Test
-    fun `frames hidden behind a truncated frame are recovered by abandoning it`() {
+    fun `frames hidden behind a truncated frame are recovered`() {
         val deframer = FigDeframer()
         val truncated = Fig.encode(0x0396, ByteArray(4000) { 7 }).copyOf(300)
         val following = (1..3).map { Fig.encode(0x0396, "frame-$it".toByteArray()) }.reduce { a, b -> a + b }
@@ -64,10 +64,36 @@ class FigTest {
         assertEquals(0, deframer.push(truncated + following).size)
         assertTrue(deframer.hasPartialFrame)
 
-        val recovered = deframer.abandonPartialFrame()
+        val recovered = deframer.recoverHiddenFrames()
         assertEquals(listOf("frame-1", "frame-2", "frame-3"), recovered.map { String(it.payload) })
         assertEquals(1, deframer.abandonedFrames)
-        assertEquals(0, deframer.abandonPartialFrame().size)
+        assertEquals(0, deframer.recoverHiddenFrames().size)
+    }
+
+    @Test
+    fun `a frame that is only arriving slowly is never dropped`() {
+        val deframer = FigDeframer()
+        val frame = Fig.encode(0x0396, ByteArray(900) { it.toByte() })
+        assertEquals(0, deframer.push(frame.copyOf(300)).size)
+        // Asked to recover while nothing complete lies behind it: it must keep waiting.
+        repeat(5) { assertEquals(0, deframer.recoverHiddenFrames().size) }
+        assertEquals(0, deframer.abandonedFrames)
+        val delivered = deframer.push(frame.copyOfRange(300, frame.size))
+        assertEquals(1, delivered.size)
+        assertContentEquals(ByteArray(900) { it.toByte() }, delivered[0].payload)
+        assertEquals(0, deframer.discardedBytes)
+    }
+
+    @Test
+    fun `a payload that happens to contain a whole valid frame is not split by recovery`() {
+        // The inner frame is complete and CRC-valid, so recovery would deliver it if the
+        // outer frame were pending. It is only reachable when the outer frame is incomplete.
+        val inner = Fig.encode(0x0396, "inner".toByteArray())
+        val outer = Fig.encode(0x0396, inner + ByteArray(40))
+        val deframer = FigDeframer()
+        val delivered = deframer.push(outer)
+        assertEquals(1, delivered.size)
+        assertEquals(0, deframer.recoverHiddenFrames().size)
     }
 
     @Test

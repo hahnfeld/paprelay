@@ -10,7 +10,8 @@
 // Ported to Kotlin and modified 2026-11-15: request ids are matched, the server
 // proof is compared in constant time, an unverifiable download is refused,
 // plaintext is ignored once a session exists, a frame cut short by a lost chunk
-// is abandoned after a quiet period, sends are time-limited, and all
+// is dropped once later frames prove it dead, a session counts as open only
+// after a valid encrypted answer, sends are time-limited, and all
 // device-supplied values are bounded.
 package com.everysoft.paprelay.as11
 
@@ -76,14 +77,26 @@ public class PairingCredentials(public val clientId: String, public val pairingK
     override fun toString(): String = "PairingCredentials(redacted)"
 }
 
-/** Remembers session nonces so a replayed session setup can be refused. */
-public fun interface NonceRegistry {
-    /** Records [nonce]; returns false if it has been seen before. */
-    public suspend fun register(nonce: ByteArray): Boolean
+/**
+ * Remembers session nonces so a replayed session setup can be refused.
+ *
+ * A nonce is recorded only after the peer has proved it holds the pairing key,
+ * so a device that merely pretends to be the machine cannot fill the record or
+ * push genuine entries out of it.
+ */
+public interface NonceRegistry {
+    /** Whether [nonce] was used by an earlier, proven session. */
+    public suspend fun isKnown(nonce: ByteArray): Boolean
+
+    /** Records [nonce] as used. */
+    public suspend fun remember(nonce: ByteArray)
 
     public companion object {
-        /** Accepts everything. For tests and one-off diagnostics only. */
-        public val AcceptAll: NonceRegistry = NonceRegistry { true }
+        /** Remembers nothing. For tests and one-off diagnostics only. */
+        public val AcceptAll: NonceRegistry = object : NonceRegistry {
+            override suspend fun isKnown(nonce: ByteArray): Boolean = false
+            override suspend fun remember(nonce: ByteArray) = Unit
+        }
     }
 }
 
@@ -132,6 +145,8 @@ public class As11Timeouts(
     public val resyncIdleMs: Long = 1_500,
     /** Pause after session setup before the first encrypted request, as the reference client does. */
     public val sessionSettleMs: Long = 200,
+    /** Longest the user may take to type the code the machine is showing. */
+    public val passkeyEntryMs: Long = 120_000,
 )
 
 /**
@@ -200,7 +215,7 @@ public class As11Client(
             val hashHex: String?,
         ) : Inbound()
 
-        class Unreadable(val reason: String) : Inbound()
+        class Unreadable(val spoolId: Int?, val reason: String) : Inbound()
     }
 
     public val counters: As11Counters = As11Counters()
@@ -212,18 +227,25 @@ public class As11Client(
     private val failure = AtomicReference<As11Exception?>(null)
     private val failed = CompletableDeferred<As11Exception>()
     private val sessionKey = AtomicReference<ByteArray?>(null)
-    private val chunksSeen = AtomicLong()
+    private var chunksSeen = 0L // guarded by the deframer lock
     private val consecutiveUndecodable = AtomicInteger()
+    private val totalUndecodable = AtomicInteger()
+
+    @Volatile
+    private var sessionProven = false
     private var nextId = 1000 + random.nextInt(9000)
     private var pairedOnThisLink = false
 
     private val reader: Job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
         try {
             coroutineScope {
-                val watchdog = launch { abandonStalledFrames() }
+                // A failure in either coroutine ends both: the reader never runs half-alive.
+                val watchdog = launch { recoverFramesHiddenByLoss() }
                 transport.incoming.collect { bytes ->
-                    chunksSeen.incrementAndGet()
-                    synchronized(deframer) { deframer.push(bytes).forEach(::onFrame) }
+                    handle {
+                        chunksSeen++
+                        deframer.push(bytes)
+                    }
                 }
                 watchdog.cancel()
             }
@@ -241,8 +263,11 @@ public class As11Client(
     /** Completes with the reason once the conversation can no longer be used. */
     public val terminated: Deferred<As11Exception> get() = failed
 
-    /** True while an encrypted session is open on this connection. */
-    public val isSecure: Boolean get() = sessionKey.get() != null
+    /**
+     * True once an encrypted session is open and the machine has proved it by
+     * answering on it.
+     */
+    public val isSecure: Boolean get() = sessionProven && sessionKey.get() != null
 
     /** Link-level framing statistics. */
     public val discardedBytes: Long get() = deframer.discardedBytes
@@ -258,22 +283,37 @@ public class As11Client(
      * the machine one guess at the code. After pairing, open a new connection
      * before calling [startSession], as the reference client does.
      *
-     * @throws As11AuthException.PasskeyRejected if the machine rejects the code.
+     * @throws As11AuthException.PasskeyRejected if the machine rejects the code, or it is not a code at all.
+     * @throws As11PairingCancelledException if [askPasskey] is cancelled or takes too long.
      * @throws As11AuthException.MachineUnauthenticated if the other end cannot prove it knows the code.
      */
     public suspend fun pair(askPasskey: suspend () -> String): PairingCredentials = rpcLock.withLock {
-        check(!isSecure) { "already in a session" }
+        check(sessionKey.get() == null) { "already in a session" }
         val srp = Srp6aClient(random)
         coroutineScope {
-            val entry = async { askPasskey() }
+            val entry = async {
+                try {
+                    askPasskey()
+                } catch (e: CancellationException) {
+                    // The caller's own cancellation propagates; a cancelled prompt is the user backing out.
+                    currentCoroutineContext().ensureActive()
+                    throw As11PairingCancelledException()
+                }
+            }
             val start = exchange(As11Request.StartKeyExchange(srp.publicKey), timeouts.keyExchangeMs).resultObject()
             val serverKey = start.string("serverPk", MAX_HEX_CHARS)
             val salt = start.string("salt", MAX_HEX_CHARS)
 
-            // Stop waiting for the user the moment the link is known to be gone.
-            val passkey = select {
-                entry.onAwait { it }
-                failed.onAwait { throw it }
+            // Stop waiting for the user the moment the link is known to be gone, and not for ever.
+            val passkey = withTimeoutOrNull(timeouts.passkeyEntryMs) {
+                select<String> {
+                    entry.onAwait { it }
+                    failed.onAwait { throw it }
+                }
+            } ?: throw As11PairingCancelledException("the pairing code was not entered in time")
+            if (!Srp6aClient.isValidPasskey(passkey)) {
+                // Not sent: a malformed code would only spend the machine's one attempt.
+                throw As11AuthException.PasskeyRejected(null)
             }
             val proof = srp.computeProof(serverKey, salt, passkey)
             val confirm = try {
@@ -304,9 +344,10 @@ public class As11Client(
      * @throws As11AuthException.PairingUnknown if the machine answers our client id with an error.
      * @throws As11AuthException.SessionProofRejected if it rejects the proof.
      * @throws As11AuthException.NonceReplayed if it presents a nonce that was already used.
+     * @throws As11AuthException.SessionUnproven if no valid encrypted answer follows.
      */
     public suspend fun startSession(credentials: PairingCredentials, nonces: NonceRegistry): Unit = rpcLock.withLock {
-        check(!isSecure) { "already in a session" }
+        check(sessionKey.get() == null) { "already in a session" }
         check(!pairedOnThisLink) { "open a new connection after pairing" }
         val offer = try {
             exchange(As11Request.RequestSession(credentials.clientId), timeouts.sessionMs).resultObject()
@@ -316,7 +357,7 @@ public class As11Client(
         }
         val challenge = Hex.decode(offer.string("challenge", MAX_HEX_CHARS), 64)
         val nonce = Hex.decode(offer.string("nonce", MAX_HEX_CHARS), 64)
-        if (!nonces.register(nonce)) throw As11AuthException.NonceReplayed()
+        if (recorded { nonces.isKnown(nonce) }) throw As11AuthException.NonceReplayed()
 
         val verdict = try {
             exchange(
@@ -333,8 +374,38 @@ public class As11Client(
             // Documented as always present; tolerated and counted until seen on a real machine.
             null -> counters.sessionConfirmationMissing.incrementAndGet()
         }
+
         sessionKey.set(SessionCrypto.deriveSessionKey(credentials.pairingKey, nonce))
+        // The conversation may have failed while the key was being derived.
+        failure.get()?.let {
+            clearSessionKey()
+            throw it
+        }
         delay(timeouts.sessionSettleMs)
+
+        // Nothing so far required the other end to know the pairing key. A valid
+        // encrypted answer does, so the session counts as open only once one arrives.
+        // The reference client sees the first encrypted request go unanswered at times.
+        var lastFailure: As11Exception? = null
+        for (attempt in 1..SESSION_PROOF_ATTEMPTS) {
+            try {
+                exchange(As11Request.GetVersion, timeouts.rpcMs)
+                sessionProven = true
+                break
+            } catch (e: As11TimeoutException) {
+                lastFailure = e
+            } catch (e: As11RpcException) {
+                // Even a refusal is a valid encrypted answer.
+                sessionProven = true
+                break
+            }
+        }
+        if (!sessionProven) {
+            val cause = As11AuthException.SessionUnproven(lastFailure)
+            fail(cause)
+            throw cause
+        }
+        recorded { nonces.remember(nonce) }
     }
 
     /**
@@ -425,7 +496,13 @@ public class As11Client(
             // Everything received counts, so a stream of irrelevant fragments cannot keep the round alive.
             if (++seen > MAX_FRAGMENTS) throw As11SpoolIntegrityException("download exceeded its fragment limit")
             when (inbound) {
-                is Inbound.Unreadable -> throw As11SpoolIntegrityException(inbound.reason)
+                is Inbound.Unreadable -> {
+                    if (inbound.spoolId != null && inbound.spoolId != spoolId) {
+                        counters.strayFragments.incrementAndGet()
+                        continue
+                    }
+                    throw As11SpoolIntegrityException(inbound.reason)
+                }
                 is Inbound.Piece -> {
                     if (inbound.spoolId != null && inbound.spoolId != spoolId) {
                         counters.strayFragments.incrementAndGet()
@@ -468,10 +545,15 @@ public class As11Client(
         } else {
             null
         }
-        if (data.isEmpty()) return SpoolRound(data, null, next)
-
+        // A hash is checked whenever one is sent, including for a round that arrived
+        // empty: if every data fragment was lost, the hash is what gives it away.
+        val hashHex = terminal.hashHex
+        if (hashHex == null) {
+            if (data.isNotEmpty()) throw As11SpoolUnverifiedException()
+            return SpoolRound(data, null, next)
+        }
         val expected = try {
-            Hex.decode(terminal.hashHex ?: throw As11SpoolUnverifiedException(), 32)
+            Hex.decode(hashHex, 32)
         } catch (e: As11ProtocolException) {
             throw As11SpoolIntegrityException("download carried a malformed integrity hash")
         }
@@ -479,7 +561,7 @@ public class As11Client(
         if (!MessageDigest.isEqual(actual, expected)) {
             throw As11SpoolIntegrityException("download failed its integrity hash")
         }
-        return SpoolRound(data, actual, next)
+        return SpoolRound(data, if (data.isEmpty()) null else actual, next)
     }
 
     private suspend fun call(request: As11Request.Encrypted, timeoutMs: Long): Answer =
@@ -508,7 +590,7 @@ public class As11Client(
                     }
                 }
                 is As11Request.Plaintext -> {
-                    check(!isSecure) { "plaintext is not sent once a session exists" }
+                    check(sessionKey.get() == null) { "plaintext is not sent once a session exists" }
                     Fig.encode(Fig.CHANNEL_TX_PLAIN, json)
                 }
             }
@@ -564,30 +646,47 @@ public class As11Client(
 
     /**
      * A frame whose middle chunk was lost would otherwise hold back every frame
-     * after it until enough bytes arrived to cover its declared length.
+     * after it until enough bytes arrived to cover its declared length. When the
+     * link has been quiet for a while, look behind the pending frame for complete
+     * ones. A frame that is only arriving slowly is never dropped by this.
      */
-    private suspend fun abandonStalledFrames() {
+    private suspend fun recoverFramesHiddenByLoss() {
         var lastSeen = -1L
         var quietTicks = 0
         while (true) {
             delay(timeouts.resyncIdleMs / 2)
-            val seen = chunksSeen.get()
-            val waiting = synchronized(deframer) { deframer.hasPartialFrame }
-            quietTicks = if (waiting && seen == lastSeen) quietTicks + 1 else 0
-            lastSeen = seen
-            if (quietTicks >= 2) {
-                quietTicks = 0
-                try {
-                    synchronized(deframer) { deframer.abandonPartialFrame().forEach(::onFrame) }
-                } catch (e: As11Exception) {
-                    fail(e)
-                    return
+            handle {
+                val seen = chunksSeen
+                quietTicks = if (deframer.hasPartialFrame && seen == lastSeen) quietTicks + 1 else 0
+                lastSeen = seen
+                if (quietTicks >= 2) {
+                    quietTicks = 0
+                    deframer.recoverHiddenFrames()
+                } else {
+                    emptyList()
                 }
             }
         }
     }
 
-    /** Runs under the deframer lock, so frames are handled one at a time and in order. */
+    /**
+     * The one place frames are produced and acted on. Holding the lock keeps the
+     * collector and the watchdog from interleaving, so frames are handled one at
+     * a time and in order. Nothing in here suspends.
+     */
+    private fun handle(produce: () -> List<FigFrame>) {
+        synchronized(deframer) {
+            try {
+                produce().forEach(::onFrame)
+            } catch (e: As11Exception) {
+                throw e
+            } catch (e: RuntimeException) {
+                // A bug in message handling must not be reported as a bad link.
+                throw As11DefectException(e)
+            }
+        }
+    }
+
     private fun onFrame(frame: FigFrame) {
         val key = sessionKey.get()
         val message: JsonObject = if (key != null) {
@@ -606,7 +705,11 @@ public class As11Client(
             if (parsed == null) {
                 // One bad frame is dropped; a run of them means the session key or the link is wrong.
                 counters.undecodableEncrypted.incrementAndGet()
-                if (consecutiveUndecodable.incrementAndGet() >= MAX_CONSECUTIVE_UNDECODABLE) {
+                // Each dropped frame costs a request, so a budget for the whole
+                // session stops someone damaging one frame in three indefinitely.
+                if (consecutiveUndecodable.incrementAndGet() >= MAX_CONSECUTIVE_UNDECODABLE ||
+                    totalUndecodable.incrementAndGet() >= MAX_UNDECODABLE_PER_SESSION
+                ) {
                     throw As11ProtocolException("the encrypted channel is producing undecodable messages")
                 }
                 return
@@ -662,15 +765,16 @@ public class As11Client(
 
     /** Never throws: a fragment that cannot be read fails its round, not the connection. */
     private fun parseFragment(params: JsonObject): Inbound {
+        val spoolId = (params["spoolId"] as? JsonPrimitive)?.intOrNull
         val encoded = (params["data"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: ""
-        if (encoded.length > MAX_FRAGMENT_CHARS) return Inbound.Unreadable("download fragment is too large")
+        if (encoded.length > MAX_FRAGMENT_CHARS) return Inbound.Unreadable(spoolId, "download fragment is too large")
         val data = try {
             Base64.getDecoder().decode(encoded)
         } catch (e: IllegalArgumentException) {
-            return Inbound.Unreadable("download fragment is not valid base64")
+            return Inbound.Unreadable(spoolId, "download fragment is not valid base64")
         }
         return Inbound.Piece(
-            spoolId = (params["spoolId"] as? JsonPrimitive)?.intOrNull,
+            spoolId = spoolId,
             seq = (params["seq"] as? JsonPrimitive)?.intOrNull,
             data = data,
             status = (params["status"] as? JsonPrimitive)?.takeIf { it.isString }?.content,
@@ -700,7 +804,24 @@ public class As11Client(
         failed.complete(cause)
         pending.get()?.answer?.completeExceptionally(cause)
         fragments.get()?.close(cause)
-        sessionKey.getAndSet(null)?.fill(0)
+        clearSessionKey()
+    }
+
+    /** Takes the lock the receive path decrypts under, so the key is never blanked mid-use. */
+    private fun clearSessionKey() {
+        synchronized(deframer) {
+            sessionProven = false
+            sessionKey.getAndSet(null)?.fill(0)
+        }
+    }
+
+    /** Runs a nonce-record operation, turning storage trouble into a typed failure. */
+    private suspend fun <T> recorded(operation: suspend () -> T): T = try {
+        operation()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        throw e as? As11Exception ?: As11NonceStoreException(e)
     }
 
     private fun Answer.resultObject(): JsonObject =
@@ -728,6 +849,8 @@ public class As11Client(
         const val MAX_FRAGMENT_CHARS = 8192
         const val MAX_ID = 1_000_000_000
         const val MAX_CONSECUTIVE_UNDECODABLE = 3
+        const val MAX_UNDECODABLE_PER_SESSION = 8
+        const val SESSION_PROOF_ATTEMPTS = 2
         val JSON = Json { isLenient = false }
     }
 }
