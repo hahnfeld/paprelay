@@ -5,7 +5,9 @@ package com.everysoft.paprelay.as11.sim
 import com.everysoft.paprelay.as11.As11Transport
 import com.everysoft.paprelay.as11.Fig
 import com.everysoft.paprelay.as11.FigDeframer
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.serialization.json.Json
@@ -66,8 +68,38 @@ public class FaultPlan {
     /** Answer with a different id than the request carried. */
     public var wrongResponseId: Boolean = false
 
-    /** Flip a bit in the ciphertext of the next encrypted answer. */
-    public var corruptNextEncryptedFrame: Boolean = false
+    /** Flip a bit in the ciphertext of this many upcoming encrypted frames. */
+    public var corruptEncryptedFrames: Int = 0
+
+    /** What `CheckSessionIntegrity` reports: true, false, or null for a bare `true` result. */
+    public var sessionConfirmation: Boolean? = true
+
+    /** Send the terminal status in a fragment of its own, with no data and no sequence number. */
+    public var separateTerminalFragment: Boolean = false
+
+    /** Give download fragments an explicit `"id": null`, as JSON-RPC 1.0 notifications have. */
+    public var fragmentsCarryNullId: Boolean = false
+
+    /** Before each round, send a fragment belonging to some other download. */
+    public var strayFragmentBeforeRound: Boolean = false
+
+    /** Items `Get` reports as unavailable, alongside the ones it can supply. */
+    public val unavailableItems: MutableSet<String> = mutableSetOf()
+
+    /** Methods answered with an id-less parse error, as if the request arrived damaged. */
+    public val parseErrorMethods: MutableSet<String> = mutableSetOf()
+
+    /** Send a plaintext heartbeat and an encrypted event before every encrypted answer. */
+    public var chatter: Boolean = false
+
+    /** How long the machine takes to answer each request. */
+    public var responseDelayMs: Long = 0
+
+    /** Lose this chunk (counting from 0) of the next encrypted frame, as a missed notification would. */
+    public var dropChunkOfNextEncryptedFrame: Int? = null
+
+    /** Accept writes but never complete them. */
+    public var hangSend: Boolean = false
 
     /** Emit this plaintext frame before every encrypted answer. */
     public var plaintextInjection: ByteArray? = null
@@ -131,6 +163,8 @@ public class FakeAirSense11(
 
         override suspend fun send(frame: ByteArray) {
             if (closed) throw java.io.IOException("link closed")
+            if (faults.hangSend) awaitCancellation()
+            if (faults.responseDelayMs > 0) delay(faults.responseDelayMs)
             // Deliver in small pieces, as GATT writes would arrive.
             var at = 0
             while (at < frame.size) {
@@ -147,6 +181,10 @@ public class FakeAirSense11(
                     val request = parse(payload) ?: return
                     val method = request["method"]?.jsonPrimitive?.content ?: return
                     if (method in faults.silentMethods) return
+                    if (method in faults.parseErrorMethods) {
+                        emit(CHANNEL_RX_PLAIN, PARSE_ERROR.toByteArray())
+                        return
+                    }
                     val answer = handlePlain(method, request["params"] as? JsonObject ?: JsonObject(emptyMap()))
                     emit(CHANNEL_RX_PLAIN, respond(request, answer).toString().toByteArray())
                     pendingSessionKey?.let {
@@ -192,6 +230,7 @@ public class FakeAirSense11(
                     buildJsonObject {
                         put("clientId", JsonPrimitive(id))
                         put("serverConfirmation", JsonPrimitive(hex(serverProof)))
+                        put("nonce", JsonPrimitive(hex(ByteArray(32).also(random::nextBytes))))
                     }
                 }
             }
@@ -216,16 +255,24 @@ public class FakeAirSense11(
                     pendingSessionKey = null
                     Failure(-32002, "session integrity failed")
                 } else {
-                    JsonPrimitive(true)
+                    when (val reported = faults.sessionConfirmation) {
+                        null -> JsonPrimitive(true)
+                        else -> {
+                            if (!reported) pendingSessionKey = null
+                            buildJsonObject { put("confirmation", JsonPrimitive(reported)) }
+                        }
+                    }
                 }
             }
             else -> Failure(-32601, "Method not found")
         }
 
         private fun handleEncrypted(method: String, params: JsonElement?): Any = when (method) {
-            "Get" -> buildJsonObject {
-                for (name in params as JsonArray) {
-                    val key = name.jsonPrimitive.content
+            "Get" -> {
+                val names = (params as JsonArray).map { it.jsonPrimitive.content }
+                val missing = names.filter { it in faults.unavailableItems }
+                val values = buildJsonObject {
+                for (key in names - missing.toSet()) {
                     put(
                         key,
                         when (key) {
@@ -235,6 +282,16 @@ public class FakeAirSense11(
                             "SettingProfiles" -> buildJsonObject { put("TimeZoneOffset", JsonPrimitive(600)) }
                             else -> JsonPrimitive("sim-$key")
                         },
+                    )
+                }
+                }
+                if (missing.isEmpty()) {
+                    values
+                } else {
+                    Failure(
+                        -11201,
+                        "InvalidObject",
+                        JsonObject(values + ("InvalidObjects" to JsonArray(missing.map(::JsonPrimitive)))),
                     )
                 }
             }
@@ -267,62 +324,82 @@ public class FakeAirSense11(
         private fun emitFragments(spoolId: Int, pull: JsonObject) {
             val (name, round) = openSpools.remove(spoolId) ?: return
             val rounds = spools[name].orEmpty()
-            val data = rounds.getOrElse(round) { ByteArray(0) }
             val more = round + 1 < rounds.size
+            val forced = faults.forceSpoolStatus
+            // An error status comes alone: no data accompanies it.
+            val data = if (forced?.startsWith("ERROR_") == true) ByteArray(0) else rounds.getOrElse(round) { ByteArray(0) }
             val size = pull["maxFragmentSize"]!!.jsonPrimitive.int
-            val pieces = if (data.isEmpty()) listOf(ByteArray(0)) else data.asList().chunked(size) { it.toByteArray() }
+            val pieces = data.asList().chunked(size) { it.toByteArray() }
+            val finalStatus = forced ?: if (more) "SPOOL_COMPLETE_MORE_DATA_PENDING" else "SPOOL_COMPLETE_NO_MORE_DATA"
 
+            fun fragment(seq: Int?, piece: ByteArray?, terminal: Boolean) = buildJsonObject {
+                put("jsonrpc", JsonPrimitive("2.0"))
+                put("method", JsonPrimitive("SpoolFragment"))
+                if (faults.fragmentsCarryNullId) put("id", JsonNull)
+                put(
+                    "params",
+                    buildJsonObject {
+                        put("spoolId", JsonPrimitive(spoolId))
+                        // Only data-bearing fragments are numbered.
+                        if (seq != null) put("seq", JsonPrimitive(seq))
+                        if (piece != null) put("data", JsonPrimitive(Base64.getEncoder().encodeToString(piece)))
+                        put("status", JsonPrimitive(if (terminal) finalStatus else "SPOOL_INCOMPLETE"))
+                        if (terminal) {
+                            if (!faults.omitSpoolHash && data.isNotEmpty()) {
+                                val hash = sha256(data)
+                                if (faults.corruptSpoolHash) hash[5] = (hash[5].toInt() xor 0x40).toByte()
+                                put("spoolHash", JsonPrimitive(hex(hash).lowercase()))
+                            }
+                            if (more) {
+                                put(
+                                    "nextSpoolAddress",
+                                    buildJsonObject { put(name, buildJsonObject { put("cursor", JsonPrimitive(round + 1)) }) },
+                                )
+                            }
+                        }
+                    },
+                )
+            }
+
+            val bareTerminal = pieces.isEmpty() || faults.separateTerminalFragment
             val messages = ArrayList<JsonObject>()
             for ((seq, piece) in pieces.withIndex()) {
-                val last = seq == pieces.lastIndex
-                if (last && faults.withholdTerminalFragment) continue
-                val fragment = buildJsonObject {
-                    put("jsonrpc", JsonPrimitive("1.0"))
-                    put("method", JsonPrimitive("SpoolFragment"))
-                    put(
-                        "params",
-                        buildJsonObject {
-                            put("spoolId", JsonPrimitive(spoolId))
-                            put("seq", JsonPrimitive(seq))
-                            put("data", JsonPrimitive(Base64.getEncoder().encodeToString(piece)))
-                            val status = when {
-                                !last -> "SPOOL_INCOMPLETE"
-                                faults.forceSpoolStatus != null -> faults.forceSpoolStatus!!
-                                more -> "SPOOL_COMPLETE_MORE_DATA_PENDING"
-                                else -> "SPOOL_COMPLETE_NO_MORE_DATA"
-                            }
-                            put("status", JsonPrimitive(status))
-                            if (last) {
-                                if (!faults.omitSpoolHash && data.isNotEmpty()) {
-                                    val hash = sha256(data)
-                                    if (faults.corruptSpoolHash) hash[5] = (hash[5].toInt() xor 0x40).toByte()
-                                    put("spoolHash", JsonPrimitive(hex(hash).lowercase()))
-                                }
-                                if (more) {
-                                    put(
-                                        "nextSpoolAddress",
-                                        buildJsonObject { put(name, buildJsonObject { put("cursor", JsonPrimitive(round + 1)) }) },
-                                    )
-                                }
-                            }
-                        },
-                    )
-                }
                 if (seq in faults.dropFragments) continue
-                messages += fragment
-                if (seq in faults.duplicateFragments) messages += fragment
+                val message = fragment(seq, piece, terminal = !bareTerminal && seq == pieces.lastIndex)
+                messages += message
+                if (seq in faults.duplicateFragments) messages += message
             }
             if (faults.reverseFragments) {
                 // Keep the terminal fragment last so the round still completes.
-                val terminal = messages.removeLastOrNull()
+                val last = if (bareTerminal) null else messages.removeLastOrNull()
                 messages.reverse()
-                terminal?.let(messages::add)
+                last?.let(messages::add)
+            }
+            if (bareTerminal) messages += fragment(null, null, terminal = true)
+            if (faults.withholdTerminalFragment) messages.removeLastOrNull()
+
+            if (faults.strayFragmentBeforeRound) {
+                sendEncrypted(
+                    buildJsonObject {
+                        put("jsonrpc", JsonPrimitive("2.0"))
+                        put("method", JsonPrimitive("SpoolFragment"))
+                        put(
+                            "params",
+                            buildJsonObject {
+                                put("spoolId", JsonPrimitive(spoolId - 1))
+                                put("seq", JsonPrimitive(0))
+                                put("data", JsonPrimitive("c3RhbGU="))
+                                put("status", JsonPrimitive("SPOOL_COMPLETE_NO_MORE_DATA"))
+                            },
+                        )
+                    },
+                )
             }
             messages.forEach(::sendEncrypted)
         }
 
         private fun respond(request: JsonObject, answer: Any): JsonObject = buildJsonObject {
-            put("jsonrpc", request["jsonrpc"] ?: JsonPrimitive("1.0"))
+            put("jsonrpc", JsonPrimitive("2.0"))
             val id = request["id"] ?: JsonNull
             put("id", if (faults.wrongResponseId) JsonPrimitive(id.jsonPrimitive.int + 1) else id)
             if (answer is Failure) {
@@ -331,6 +408,7 @@ public class FakeAirSense11(
                     buildJsonObject {
                         put("code", JsonPrimitive(answer.code))
                         put("message", JsonPrimitive(answer.message))
+                        answer.data?.let { put("data", it) }
                     },
                 )
             } else {
@@ -341,17 +419,25 @@ public class FakeAirSense11(
         private fun sendEncrypted(message: JsonObject) {
             val key = sessionKey ?: return
             faults.plaintextInjection?.let { emit(CHANNEL_RX_PLAIN, it) }
+            if (faults.chatter && message["method"] == null) {
+                emit(CHANNEL_RX_PLAIN, """{"jsonrpc":"2.0","method":"HeartBeat"}""".toByteArray())
+                emit(
+                    Fig.CHANNEL_RX_ENCRYPTED,
+                    encrypt(key, """{"jsonrpc":"2.0","method":"EventNotification","id":null,"params":{}}""".toByteArray()),
+                )
+            }
             val payload = encrypt(key, message.toString().toByteArray())
-            if (faults.corruptNextEncryptedFrame) {
-                faults.corruptNextEncryptedFrame = false
+            if (faults.corruptEncryptedFrames > 0) {
+                faults.corruptEncryptedFrames--
                 payload[payload.size - 1] = (payload[payload.size - 1].toInt() xor 0x01).toByte()
             }
-            emit(Fig.CHANNEL_RX_ENCRYPTED, payload)
+            emit(Fig.CHANNEL_RX_ENCRYPTED, payload, faults.dropChunkOfNextEncryptedFrame.also { faults.dropChunkOfNextEncryptedFrame = null })
         }
 
-        private fun emit(channel: Int, payload: ByteArray) {
+        private fun emit(channel: Int, payload: ByteArray, dropChunk: Int? = null) {
             val frame = Fig.encode(channel, payload)
             var at = 0
+            var index = 0
             while (at < frame.size && !closed) {
                 var end = minOf(frame.size, at + chunkSize)
                 val budget = faults.disconnectAfterBytes
@@ -359,7 +445,7 @@ public class FakeAirSense11(
                     end = minOf(end, at + budget)
                     faults.disconnectAfterBytes = budget - (end - at)
                 }
-                if (end > at) toClient.trySend(frame.copyOfRange(at, end))
+                if (end > at && index++ != dropChunk) toClient.trySend(frame.copyOfRange(at, end))
                 at = end
                 if (faults.disconnectAfterBytes == 0) {
                     closed = true
@@ -389,7 +475,7 @@ public class FakeAirSense11(
         }
     }
 
-    private class Failure(val code: Int, val message: String)
+    private class Failure(val code: Int, val message: String, val data: JsonElement? = null)
 
     /** The machine's side of SRP-6a, written independently of the client. */
     private class ServerSrp(clientPublic: BigInteger, passkey: String, random: Random) {
@@ -435,6 +521,7 @@ public class FakeAirSense11(
         )
         val G: BigInteger = BigInteger.valueOf(2)
         val JSON = Json
+        const val PARSE_ERROR = """{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Parse error"}}"""
 
         fun parse(bytes: ByteArray): JsonObject? = try {
             JSON.parseToJsonElement(String(bytes, Charsets.UTF_8)) as? JsonObject

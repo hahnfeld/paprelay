@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Two offset waveforms: the machine's signal, and its relayed copy. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M30,48 C36,36 42,36 48,48 C54,60 60,60 66,48 C70,40 74,38 78,42"
+        android:strokeColor="@color/icon_foreground"
+        android:strokeWidth="5"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M30,64 C36,52 42,52 48,64 C54,76 60,76 66,64 C70,56 74,54 78,58"
+        android:strokeAlpha="0.45"
+        android:strokeColor="@color/icon_foreground"
+        android:strokeWidth="5"
+        android:strokeLineCap="round" />
+</vector>

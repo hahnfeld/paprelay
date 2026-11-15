@@ -3,9 +3,19 @@
 package com.everysoft.paprelay.as11
 
 import com.everysoft.paprelay.as11.sim.FakeAirSense11
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.currentTime
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.jsonPrimitive
 import java.security.SecureRandom
@@ -15,6 +25,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -23,9 +34,28 @@ import kotlin.test.assertTrue
 class As11ClientTest {
     private val machine = FakeAirSense11(passkey = "0420")
     private val from = SpoolAddress.FromMachineTime(1_782_400_080_000)
+    private val wallBase = 1_790_000_000_000L
 
-    private fun TestScope.connect(chunkSize: Int = 244): As11Client =
-        As11Client(machine.connect(chunkSize), backgroundScope, SecureRandom(), nowMs = { currentTime })
+    /** A link the test can cut, standing in for the phone walking out of range. */
+    private class Severable(private val inner: As11Transport, scope: CoroutineScope) : As11Transport {
+        private val pipe = Channel<ByteArray>(Channel.UNLIMITED)
+
+        init {
+            scope.launch { inner.incoming.collect { pipe.send(it) } }
+        }
+
+        override val incoming: Flow<ByteArray> = pipe.receiveAsFlow()
+        override suspend fun send(frame: ByteArray) = inner.send(frame)
+        fun sever() {
+            pipe.close()
+        }
+    }
+
+    private fun TestScope.clientOn(transport: As11Transport): As11Client = As11Client(
+        transport, backgroundScope, SecureRandom(), nowMs = { wallBase + currentTime }, elapsedMs = { currentTime },
+    )
+
+    private fun TestScope.connect(chunkSize: Int = 244): As11Client = clientOn(machine.connect(chunkSize))
 
     /** Pairs on one link, then opens a fresh link with a session, as the app does. */
     private suspend fun TestScope.securedClient(chunkSize: Int = 244): As11Client {
@@ -35,13 +65,18 @@ class As11ClientTest {
 
     private fun bytes(size: Int, seed: Long = 7): ByteArray = ByteArray(size).also { Random(seed).nextBytes(it) }
 
+    private val serial = listOf(GetItem.SERIAL_NUMBER)
+
+    // ---- pairing and session ------------------------------------------------
+
     @Test
     fun `pairs, opens a session and reads identity over small and large chunks`() = runTest {
         for (chunk in listOf(20, 23, 244, 512)) {
             val client = securedClient(chunk)
             assertTrue(client.isSecure)
             val identity = client.get(listOf(GetItem.SERIAL_NUMBER, GetItem.PRODUCT_NAME))
-            assertEquals(machine.serialNumber, identity["SerialNumber"]!!.jsonPrimitive.content)
+            assertEquals(machine.serialNumber, identity.values["SerialNumber"]!!.jsonPrimitive.content)
+            assertTrue(identity.unavailable.isEmpty())
             assertNotNull(client.getVersion()["FlowGenerator"])
             assertEquals(0, client.discardedBytes)
             assertTrue(client.counters.snapshot().values.all { it == 0L }, client.counters.snapshot().toString())
@@ -50,35 +85,79 @@ class As11ClientTest {
     }
 
     @Test
+    fun `heartbeats and unrelated notifications between request and answer are ignored`() = runTest {
+        machine.faults.chatter = true
+        machine.spools["Summary"] = listOf(bytes(9_000))
+        val client = securedClient()
+        assertEquals(machine.serialNumber, client.get(serial).values["SerialNumber"]!!.jsonPrimitive.content)
+        assertEquals(9_000, client.pullSpoolRound(SpoolName.SUMMARY, from).data.size)
+        val counters = client.counters.snapshot()
+        assertTrue(counters["plaintextAfterSession"]!! > 0)
+        assertTrue(counters["ignoredNotifications"]!! > 0)
+        assertEquals(0, counters["unmatchedResponses"])
+        assertEquals(0, counters["undecodableEncrypted"])
+    }
+
+    @Test
     fun `a wrong passkey fails pairing and leaves the machine unpaired`() = runTest {
-        assertFailsWith<As11AuthException> { connect().pair { "0421" } }
+        assertFailsWith<As11AuthException.PasskeyRejected> { connect().pair { "0421" } }
         assertNull(machine.pairedClientId)
     }
 
     @Test
     fun `a machine that cannot prove it knows the passkey is refused`() = runTest {
         machine.faults.wrongServerProof = true
-        assertFailsWith<As11AuthException> { connect().pair { "0420" } }
+        assertFailsWith<As11AuthException.MachineUnauthenticated> { connect().pair { "0420" } }
     }
 
     @Test
-    fun `an unknown pairing and a rejected proof are authentication failures`() = runTest {
+    fun `a session cannot be started on the link that was used for pairing`() = runTest {
+        val client = connect()
+        val credentials = client.pair { "0420" }
+        assertFailsWith<IllegalStateException> { client.startSession(credentials, NonceRegistry.AcceptAll) }
+    }
+
+    @Test
+    fun `each way session setup can be refused has its own type`() = runTest {
         val credentials = connect().pair { "0420" }
         val stranger = PairingCredentials("client-unknown", credentials.pairingKey)
-        assertFailsWith<As11AuthException> { connect().startSession(stranger, NonceRegistry.AcceptAll) }
+        assertFailsWith<As11AuthException.PairingUnknown> { connect().startSession(stranger, NonceRegistry.AcceptAll) }
 
         val wrongKey = PairingCredentials(credentials.clientId, ByteArray(32) { 9 })
-        assertFailsWith<As11AuthException> { connect().startSession(wrongKey, NonceRegistry.AcceptAll) }
+        val rejected = assertFailsWith<As11AuthException.SessionProofRejected> {
+            connect().startSession(wrongKey, NonceRegistry.AcceptAll)
+        }
+        assertIs<As11RpcException>(rejected.cause) // the machine's own code is kept for diagnosis
 
-        machine.faults.rejectSession = true
-        assertFailsWith<As11AuthException> { connect().startSession(credentials, NonceRegistry.AcceptAll) }
+        machine.faults.sessionConfirmation = false
+        val unconfirmed = connect()
+        assertFailsWith<As11AuthException.SessionProofRejected> { unconfirmed.startSession(credentials, NonceRegistry.AcceptAll) }
+        assertFalse(unconfirmed.isSecure)
+    }
+
+    @Test
+    fun `a session answer without the confirmation member is accepted and counted`() = runTest {
+        val credentials = connect().pair { "0420" }
+        machine.faults.sessionConfirmation = null
+        val client = connect().also { it.startSession(credentials, NonceRegistry.AcceptAll) }
+        assertTrue(client.isSecure)
+        assertEquals(1, client.counters.snapshot()["sessionConfirmationMissing"])
+    }
+
+    @Test
+    fun `a damaged session request is not mistaken for a lost pairing`() = runTest {
+        val credentials = connect().pair { "0420" }
+        machine.faults.parseErrorMethods += "RequestSession"
+        val failure = assertFailsWith<As11RpcException> { connect().startSession(credentials, NonceRegistry.AcceptAll) }
+        assertTrue(failure.anonymous)
+        assertEquals(-32700, failure.code)
     }
 
     @Test
     fun `re-pairing invalidates the previous credentials`() = runTest {
         val first = connect().pair { "0420" }
         val second = connect().pair { "0420" }
-        assertFailsWith<As11AuthException> { connect().startSession(first, NonceRegistry.AcceptAll) }
+        assertFailsWith<As11AuthException.PairingUnknown> { connect().startSession(first, NonceRegistry.AcceptAll) }
         connect().startSession(second, NonceRegistry.AcceptAll)
     }
 
@@ -90,18 +169,46 @@ class As11ClientTest {
         machine.faults.fixedNonce = ByteArray(32) { 3 }
         connect().startSession(credentials, registry)
         val replayed = connect()
-        assertFailsWith<As11AuthException> { replayed.startSession(credentials, registry) }
+        assertFailsWith<As11AuthException.NonceReplayed> { replayed.startSession(credentials, registry) }
         assertFalse(replayed.isSecure)
     }
 
     @Test
-    fun `the clock reading brackets the machine time with local time`() = runTest {
-        machine.clockMs = { 1_790_000_123_456L }
-        val reading = securedClient().getDateTime()
-        assertEquals(1_790_000_123_456L, reading.machineEpochMs)
-        assertEquals(currentTime, reading.receivedAtMs)
-        assertEquals(reading.sentAtMs + reading.roundTripMs / 2 - 1_790_000_123_456L, reading.offsetMs)
+    fun `waiting for the passkey ends when the link drops`() = runTest {
+        val link = Severable(machine.connect(), backgroundScope)
+        val client = clientOn(link)
+        supervisorScope {
+            val pairing = async { runCatching { client.pair { awaitCancellation() } } }
+            advanceTimeBy(1_000)
+            link.sever()
+            assertIs<As11TransportException>(pairing.await().exceptionOrNull())
+        }
     }
+
+    // ---- reads --------------------------------------------------------------
+
+    @Test
+    fun `the clock offset is positive when the machine is behind, and the round trip is measured`() = runTest {
+        machine.clockMs = { wallBase + currentTime - 100_000 }
+        val client = securedClient()
+        machine.faults.responseDelayMs = 400
+        val reading = client.getDateTime()
+        assertEquals(400, reading.roundTripMs)
+        // The true offset is 100 s; the midpoint estimate can be off by half the round trip.
+        assertTrue(reading.offsetMs in 99_800..100_200, "offset ${reading.offsetMs}")
+    }
+
+    @Test
+    fun `items the machine cannot supply are reported without losing the rest`() = runTest {
+        val client = securedClient()
+        machine.faults.unavailableItems += "ProductCode"
+        val result = client.get(listOf(GetItem.SERIAL_NUMBER, GetItem.PRODUCT_CODE))
+        assertEquals(machine.serialNumber, result.values["SerialNumber"]!!.jsonPrimitive.content)
+        assertEquals(listOf("ProductCode"), result.unavailable)
+        assertNull(result.values["InvalidObjects"])
+    }
+
+    // ---- downloads ----------------------------------------------------------
 
     @Test
     fun `a multi-fragment download is reassembled and hash-verified`() = runTest {
@@ -112,6 +219,20 @@ class As11ClientTest {
         assertNotNull(round.sha256)
         assertNull(round.next)
         assertEquals("Summary" to "2026-06-25T15:08:00.000Z", machine.spoolStartTimes.single())
+    }
+
+    @Test
+    fun `every documented way of ending a round is understood`() = runTest {
+        val data = bytes(9_000)
+        machine.spools["Summary"] = listOf(data)
+        val client = securedClient()
+        for (separate in listOf(false, true)) {
+            for (nullId in listOf(false, true)) {
+                machine.faults.separateTerminalFragment = separate
+                machine.faults.fragmentsCarryNullId = nullId
+                assertContentEquals(data, client.pullSpoolRound(SpoolName.SUMMARY, from).data, "separate=$separate nullId=$nullId")
+            }
+        }
     }
 
     @Test
@@ -131,7 +252,7 @@ class As11ClientTest {
     }
 
     @Test
-    fun `an empty log is a valid empty round`() = runTest {
+    fun `an empty log ends with a bare status fragment and is a valid empty round`() = runTest {
         val round = securedClient().pullSpoolRound(SpoolName.RESPIRATORY_EVENTS, from)
         assertEquals(0, round.data.size)
         assertNull(round.sha256)
@@ -146,74 +267,119 @@ class As11ClientTest {
     }
 
     @Test
-    fun `a missing fragment fails the round`() = runTest {
-        machine.spools["Summary"] = listOf(bytes(9_000))
+    fun `a fragment left over from another download is ignored`() = runTest {
+        val data = bytes(9_000)
+        machine.spools["Summary"] = listOf(data)
+        machine.faults.strayFragmentBeforeRound = true
+        val client = securedClient()
+        assertContentEquals(data, client.pullSpoolRound(SpoolName.SUMMARY, from).data)
+        assertEquals(1, client.counters.snapshot()["strayFragments"])
+    }
+
+    @Test
+    fun `a damaged round fails on its own and can be pulled again`() = runTest {
+        val data = bytes(9_000)
+        machine.spools["Summary"] = listOf(data)
+        val client = securedClient()
+
         machine.faults.dropFragments += 1
-        assertFailsWith<As11ProtocolException> { securedClient().pullSpoolRound(SpoolName.SUMMARY, from) }
-    }
+        assertFailsWith<As11SpoolIntegrityException> { client.pullSpoolRound(SpoolName.SUMMARY, from) }
+        machine.faults.dropFragments.clear()
 
-    @Test
-    fun `a repeated fragment fails the round`() = runTest {
-        machine.spools["Summary"] = listOf(bytes(9_000))
         machine.faults.duplicateFragments += 1
-        assertFailsWith<As11ProtocolException> { securedClient().pullSpoolRound(SpoolName.SUMMARY, from) }
-    }
+        assertFailsWith<As11SpoolIntegrityException> { client.pullSpoolRound(SpoolName.SUMMARY, from) }
+        machine.faults.duplicateFragments.clear()
 
-    @Test
-    fun `a wrong hash fails the round`() = runTest {
-        machine.spools["Summary"] = listOf(bytes(9_000))
         machine.faults.corruptSpoolHash = true
-        assertFailsWith<As11ProtocolException> { securedClient().pullSpoolRound(SpoolName.SUMMARY, from) }
-    }
+        assertFailsWith<As11SpoolIntegrityException> { client.pullSpoolRound(SpoolName.SUMMARY, from) }
+        machine.faults.corruptSpoolHash = false
 
-    @Test
-    fun `a missing hash fails the round`() = runTest {
-        machine.spools["Summary"] = listOf(bytes(9_000))
         machine.faults.omitSpoolHash = true
-        assertFailsWith<As11ProtocolException> { securedClient().pullSpoolRound(SpoolName.SUMMARY, from) }
+        assertFailsWith<As11SpoolUnverifiedException> { client.pullSpoolRound(SpoolName.SUMMARY, from) }
+        machine.faults.omitSpoolHash = false
+
+        // None of that ended the conversation.
+        assertFalse(client.terminated.isCompleted)
+        assertContentEquals(data, client.pullSpoolRound(SpoolName.SUMMARY, from).data)
     }
 
     @Test
-    fun `unavailable data is reported as such`() = runTest {
+    fun `unavailable data is reported as such, with or without a sequence number`() = runTest {
         machine.spools["Summary"] = listOf(bytes(100))
         machine.faults.forceSpoolStatus = "ERROR_DATA_UNAVAILABLE"
-        val failure = assertFailsWith<As11SpoolUnavailableException> {
-            securedClient().pullSpoolRound(SpoolName.SUMMARY, from)
-        }
+        val client = securedClient()
+        val failure = assertFailsWith<As11SpoolUnavailableException> { client.pullSpoolRound(SpoolName.SUMMARY, from) }
         assertEquals("ERROR_DATA_UNAVAILABLE", failure.status)
+        assertFalse(client.terminated.isCompleted)
     }
 
     @Test
-    fun `an unknown terminal status fails the round`() = runTest {
+    fun `an unknown terminal status is named in the failure`() = runTest {
         machine.spools["Summary"] = listOf(bytes(100))
         machine.faults.forceSpoolStatus = "SPOOL_SOMETHING_NEW"
+        val failure = assertFailsWith<As11ProtocolException> { securedClient().pullSpoolRound(SpoolName.SUMMARY, from) }
+        assertTrue(failure.message!!.contains("SPOOL_SOMETHING_NEW"))
+    }
+
+    @Test
+    fun `a promise of more data without an address is refused`() = runTest {
+        machine.spools["Summary"] = listOf(bytes(100))
+        machine.faults.forceSpoolStatus = "SPOOL_COMPLETE_MORE_DATA_PENDING"
         assertFailsWith<As11ProtocolException> { securedClient().pullSpoolRound(SpoolName.SUMMARY, from) }
     }
 
     @Test
-    fun `a download that never finishes times out and the client stays usable`() = runTest {
+    fun `a download that never finishes stalls out and the client stays usable`() = runTest {
         machine.spools["Summary"] = listOf(bytes(9_000))
         machine.faults.withholdTerminalFragment = true
         val client = securedClient()
-        assertFailsWith<As11TimeoutException> { client.pullSpoolRound(SpoolName.SUMMARY, from) }
+        val stalled = assertFailsWith<As11SpoolStalledException> { client.pullSpoolRound(SpoolName.SUMMARY, from) }
+        assertTrue(stalled.fragmentsReceived > 0)
         machine.faults.withholdTerminalFragment = false
         assertEquals(9_000, client.pullSpoolRound(SpoolName.SUMMARY, from).data.size)
+    }
+
+    // ---- lossy and hostile links ---------------------------------------------
+
+    @Test
+    fun `a lost chunk costs one request, not the ones after it`() = runTest {
+        val client = securedClient(chunkSize = 20)
+        machine.faults.dropChunkOfNextEncryptedFrame = 1
+        assertFailsWith<As11TimeoutException> { client.get(serial) }
+        // The half-received answer was given up on, so it cannot hide what follows.
+        assertTrue(client.abandonedFrames >= 1)
+        assertEquals(machine.serialNumber, client.get(serial).values["SerialNumber"]!!.jsonPrimitive.content)
+        assertEquals(0, client.counters.snapshot()["unmatchedResponses"])
+    }
+
+    @Test
+    fun `a lost chunk in a download fails that round only`() = runTest {
+        val data = bytes(9_000)
+        machine.spools["Summary"] = listOf(data)
+        val client = securedClient(chunkSize = 244)
+        // Frame 0 is the StartSpool answer, so arrange the loss for the first fragment instead.
+        client.get(serial)
+        machine.faults.dropFragments += 0
+        assertFailsWith<As11SpoolIntegrityException> { client.pullSpoolRound(SpoolName.SUMMARY, from) }
+        machine.faults.dropFragments.clear()
+        assertContentEquals(data, client.pullSpoolRound(SpoolName.SUMMARY, from).data)
     }
 
     @Test
     fun `a command the machine silently denies surfaces as a timeout`() = runTest {
         val client = securedClient()
         machine.faults.silentMethods += "Get"
-        val failure = assertFailsWith<As11TimeoutException> { client.get(listOf(GetItem.SERIAL_NUMBER)) }
+        val failure = assertFailsWith<As11TimeoutException> { client.get(serial) }
         assertEquals("Get", failure.operation)
+        assertEquals(0, failure.unmatchedAnswers)
     }
 
     @Test
-    fun `an answer carrying the wrong id is not accepted`() = runTest {
+    fun `an answer carrying the wrong id is not accepted, and the timeout says so`() = runTest {
         val client = securedClient()
         machine.faults.wrongResponseId = true
-        assertFailsWith<As11TimeoutException> { client.get(listOf(GetItem.SERIAL_NUMBER)) }
-        assertEquals(1, client.counters.snapshot()["unmatchedResponses"])
+        val failure = assertFailsWith<As11TimeoutException> { client.get(serial) }
+        assertEquals(1, failure.unmatchedAnswers)
     }
 
     @Test
@@ -221,16 +387,24 @@ class As11ClientTest {
         val client = securedClient()
         machine.faults.plaintextInjection =
             """{"id":1,"jsonrpc":"1.0","result":{"SerialNumber":"FORGED"}}""".toByteArray()
-        val identity = client.get(listOf(GetItem.SERIAL_NUMBER))
-        assertEquals(machine.serialNumber, identity["SerialNumber"]!!.jsonPrimitive.content)
+        assertEquals(machine.serialNumber, client.get(serial).values["SerialNumber"]!!.jsonPrimitive.content)
         assertEquals(1, client.counters.snapshot()["plaintextAfterSession"])
     }
 
     @Test
-    fun `tampering on the encrypted channel ends the conversation`() = runTest {
+    fun `one damaged encrypted frame is dropped, a run of them ends the conversation`() = runTest {
         val client = securedClient()
-        machine.faults.corruptNextEncryptedFrame = true
-        assertFailsWith<As11Exception> { client.get(listOf(GetItem.SERIAL_NUMBER)) }
+        machine.faults.corruptEncryptedFrames = 1
+        assertFailsWith<As11TimeoutException> { client.get(serial) }
+        assertFalse(client.terminated.isCompleted)
+        assertEquals(machine.serialNumber, client.get(serial).values["SerialNumber"]!!.jsonPrimitive.content)
+
+        machine.faults.corruptEncryptedFrames = 3
+        repeat(2) { assertFailsWith<As11TimeoutException> { client.get(serial) } }
+        assertFailsWith<As11ProtocolException> { client.get(serial) }
+        assertIs<As11ProtocolException>(client.terminated.await())
+        assertFalse(client.isSecure)
+
         // The link is no longer trusted: later calls fail without touching it.
         val sentBefore = machine.encryptedMethodsSeen.size
         assertFailsWith<As11ProtocolException> { client.getDateTime() }
@@ -238,19 +412,67 @@ class As11ClientTest {
     }
 
     @Test
-    fun `a link dropped mid-answer fails the pending request`() = runTest {
+    fun `a link dropped mid-answer fails the pending request and every later one`() = runTest {
         machine.spools["Summary"] = listOf(bytes(9_000))
         val client = securedClient()
         machine.faults.disconnectAfterBytes = 300
         assertFailsWith<As11TransportException> { client.pullSpoolRound(SpoolName.SUMMARY, from) }
         assertFailsWith<As11TransportException> { client.getDateTime() }
+        assertIs<As11TransportException>(client.terminated.await())
+    }
+
+    @Test
+    fun `a write the link never completes is given up on`() = runTest {
+        val client = securedClient()
+        machine.faults.hangSend = true
+        assertFailsWith<As11TransportException> { client.get(serial) }
+        assertTrue(client.terminated.isCompleted)
+    }
+
+    // ---- lifecycle -------------------------------------------------------------
+
+    @Test
+    fun `cancelling a caller that is waiting for an answer leaves the client usable`() = runTest {
+        val client = securedClient()
+        machine.faults.silentMethods += "Get"
+        val waiting = launch { client.get(serial) }
+        runCurrent()
+        waiting.cancel()
+        waiting.join()
+        machine.faults.silentMethods.clear()
+        assertEquals(machine.serialNumber, client.get(serial).values["SerialNumber"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `cancelling a caller in the middle of a write ends the conversation`() = runTest {
+        val client = securedClient()
+        machine.faults.hangSend = true
+        val writing = launch { client.get(serial) }
+        runCurrent()
+        writing.cancel()
+        writing.join()
+        // Part of a frame may be on the wire, so nothing more is sent.
+        assertTrue(client.terminated.isCompleted)
+    }
+
+    @Test
+    fun `closing the client fails a call that is in flight`() = runTest {
+        val client = securedClient()
+        machine.faults.silentMethods += "Get"
+        supervisorScope {
+            val call = async { runCatching { client.get(serial) } }
+            runCurrent()
+            client.close()
+            assertIs<As11TransportException>(call.await().exceptionOrNull())
+        }
+        assertFalse(client.isSecure)
     }
 
     @Test
     fun `only allow-listed commands ever reach the machine`() = runTest {
         machine.spools["Summary"] = listOf(bytes(100))
         val client = securedClient()
-        client.get(listOf(GetItem.SERIAL_NUMBER))
+        client.get(serial)
         client.getVersion()
         client.getDateTime()
         client.pullSpoolRound(SpoolName.SUMMARY, from)
@@ -266,6 +488,6 @@ class As11ClientTest {
         val client = connect().also { it.startSession(credentials, NonceRegistry.AcceptAll) }
         client.discardPairKey()
         assertNull(machine.pairedClientId)
-        assertFailsWith<As11AuthException> { connect().startSession(credentials, NonceRegistry.AcceptAll) }
+        assertFailsWith<As11AuthException.PairingUnknown> { connect().startSession(credentials, NonceRegistry.AcceptAll) }
     }
 }

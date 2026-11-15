@@ -45,6 +45,10 @@ public sealed class SpoolAddress {
 
     /** Start at a point on the machine's own clock. */
     public class FromMachineTime(public val machineEpochMs: Long) : SpoolAddress() {
+        init {
+            require(machineEpochMs in MIN_EPOCH_MS..MAX_EPOCH_MS) { "start time out of range" }
+        }
+
         override fun toJson(spool: SpoolName): JsonObject = buildJsonObject {
             put(
                 spool.wireName,
@@ -68,6 +72,8 @@ public sealed class SpoolAddress {
 
     private companion object {
         const val MAX_CONTINUATION_CHARS = 512
+        const val MIN_EPOCH_MS = 946_684_800_000L // 2000-01-01
+        const val MAX_EPOCH_MS = 4_102_444_800_000L // 2100-01-01
         val ISO_MILLIS: DateTimeFormatter =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC)
     }
@@ -80,6 +86,10 @@ public sealed class SpoolAddress {
  * start therapy and erase data. This type is sealed and its constructors take
  * only enumerated or validated values, so no such command can be expressed.
  * [As11Client] can transmit nothing but an [As11Request].
+ *
+ * That is a guarantee about what PAPRelay sends. It is not a guarantee against
+ * someone actively altering radio traffic: the machine's encryption carries no
+ * authentication, so such a party can damage a request in transit. See [encode].
  */
 public sealed class As11Request(public val method: String, private val jsonRpcVersion: String) {
     internal abstract fun params(): JsonElement?
@@ -87,10 +97,12 @@ public sealed class As11Request(public val method: String, private val jsonRpcVe
     /**
      * Serialises the request with a fixed member order: `id`, `jsonrpc`, `method`, `params`.
      *
-     * The order is load-bearing. The channel's encryption is malleable in the
-     * first cipher block only when the IV is altered; with `id` and `jsonrpc`
-     * leading, the method name always starts beyond that block, so an in-path
-     * attacker cannot rewrite which command the machine executes.
+     * The order matters. With this encryption, altering the IV rewrites the first
+     * plaintext block bit for bit and leaves no trace. With `id` and `jsonrpc`
+     * leading, the method name always starts beyond that block, which removes
+     * the cheapest way to change which command the machine runs. Altering later
+     * blocks is still possible at the cost of scrambling the block before them;
+     * nothing on the client can prevent that.
      */
     public fun encode(id: Int): String {
         require(id >= 0) { "id must be non-negative" }
@@ -120,7 +132,7 @@ public sealed class As11Request(public val method: String, private val jsonRpcVe
 
     public class RequestSession(private val clientId: String) : Plaintext("RequestSession") {
         init {
-            require(CLIENT_ID.matches(clientId)) { "client id has an unexpected form" }
+            require(isAcceptableClientId(clientId)) { "client id has an unexpected form" }
         }
 
         override fun params(): JsonElement = buildJsonObject { put("clientId", JsonPrimitive(clientId)) }
@@ -189,6 +201,14 @@ public sealed class As11Request(public val method: String, private val jsonRpcVe
         public const val MAX_SPOOL_SIZE: Int = 1_000_000
         public const val DEFAULT_MAX_FRAGMENT_SIZE: Int = 2808
         public const val MAX_FRAGMENT_SIZE: Int = 3576
-        internal val CLIENT_ID = Regex("[A-Za-z0-9._:\\-]{1,64}")
+        private const val MAX_CLIENT_ID_CHARS = 128
+
+        /**
+         * The machine chooses the client id and its format is not documented, so
+         * the only rules are a length bound and no control characters. It is sent
+         * back as a JSON string, which is escaped by the serialiser.
+         */
+        public fun isAcceptableClientId(clientId: String): Boolean =
+            clientId.length in 1..MAX_CLIENT_ID_CHARS && clientId.none { it < ' ' || it == '\u007f' }
     }
 }

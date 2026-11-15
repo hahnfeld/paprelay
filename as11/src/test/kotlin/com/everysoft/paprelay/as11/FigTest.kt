@@ -56,6 +56,21 @@ class FigTest {
     }
 
     @Test
+    fun `frames hidden behind a truncated frame are recovered by abandoning it`() {
+        val deframer = FigDeframer()
+        val truncated = Fig.encode(0x0396, ByteArray(4000) { 7 }).copyOf(300)
+        val following = (1..3).map { Fig.encode(0x0396, "frame-$it".toByteArray()) }.reduce { a, b -> a + b }
+        // Nothing can be delivered: the truncated frame still claims 3.7 kB that will never come.
+        assertEquals(0, deframer.push(truncated + following).size)
+        assertTrue(deframer.hasPartialFrame)
+
+        val recovered = deframer.abandonPartialFrame()
+        assertEquals(listOf("frame-1", "frame-2", "frame-3"), recovered.map { String(it.payload) })
+        assertEquals(1, deframer.abandonedFrames)
+        assertEquals(0, deframer.abandonPartialFrame().size)
+    }
+
+    @Test
     fun `a corrupted header and leading noise are skipped`() {
         val noise = byteArrayOf(1, 2, 0xBE.toByte(), 0xBA.toByte(), 3)
         val badHeader = Fig.encode(0x0396, "x".toByteArray()).also { it[5] = 0x7F }

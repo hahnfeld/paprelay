@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name" translatable="false">PAPRelay</string>
+
+    <string name="action_about">About</string>
+    <string name="action_back">Back</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_confirm">Confirm</string>
+    <string name="action_run_check">Run device check</string>
+    <string name="action_reconnect_check">Reconnect only</string>
+    <string name="action_forget">Forget machine</string>
+    <string name="action_export">Export report</string>
+
+    <string name="machine_heading">Machine</string>
+    <string name="machine_unpaired">Not paired</string>
+    <string name="machine_paired">AirSense 11 ··%1$s</string>
+    <string name="machine_paired_unknown">AirSense 11</string>
+    <string name="machine_paired_on">Paired %1$s</string>
+    <string name="machine_unpaired_hint">Put the machine in pairing mode: More, MyAir App, Connect. It must not be paired with the myAir app.</string>
+
+    <string name="check_heading">Device check</string>
+    <string name="check_explanation">Reads from the machine and changes nothing on it. Writes one test value to Health Connect and removes it again.</string>
+    <string name="state_passed">Passed</string>
+    <string name="state_failed">Failed</string>
+    <string name="state_running">Running</string>
+    <string name="state_skipped">Skipped</string>
+    <string name="state_pending">Waiting</string>
+
+    <string name="passkey_title">Enter the code on the machine</string>
+    <string name="passkey_body">The machine is showing a 4-digit code. Pairing replaces the myAir app\'s connection to this machine.</string>
+    <string name="passkey_label">Code</string>
+
+    <string name="forget_title">Forget this machine?</string>
+    <string name="forget_body">PAPRelay will delete its pairing. Data already written to Health Connect stays there.</string>
+
+    <string name="permission_bluetooth_denied">Bluetooth permission is needed to reach the machine.</string>
+    <string name="early_build_notice">Early build. Not validated against a real machine yet.</string>
+
+    <string name="about_title">About</string>
+    <string name="about_version">Version %1$s</string>
+    <string name="about_attribution" translatable="false">Based on SomnoTrace, originally created by Ilya Kruchinin (https://github.com/ilyakruchinin).</string>
+    <string name="about_licence">Copyright © 2026 PAPRelay contributors. PAPRelay is free software under the GNU General Public License, version 3 or later, with an attribution term inherited from SomnoTrace. It comes with absolutely no warranty. You may redistribute it under the terms of that licence; the source code is available from the project\'s repository.</string>
+    <string name="about_intended_use_heading">Intended use</string>
+    <string name="about_intended_use">PAPRelay transfers, stores, converts and displays data your machine has already recorded. It does not interpret the data, raise alerts, give advice or control the machine.</string>
+    <string name="about_disclaimer_heading">Not a medical device</string>
+    <string name="about_disclaimer">PAPRelay is not intended to diagnose, treat, cure or prevent any condition, and must not be used to make diagnosis or treatment decisions. Values may be wrong, late or missing. It does not replace myAir, your equipment provider\'s reporting, or advice from a clinician.</string>
+    <string name="about_affiliation">PAPRelay is an independent project. It is not affiliated with or endorsed by ResMed or Google. ResMed, AirSense and myAir are trademarks of ResMed. Android and Health Connect are trademarks of Google LLC.</string>
+
+    <string name="privacy_title">Privacy</string>
+    <string name="privacy_heading_what">What PAPRelay does with your data</string>
+    <string name="privacy_what">PAPRelay reads therapy records from your machine over Bluetooth and stores them on this phone. It writes respiratory rate to Health Connect, and other types only if you turn them on.</string>
+    <string name="privacy_heading_where">Where your data goes</string>
+    <string name="privacy_where">Nowhere else. PAPRelay has no internet permission, no accounts, no analytics and no advertising. Data leaves the app only through Health Connect and through files you choose to export.</string>
+    <string name="privacy_heading_read">What PAPRelay reads from Health Connect</string>
+    <string name="privacy_read">Nothing from other apps. It asks only for permission to write, and reads back only its own records to keep them correct.</string>
+    <string name="privacy_heading_delete">Removing your data</string>
+    <string name="privacy_delete">Uninstalling PAPRelay deletes everything it stored. Records it wrote to Health Connect can be removed in Health Connect, under App permissions, PAPRelay.</string>
+</resources>

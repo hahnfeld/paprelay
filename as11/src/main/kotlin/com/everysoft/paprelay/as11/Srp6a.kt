@@ -68,7 +68,7 @@ public class Srp6aClient internal constructor(privateExponent: ByteArray) {
         }
         val bigB = BigInteger(serverPublicKeyHex, 16)
         if (bigB.signum() <= 0 || bigB >= N) {
-            throw As11AuthException("machine sent an invalid key-exchange value")
+            throw As11AuthException.MachineUnauthenticated("machine sent an invalid key-exchange value")
         }
         val paddedB = pad(bigB)
 
@@ -76,7 +76,7 @@ public class Srp6aClient internal constructor(privateExponent: ByteArray) {
         val x = BigInteger(1, sha256(salt, sha256(passkey.toByteArray(Charsets.US_ASCII))))
         val u = BigInteger(1, sha256(publicKey, paddedB))
         if (u.signum() == 0) {
-            throw As11AuthException("machine sent an invalid key-exchange value")
+            throw As11AuthException.MachineUnauthenticated("machine sent an invalid key-exchange value")
         }
 
         val base = bigB.subtract(k.multiply(G.modPow(x, N))).mod(N)

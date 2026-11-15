@@ -22,7 +22,7 @@ kotlin {
 dependencies {
     api(project(":core"))
     api(libs.coroutines.core)
-    implementation(libs.serialization.json)
+    api(libs.serialization.json)
 
     testFixturesApi(libs.coroutines.core)
     testFixturesImplementation(libs.serialization.json)

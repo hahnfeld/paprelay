@@ -79,7 +79,10 @@ public object Fig {
  *
  * A frame is delivered only when both its header CRC and its payload CRC match.
  * Corrupt input never throws; it is skipped and counted so the caller can decide
- * whether the link is still trustworthy. Not thread-safe.
+ * whether the link is still trustworthy.
+ *
+ * Not thread-safe: callers serialise [push], [abandonPartialFrame] and [reset].
+ * The counters may be read from any thread.
  *
  * @param maxPayload largest payload length accepted from a header; larger values
  *   are treated as corruption. The machine's messages are a few kilobytes at most.
@@ -89,12 +92,22 @@ public class FigDeframer(private val maxPayload: Int = DEFAULT_MAX_PAYLOAD) {
     private var length = 0
 
     /** Bytes thrown away while hunting for a valid frame. */
+    @Volatile
     public var discardedBytes: Long = 0
         private set
 
     /** Frames with a valid header whose payload failed its CRC. */
+    @Volatile
     public var payloadCrcFailures: Long = 0
         private set
+
+    /** Frames given up on because the rest of them never arrived. */
+    @Volatile
+    public var abandonedFrames: Long = 0
+        private set
+
+    /** True while bytes of an unfinished frame are being held. */
+    public val hasPartialFrame: Boolean get() = length > 0
 
     init {
         require(maxPayload in 1..Fig.MAX_PAYLOAD) { "maxPayload out of range" }
@@ -103,8 +116,27 @@ public class FigDeframer(private val maxPayload: Int = DEFAULT_MAX_PAYLOAD) {
     /** Feeds received bytes and returns every frame completed by them, in order. */
     public fun push(bytes: ByteArray): List<FigFrame> {
         append(bytes)
+        return scan(0)
+    }
+
+    /**
+     * Gives up on the frame currently being waited for and rescans what is held.
+     *
+     * A frame whose middle was lost declares a length that the stream will only
+     * satisfy with bytes belonging to later frames, so those frames would stay
+     * hidden behind it. Call this when the link has been quiet for long enough
+     * that the rest of the frame is clearly not coming.
+     */
+    public fun abandonPartialFrame(): List<FigFrame> {
+        if (length == 0) return emptyList()
+        abandonedFrames += 1
+        discardedBytes += 1
+        return scan(1)
+    }
+
+    private fun scan(from: Int): List<FigFrame> {
         var frames: MutableList<FigFrame>? = null
-        var pos = 0
+        var pos = from
         while (true) {
             val sync = indexOfSync(pos)
             if (sync < 0) {

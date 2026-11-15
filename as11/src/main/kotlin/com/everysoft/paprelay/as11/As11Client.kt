@@ -8,50 +8,68 @@
 // Copyright (C) 2026 Ilya Kruchinin, GPL-3.0-or-later with the Section 7(b)
 // attribution term reproduced in NOTICE.
 // Ported to Kotlin and modified 2026-11-15: request ids are matched, the server
-// proof is compared in constant time, a missing download hash is fatal, plaintext
-// is refused once a session exists, and all device-supplied values are bounded.
+// proof is compared in constant time, an unverifiable download is refused,
+// plaintext is ignored once a session exists, a frame cut short by a lost chunk
+// is abandoned after a quiet period, sends are time-limited, and all
+// device-supplied values are bounded.
 package com.everysoft.paprelay.as11
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.intOrNull
 import java.nio.ByteBuffer
-import java.nio.charset.CharacterCodingException
 import java.nio.charset.CodingErrorAction
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.time.Instant
 import java.time.format.DateTimeParseException
 import java.util.Base64
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
-/** Byte pipe to the machine. The Android implementation wraps the GATT link. */
+/**
+ * Byte pipe to the machine. The Android implementation wraps the GATT link.
+ *
+ * Contract:
+ * - [incoming] must deliver every byte received since the link came up, in
+ *   order, even those that arrive before it is collected (buffer them). It must
+ *   complete or throw when the link drops.
+ * - [send] either delivers the whole frame or throws. After it throws, the
+ *   client assumes part of a frame may be on the wire and stops using the link.
+ */
 public interface As11Transport {
-    /** Bytes received from the machine, in arrival order, in arbitrary chunks. */
     public val incoming: Flow<ByteArray>
 
-    /** Sends one complete frame, splitting it to whatever the link can carry. */
     public suspend fun send(frame: ByteArray)
 }
 
 /** Long-term secret established by first pairing. */
 public class PairingCredentials(public val clientId: String, public val pairingKey: ByteArray) {
     init {
-        require(As11Request.CLIENT_ID.matches(clientId)) { "client id has an unexpected form" }
+        require(As11Request.isAcceptableClientId(clientId)) { "client id has an unexpected form" }
         require(pairingKey.size == SessionCrypto.KEY_BYTES) { "pairing key has the wrong size" }
     }
 
@@ -61,7 +79,7 @@ public class PairingCredentials(public val clientId: String, public val pairingK
 /** Remembers session nonces so a replayed session setup can be refused. */
 public fun interface NonceRegistry {
     /** Records [nonce]; returns false if it has been seen before. */
-    public fun register(nonce: ByteArray): Boolean
+    public suspend fun register(nonce: ByteArray): Boolean
 
     public companion object {
         /** Accepts everything. For tests and one-off diagnostics only. */
@@ -72,16 +90,20 @@ public fun interface NonceRegistry {
 /** The machine's clock as read at a known moment of local time. */
 public class MachineClockReading(
     public val machineEpochMs: Long,
-    /** Local time when the request left. */
+    /** Local wall-clock time just before the request left. */
     public val sentAtMs: Long,
-    /** Local time when the answer arrived. */
-    public val receivedAtMs: Long,
+    /** From just before sending to the answer's arrival, on a monotonic clock. */
+    public val roundTripMs: Long,
 ) {
-    public val roundTripMs: Long get() = receivedAtMs - sentAtMs
-
-    /** Local minus machine time at the midpoint of the exchange. */
+    /**
+     * Local minus machine time, taking the machine's reading to have been made
+     * at the midpoint of the exchange. Positive when the machine's clock is behind.
+     */
     public val offsetMs: Long get() = sentAtMs + roundTripMs / 2 - machineEpochMs
 }
+
+/** Values read with `Get`, and the names the machine could not supply. */
+public class GetResult(public val values: JsonObject, public val unavailable: List<String>)
 
 /** One verified round of a stored-data download. */
 public class SpoolRound(
@@ -102,17 +124,31 @@ public class As11Timeouts(
     public val spoolAckMs: Long = 5_000,
     /** Longest silence tolerated between two download fragments. */
     public val spoolStallMs: Long = 30_000,
+    /** Longest a single download round may take in total. */
+    public val spoolTotalMs: Long = 300_000,
+    /** Longest the link may take to accept one request. */
+    public val sendMs: Long = 15_000,
+    /** Quiet period after which a half-received frame is given up on. */
+    public val resyncIdleMs: Long = 1_500,
+    /** Pause after session setup before the first encrypted request, as the reference client does. */
+    public val sessionSettleMs: Long = 200,
 )
 
-/** Counters for input that was ignored rather than acted on. All zero on a healthy link. */
+/**
+ * Counts of input that was ignored rather than acted on. These are diagnostics,
+ * not errors: a real machine sends heartbeats on the plaintext channel, for
+ * instance. They matter when something else has gone wrong.
+ */
 public class As11Counters internal constructor() {
     internal val plaintextAfterSession = AtomicLong()
     internal val encryptedBeforeSession = AtomicLong()
     internal val unmatchedResponses = AtomicLong()
     internal val ignoredNotifications = AtomicLong()
     internal val malformedMessages = AtomicLong()
+    internal val undecodableEncrypted = AtomicLong()
     internal val nonCanonicalPadding = AtomicLong()
     internal val strayFragments = AtomicLong()
+    internal val sessionConfirmationMissing = AtomicLong()
 
     public fun snapshot(): Map<String, Long> = mapOf(
         "plaintextAfterSession" to plaintextAfterSession.get(),
@@ -120,8 +156,10 @@ public class As11Counters internal constructor() {
         "unmatchedResponses" to unmatchedResponses.get(),
         "ignoredNotifications" to ignoredNotifications.get(),
         "malformedMessages" to malformedMessages.get(),
+        "undecodableEncrypted" to undecodableEncrypted.get(),
         "nonCanonicalPadding" to nonCanonicalPadding.get(),
         "strayFragments" to strayFragments.get(),
+        "sessionConfirmationMissing" to sessionConfirmationMissing.get(),
     )
 }
 
@@ -130,11 +168,15 @@ public class As11Counters internal constructor() {
  *
  * Create it when the link is up, then either [pair] (first time) or
  * [startSession] (every later connection), then use the read-only calls.
- * Exactly one request is in flight at a time. Any integrity failure on the
- * encrypted channel ends the conversation: every later call throws.
+ * Exactly one request is in flight at a time.
  *
- * @param scope owns the reader; cancel it (or call [close]) when the link drops.
- * @param nowMs local wall clock, injectable for tests.
+ * Once the conversation fails ([terminated] completes) every call throws that
+ * failure, and the owner should drop the link. Always [close] the client: its
+ * reader keeps [scope] alive until then.
+ *
+ * @param scope owns the reader; cancelling it has the same effect as [close].
+ * @param nowMs local wall clock.
+ * @param elapsedMs a monotonic clock, used for intervals and deadlines.
  */
 public class As11Client(
     private val transport: As11Transport,
@@ -142,32 +184,48 @@ public class As11Client(
     private val random: SecureRandom = SecureRandom(),
     private val timeouts: As11Timeouts = As11Timeouts(),
     private val nowMs: () -> Long = System::currentTimeMillis,
-) {
-    private class Pending(val id: Int, val answer: CompletableDeferred<JsonObject>)
+    private val elapsedMs: () -> Long = { System.nanoTime() / 1_000_000 },
+) : AutoCloseable {
+    private class Answer(val message: JsonObject, val arrivedElapsedMs: Long)
 
-    private class Fragment(
-        val spoolId: Int?,
-        val seq: Int,
-        val data: ByteArray,
-        val status: String?,
-        val next: JsonObject?,
-        val hashHex: String?,
-    )
+    private class Pending(val id: Int, val answer: CompletableDeferred<Answer>)
+
+    private sealed class Inbound {
+        class Piece(
+            val spoolId: Int?,
+            val seq: Int?,
+            val data: ByteArray,
+            val status: String?,
+            val next: JsonObject?,
+            val hashHex: String?,
+        ) : Inbound()
+
+        class Unreadable(val reason: String) : Inbound()
+    }
 
     public val counters: As11Counters = As11Counters()
 
     private val deframer = FigDeframer()
     private val rpcLock = Mutex()
     private val pending = AtomicReference<Pending?>(null)
-    private val fragments = AtomicReference<Channel<Fragment>?>(null)
+    private val fragments = AtomicReference<Channel<Inbound>?>(null)
     private val failure = AtomicReference<As11Exception?>(null)
+    private val failed = CompletableDeferred<As11Exception>()
     private val sessionKey = AtomicReference<ByteArray?>(null)
+    private val chunksSeen = AtomicLong()
+    private val consecutiveUndecodable = AtomicInteger()
     private var nextId = 1000 + random.nextInt(9000)
+    private var pairedOnThisLink = false
 
     private val reader: Job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
         try {
-            transport.incoming.collect { bytes ->
-                for (frame in deframer.push(bytes)) onFrame(frame)
+            coroutineScope {
+                val watchdog = launch { abandonStalledFrames() }
+                transport.incoming.collect { bytes ->
+                    chunksSeen.incrementAndGet()
+                    synchronized(deframer) { deframer.push(bytes).forEach(::onFrame) }
+                }
+                watchdog.cancel()
             }
             fail(As11TransportException("link closed"))
         } catch (e: CancellationException) {
@@ -180,94 +238,133 @@ public class As11Client(
         }
     }
 
-    /** True once [startSession] has succeeded on this connection. */
+    /** Completes with the reason once the conversation can no longer be used. */
+    public val terminated: Deferred<As11Exception> get() = failed
+
+    /** True while an encrypted session is open on this connection. */
     public val isSecure: Boolean get() = sessionKey.get() != null
 
     /** Link-level framing statistics. */
     public val discardedBytes: Long get() = deframer.discardedBytes
     public val payloadCrcFailures: Long get() = deframer.payloadCrcFailures
+    public val abandonedFrames: Long get() = deframer.abandonedFrames
 
     /**
      * First pairing. The machine displays its code as soon as the exchange
-     * starts; [askPasskey] is invoked at that point and should return what the
-     * user reads off the screen.
+     * starts, so [askPasskey] is invoked straight away and should return what
+     * the user reads off the screen. It is cancelled if the exchange fails.
      *
-     * This is never retried automatically: every attempt gives a device
-     * impersonating the machine one guess at the code.
+     * Never retried automatically: every attempt gives a device impersonating
+     * the machine one guess at the code. After pairing, open a new connection
+     * before calling [startSession], as the reference client does.
      *
-     * @throws As11AuthException if the code is wrong or the machine cannot prove it knows it.
+     * @throws As11AuthException.PasskeyRejected if the machine rejects the code.
+     * @throws As11AuthException.MachineUnauthenticated if the other end cannot prove it knows the code.
      */
     public suspend fun pair(askPasskey: suspend () -> String): PairingCredentials = rpcLock.withLock {
         check(!isSecure) { "already in a session" }
         val srp = Srp6aClient(random)
-        val start = exchange(As11Request.StartKeyExchange(srp.publicKey), timeouts.keyExchangeMs).resultObject()
-        val serverKey = start.string("serverPk", MAX_HEX_CHARS)
-        val salt = start.string("salt", MAX_HEX_CHARS)
+        coroutineScope {
+            val entry = async { askPasskey() }
+            val start = exchange(As11Request.StartKeyExchange(srp.publicKey), timeouts.keyExchangeMs).resultObject()
+            val serverKey = start.string("serverPk", MAX_HEX_CHARS)
+            val salt = start.string("salt", MAX_HEX_CHARS)
 
-        val proof = srp.computeProof(serverKey, salt, askPasskey())
-        val confirm = try {
-            exchange(As11Request.ConfirmKeyExchange(proof.clientProof), timeouts.confirmMs).resultObject()
-        } catch (e: As11RpcException) {
-            throw As11AuthException("the machine rejected the pairing code")
+            // Stop waiting for the user the moment the link is known to be gone.
+            val passkey = select {
+                entry.onAwait { it }
+                failed.onAwait { throw it }
+            }
+            val proof = srp.computeProof(serverKey, salt, passkey)
+            val confirm = try {
+                exchange(As11Request.ConfirmKeyExchange(proof.clientProof), timeouts.confirmMs).resultObject()
+            } catch (e: As11RpcException) {
+                if (e.anonymous) throw e
+                throw As11AuthException.PasskeyRejected(e)
+            }
+            val serverProof = Hex.decode(confirm.string("serverConfirmation", MAX_HEX_CHARS), 64)
+            if (!MessageDigest.isEqual(serverProof, proof.expectedServerProof)) {
+                throw As11AuthException.MachineUnauthenticated("the machine could not prove it knows the pairing code")
+            }
+            val clientId = confirm.string("clientId", MAX_HEX_CHARS)
+            if (!As11Request.isAcceptableClientId(clientId)) {
+                throw As11ProtocolException("machine issued a client id of unexpected form")
+            }
+            pairedOnThisLink = true
+            PairingCredentials(clientId, proof.sharedKey)
         }
-        val serverProof = Hex.decode(confirm.string("serverConfirmation", MAX_HEX_CHARS), 64)
-        if (!MessageDigest.isEqual(serverProof, proof.expectedServerProof)) {
-            throw As11AuthException("the machine could not prove it knows the pairing code")
-        }
-        val clientId = confirm.string("clientId", 64)
-        if (!As11Request.CLIENT_ID.matches(clientId)) {
-            throw As11ProtocolException("machine issued a client id of unexpected form")
-        }
-        PairingCredentials(clientId, proof.sharedKey)
     }
 
     /**
      * Proves knowledge of the pairing key and switches to the encrypted channel.
      *
-     * @throws As11AuthException if the machine no longer recognises the pairing,
-     *   rejects the proof, or presents a nonce that was already used.
+     * If this times out the machine may consider the session open while this
+     * client does not, so the connection must be dropped rather than retried.
+     *
+     * @throws As11AuthException.PairingUnknown if the machine answers our client id with an error.
+     * @throws As11AuthException.SessionProofRejected if it rejects the proof.
+     * @throws As11AuthException.NonceReplayed if it presents a nonce that was already used.
      */
     public suspend fun startSession(credentials: PairingCredentials, nonces: NonceRegistry): Unit = rpcLock.withLock {
         check(!isSecure) { "already in a session" }
+        check(!pairedOnThisLink) { "open a new connection after pairing" }
         val offer = try {
             exchange(As11Request.RequestSession(credentials.clientId), timeouts.sessionMs).resultObject()
         } catch (e: As11RpcException) {
-            throw As11AuthException("the machine does not recognise this pairing")
+            if (e.anonymous) throw e
+            throw As11AuthException.PairingUnknown(e)
         }
         val challenge = Hex.decode(offer.string("challenge", MAX_HEX_CHARS), 64)
         val nonce = Hex.decode(offer.string("nonce", MAX_HEX_CHARS), 64)
-        if (!nonces.register(nonce)) {
-            throw As11AuthException("the machine reused a session nonce")
-        }
-        try {
+        if (!nonces.register(nonce)) throw As11AuthException.NonceReplayed()
+
+        val verdict = try {
             exchange(
                 As11Request.CheckSessionIntegrity(SessionCrypto.challengeResponse(credentials.pairingKey, challenge)),
                 timeouts.sessionMs,
-            )
+            ).message
         } catch (e: As11RpcException) {
-            throw As11AuthException("the machine rejected the session proof")
+            if (e.anonymous) throw e
+            throw As11AuthException.SessionProofRejected(e)
+        }
+        when (((verdict["result"] as? JsonObject)?.get("confirmation") as? JsonPrimitive)?.booleanOrNull) {
+            true -> Unit
+            false -> throw As11AuthException.SessionProofRejected(null)
+            // Documented as always present; tolerated and counted until seen on a real machine.
+            null -> counters.sessionConfirmationMissing.incrementAndGet()
         }
         sessionKey.set(SessionCrypto.deriveSessionKey(credentials.pairingKey, nonce))
+        delay(timeouts.sessionSettleMs)
     }
 
-    /** Reads the named data-model items. The result is keyed by each item's wire name. */
-    public suspend fun get(items: List<GetItem>): JsonObject =
-        call(As11Request.Get(items), timeouts.rpcMs).resultObject()
+    /**
+     * Reads the named data-model items. Items this machine does not have are
+     * reported in [GetResult.unavailable] instead of failing the whole read.
+     */
+    public suspend fun get(items: List<GetItem>): GetResult = try {
+        GetResult(call(As11Request.Get(items), timeouts.rpcMs).resultObject(), emptyList())
+    } catch (e: As11RpcException) {
+        val partial = e.data as? JsonObject
+        if (e.code != ERROR_INVALID_OBJECT || partial == null) throw e
+        val missing = (partial[INVALID_OBJECTS] as? JsonArray).orEmpty()
+            .mapNotNull { (it as? JsonPrimitive)?.takeIf(JsonPrimitive::isString)?.content?.take(80) }
+        GetResult(JsonObject(partial.filterKeys { it != INVALID_OBJECTS }), missing)
+    }
 
     public suspend fun getVersion(): JsonObject = call(As11Request.GetVersion, timeouts.rpcMs).resultObject()
 
     /** Reads the machine's clock, bracketed by local time so drift can be measured. */
     public suspend fun getDateTime(): MachineClockReading = rpcLock.withLock {
-        val sent = nowMs()
-        val result = exchange(As11Request.GetDateTime, timeouts.clockMs).resultObject()
-        val received = nowMs()
-        val text = result.string("dateTime", 40)
+        val sentWall = nowMs()
+        val sentElapsed = elapsedMs()
+        val answer = exchange(As11Request.GetDateTime, timeouts.clockMs)
+        val text = answer.resultObject().string("dateTime", 40)
         val machine = try {
             Instant.parse(text).toEpochMilli()
         } catch (e: DateTimeParseException) {
             throw As11ProtocolException("machine sent an unreadable date", e)
         }
-        MachineClockReading(machine, sent, received)
+        MachineClockReading(machine, sentWall, (answer.arrivedElapsedMs - sentElapsed).coerceAtLeast(0))
     }
 
     /** Asks the machine to forget this client. Only for the explicit "Forget machine" action. */
@@ -277,18 +374,22 @@ public class As11Client(
 
     /**
      * Downloads one round of a stored-data log and verifies it end to end:
-     * fragments must be numbered 0..n-1 with no gap or repeat, and the SHA-256
-     * of the reassembled bytes must equal the hash the machine sends.
+     * data-bearing fragments must be numbered 0..n-1 with no gap or repeat, and
+     * the SHA-256 of the reassembled bytes must equal the hash the machine sends.
+     *
+     * A failed round does not end the conversation; it can be pulled again.
      *
      * @throws As11SpoolUnavailableException if the machine reports the data is unavailable.
-     * @throws As11ProtocolException on any ordering, size or hash failure.
+     * @throws As11SpoolIntegrityException on an ordering, size or hash failure.
+     * @throws As11SpoolUnverifiedException if the machine sent no hash.
+     * @throws As11SpoolStalledException if the round stops arriving.
      */
     public suspend fun pullSpoolRound(
         spool: SpoolName,
         address: SpoolAddress,
         maxSpoolSize: Int = As11Request.DEFAULT_MAX_SPOOL_SIZE,
     ): SpoolRound = rpcLock.withLock {
-        val inbox = Channel<Fragment>(Channel.UNLIMITED)
+        val inbox = Channel<Inbound>(Channel.UNLIMITED)
         check(fragments.compareAndSet(null, inbox)) { "a download is already running" }
         try {
             val started = exchange(As11Request.StartSpool(spool, address, maxSpoolSize), timeouts.rpcMs).resultObject()
@@ -306,47 +407,60 @@ public class As11Client(
     }
 
     /** Stops reading and forgets the session key. Safe to call more than once. */
-    public fun close() {
+    override fun close() {
         reader.cancel()
         fail(As11TransportException("closed"))
-        sessionKey.getAndSet(null)?.fill(0)
     }
 
-    private suspend fun collectRound(inbox: Channel<Fragment>, spoolId: Int, maxSpoolSize: Int): SpoolRound {
-        val received = ArrayList<Fragment>()
+    private suspend fun collectRound(inbox: Channel<Inbound>, spoolId: Int, maxSpoolSize: Int): SpoolRound {
+        val deadline = elapsedMs() + timeouts.spoolTotalMs
+        val pieces = ArrayList<Inbound.Piece>()
         var total = 0L
-        var terminal: Fragment? = null
+        var seen = 0
+        var terminal: Inbound.Piece? = null
         while (terminal == null) {
-            val fragment = withTimeoutOrNull(timeouts.spoolStallMs) { inbox.receive() }
-                ?: throw As11TimeoutException("download stalled after ${received.size} fragments")
-            if (fragment.spoolId != null && fragment.spoolId != spoolId) {
-                counters.strayFragments.incrementAndGet()
-                continue
+            val wait = minOf(timeouts.spoolStallMs, deadline - elapsedMs())
+            val inbound = (if (wait > 0) withTimeoutOrNull(wait) { inbox.receive() } else null)
+                ?: throw As11SpoolStalledException(pieces.size)
+            // Everything received counts, so a stream of irrelevant fragments cannot keep the round alive.
+            if (++seen > MAX_FRAGMENTS) throw As11SpoolIntegrityException("download exceeded its fragment limit")
+            when (inbound) {
+                is Inbound.Unreadable -> throw As11SpoolIntegrityException(inbound.reason)
+                is Inbound.Piece -> {
+                    if (inbound.spoolId != null && inbound.spoolId != spoolId) {
+                        counters.strayFragments.incrementAndGet()
+                        continue
+                    }
+                    total += inbound.data.size
+                    // The machine may overshoot its own limit by a fragment; anything more is abuse.
+                    if (total > maxSpoolSize.toLong() + As11Request.MAX_FRAGMENT_SIZE) {
+                        throw As11SpoolIntegrityException("download exceeded its size limit")
+                    }
+                    if (inbound.data.isNotEmpty()) pieces.add(inbound)
+                    if (inbound.status != null && inbound.status != STATUS_INCOMPLETE) terminal = inbound
+                }
             }
-            total += fragment.data.size
-            // The machine may overshoot its own limit by a fragment; anything more is abuse.
-            if (received.size >= MAX_FRAGMENTS || total > maxSpoolSize.toLong() + As11Request.MAX_FRAGMENT_SIZE) {
-                throw As11ProtocolException("download exceeded its size limit")
-            }
-            received.add(fragment)
-            if (fragment.status != null && fragment.status != STATUS_INCOMPLETE) terminal = fragment
         }
 
         val status = terminal.status!!
-        if (status.startsWith("ERROR_")) throw As11SpoolUnavailableException(status)
+        if (status.startsWith("ERROR_")) throw As11SpoolUnavailableException(status.take(60))
         if (status != STATUS_DONE && status != STATUS_MORE) {
-            throw As11ProtocolException("download ended with unknown status")
+            throw As11ProtocolException("download ended with unknown status '${status.take(60)}'")
         }
 
-        received.sortBy { it.seq }
-        for (i in received.indices) {
-            if (received[i].seq != i) throw As11ProtocolException("download has a gap or repeat at fragment $i")
+        // Only fragments that carry data are numbered; a bare status fragment need not be.
+        if (pieces.any { it.seq == null }) {
+            throw As11SpoolIntegrityException("download has a data fragment without a sequence number")
+        }
+        pieces.sortBy { it.seq }
+        for (i in pieces.indices) {
+            if (pieces[i].seq != i) throw As11SpoolIntegrityException("download has a gap or repeat at fragment $i")
         }
         val data = ByteArray(total.toInt())
         var at = 0
-        for (fragment in received) {
-            fragment.data.copyInto(data, at)
-            at += fragment.data.size
+        for (piece in pieces) {
+            piece.data.copyInto(data, at)
+            at += piece.data.size
         }
 
         val next = if (status == STATUS_MORE) {
@@ -356,23 +470,28 @@ public class As11Client(
         }
         if (data.isEmpty()) return SpoolRound(data, null, next)
 
-        val expected = terminal.hashHex ?: throw As11ProtocolException("download arrived without an integrity hash")
+        val expected = try {
+            Hex.decode(terminal.hashHex ?: throw As11SpoolUnverifiedException(), 32)
+        } catch (e: As11ProtocolException) {
+            throw As11SpoolIntegrityException("download carried a malformed integrity hash")
+        }
         val actual = MessageDigest.getInstance("SHA-256").digest(data)
-        if (!MessageDigest.isEqual(actual, Hex.decode(expected, 32))) {
-            throw As11ProtocolException("download failed its integrity hash")
+        if (!MessageDigest.isEqual(actual, expected)) {
+            throw As11SpoolIntegrityException("download failed its integrity hash")
         }
         return SpoolRound(data, actual, next)
     }
 
-    private suspend fun call(request: As11Request.Encrypted, timeoutMs: Long): JsonObject =
+    private suspend fun call(request: As11Request.Encrypted, timeoutMs: Long): Answer =
         rpcLock.withLock { exchange(request, timeoutMs) }
 
-    /** Sends [request] and returns the machine's whole answer. Caller holds [rpcLock]. */
-    private suspend fun exchange(request: As11Request, timeoutMs: Long): JsonObject {
+    /** Sends [request] and returns the machine's answer. Caller holds [rpcLock]. */
+    private suspend fun exchange(request: As11Request, timeoutMs: Long): Answer {
         failure.get()?.let { throw it }
         val id = nextId
         nextId = if (nextId >= MAX_ID) 1000 else nextId + 1
-        val answer = CompletableDeferred<JsonObject>()
+        val answer = CompletableDeferred<Answer>()
+        val unmatchedBefore = counters.unmatchedResponses.get()
         pending.set(Pending(id, answer))
         try {
             // A failure recorded between the first check and registration would be missed.
@@ -380,51 +499,120 @@ public class As11Client(
             val json = request.encode(id).toByteArray(Charsets.UTF_8)
             val frame = when (request) {
                 is As11Request.Encrypted -> {
-                    val key = sessionKey.get() ?: throw IllegalStateException("no session")
-                    Fig.encode(Fig.CHANNEL_TX_ENCRYPTED, SessionCrypto.encrypt(key, json, random))
+                    // A private copy, so closing the client cannot blank the key mid-encryption.
+                    val key = sessionKey.get()?.copyOf() ?: throw IllegalStateException("no session")
+                    try {
+                        Fig.encode(Fig.CHANNEL_TX_ENCRYPTED, SessionCrypto.encrypt(key, json, random))
+                    } finally {
+                        key.fill(0)
+                    }
                 }
                 is As11Request.Plaintext -> {
                     check(!isSecure) { "plaintext is not sent once a session exists" }
                     Fig.encode(Fig.CHANNEL_TX_PLAIN, json)
                 }
             }
-            try {
-                transport.send(frame)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                val wrapped = e as? As11Exception ?: As11TransportException("send failed", e)
-                fail(wrapped)
-                throw wrapped
-            }
-            val message = withTimeoutOrNull(timeoutMs) { answer.await() }
-                ?: throw As11TimeoutException(request.method)
-            val error = message["error"]
+            send(frame)
+            val received = withTimeoutOrNull(timeoutMs) { answer.await() }
+                // The answer may have landed in the same instant the timer fired.
+                ?: if (answer.isCompleted) {
+                    answer.await()
+                } else {
+                    throw As11TimeoutException(request.method, counters.unmatchedResponses.get() - unmatchedBefore)
+                }
+            val error = received.message["error"]
             if (error != null && error !is JsonNull) {
                 val detail = error as? JsonObject
+                val responseId = received.message["id"]
                 throw As11RpcException(
-                    request.method,
-                    (detail?.get("code") as? JsonPrimitive)?.intOrNull,
-                    (detail?.get("message") as? JsonPrimitive)?.takeIf { it.isString }?.content?.take(120),
+                    method = request.method,
+                    code = (detail?.get("code") as? JsonPrimitive)?.intOrNull,
+                    deviceMessage = (detail?.get("message") as? JsonPrimitive)?.takeIf { it.isString }?.content?.take(120),
+                    anonymous = responseId == null || responseId is JsonNull,
+                    data = detail?.get("data"),
                 )
             }
-            return message
+            return received
         } finally {
             pending.set(null)
         }
     }
 
+    private suspend fun send(frame: ByteArray) {
+        val sent = try {
+            withTimeoutOrNull(timeouts.sendMs) {
+                transport.send(frame)
+                true
+            }
+        } catch (e: CancellationException) {
+            // Part of a frame may be on the wire: nothing sent after it could be trusted.
+            val cause = As11TransportException("send interrupted", e)
+            fail(cause)
+            currentCoroutineContext().ensureActive() // the caller itself was cancelled
+            throw cause // the transport gave up on its own
+        } catch (e: Exception) {
+            val cause = e as? As11Exception ?: As11TransportException("send failed", e)
+            fail(cause)
+            throw cause
+        }
+        if (sent == null) {
+            val cause = As11TransportException("the link did not accept the request in time")
+            fail(cause)
+            throw cause
+        }
+    }
+
+    /**
+     * A frame whose middle chunk was lost would otherwise hold back every frame
+     * after it until enough bytes arrived to cover its declared length.
+     */
+    private suspend fun abandonStalledFrames() {
+        var lastSeen = -1L
+        var quietTicks = 0
+        while (true) {
+            delay(timeouts.resyncIdleMs / 2)
+            val seen = chunksSeen.get()
+            val waiting = synchronized(deframer) { deframer.hasPartialFrame }
+            quietTicks = if (waiting && seen == lastSeen) quietTicks + 1 else 0
+            lastSeen = seen
+            if (quietTicks >= 2) {
+                quietTicks = 0
+                try {
+                    synchronized(deframer) { deframer.abandonPartialFrame().forEach(::onFrame) }
+                } catch (e: As11Exception) {
+                    fail(e)
+                    return
+                }
+            }
+        }
+    }
+
+    /** Runs under the deframer lock, so frames are handled one at a time and in order. */
     private fun onFrame(frame: FigFrame) {
         val key = sessionKey.get()
         val message: JsonObject = if (key != null) {
             if (frame.channel != Fig.CHANNEL_RX_ENCRYPTED) {
+                // The machine sends heartbeats here. Nothing on this channel is acted on.
                 counters.plaintextAfterSession.incrementAndGet()
                 return
             }
-            val decrypted = SessionCrypto.decrypt(key, frame.payload)
-            if (!decrypted.canonicalPadding) counters.nonCanonicalPadding.incrementAndGet()
-            // Nothing but well-formed JSON is acceptable on the encrypted channel.
-            parseObject(decrypted.plaintext) ?: throw As11ProtocolException("undecodable message on the encrypted channel")
+            val parsed = try {
+                val decrypted = SessionCrypto.decrypt(key, frame.payload)
+                if (!decrypted.canonicalPadding) counters.nonCanonicalPadding.incrementAndGet()
+                parseObject(decrypted.plaintext)
+            } catch (e: As11ProtocolException) {
+                null
+            }
+            if (parsed == null) {
+                // One bad frame is dropped; a run of them means the session key or the link is wrong.
+                counters.undecodableEncrypted.incrementAndGet()
+                if (consecutiveUndecodable.incrementAndGet() >= MAX_CONSECUTIVE_UNDECODABLE) {
+                    throw As11ProtocolException("the encrypted channel is producing undecodable messages")
+                }
+                return
+            }
+            consecutiveUndecodable.set(0)
+            parsed
         } else {
             if (frame.channel == Fig.CHANNEL_RX_ENCRYPTED) {
                 counters.encryptedBeforeSession.incrementAndGet()
@@ -440,9 +628,11 @@ public class As11Client(
 
     private fun dispatch(message: JsonObject) {
         val id = message["id"]
+        val idAbsent = id == null || id is JsonNull
         val method = (message["method"] as? JsonPrimitive)?.takeIf { it.isString }?.content
         when {
-            method != null && id == null -> {
+            // Notifications carry no id, or a null one.
+            method != null && idAbsent -> {
                 if (method == "SpoolFragment") {
                     val inbox = fragments.get()
                     val params = message["params"] as? JsonObject
@@ -458,10 +648,10 @@ public class As11Client(
             method == null && id != null -> {
                 val waiting = pending.get()
                 val numeric = (id as? JsonPrimitive)?.takeIf { !it.isString }?.intOrNull
-                // The machine reports unparseable requests with a null id.
+                // The machine reports requests it could not parse with a null id.
                 val anonymousError = id is JsonNull && message["error"] is JsonObject
                 if (waiting != null && (numeric == waiting.id || anonymousError)) {
-                    waiting.answer.complete(message)
+                    waiting.answer.complete(Answer(message, elapsedMs()))
                 } else {
                     counters.unmatchedResponses.incrementAndGet()
                 }
@@ -470,19 +660,18 @@ public class As11Client(
         }
     }
 
-    private fun parseFragment(params: JsonObject): Fragment {
-        val seq = (params["seq"] as? JsonPrimitive)?.intOrNull
-            ?: throw As11ProtocolException("download fragment has no sequence number")
+    /** Never throws: a fragment that cannot be read fails its round, not the connection. */
+    private fun parseFragment(params: JsonObject): Inbound {
         val encoded = (params["data"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: ""
-        if (encoded.length > MAX_FRAGMENT_CHARS) throw As11ProtocolException("download fragment is too large")
+        if (encoded.length > MAX_FRAGMENT_CHARS) return Inbound.Unreadable("download fragment is too large")
         val data = try {
             Base64.getDecoder().decode(encoded)
         } catch (e: IllegalArgumentException) {
-            throw As11ProtocolException("download fragment is not valid base64", e)
+            return Inbound.Unreadable("download fragment is not valid base64")
         }
-        return Fragment(
+        return Inbound.Piece(
             spoolId = (params["spoolId"] as? JsonPrimitive)?.intOrNull,
-            seq = seq,
+            seq = (params["seq"] as? JsonPrimitive)?.intOrNull,
             data = data,
             status = (params["status"] as? JsonPrimitive)?.takeIf { it.isString }?.content,
             next = params["nextSpoolAddress"] as? JsonObject,
@@ -491,15 +680,14 @@ public class As11Client(
     }
 
     private fun parseObject(bytes: ByteArray): JsonObject? {
-        val text = try {
-            Charsets.UTF_8.newDecoder()
-                .onMalformedInput(CodingErrorAction.REPORT)
-                .onUnmappableCharacter(CodingErrorAction.REPORT)
-                .decode(ByteBuffer.wrap(bytes))
-                .toString()
-        } catch (e: CharacterCodingException) {
-            return null
-        }
+        // Trailing NULs are padding some senders count as content.
+        var end = bytes.size
+        while (end > 0 && bytes[end - 1].toInt() == 0) end--
+        val text = Charsets.UTF_8.newDecoder()
+            .onMalformedInput(CodingErrorAction.REPLACE)
+            .onUnmappableCharacter(CodingErrorAction.REPLACE)
+            .decode(ByteBuffer.wrap(bytes, 0, end))
+            .toString()
         return try {
             JSON.parseToJsonElement(text) as? JsonObject
         } catch (e: IllegalArgumentException) {
@@ -509,12 +697,14 @@ public class As11Client(
 
     private fun fail(cause: As11Exception) {
         if (!failure.compareAndSet(null, cause)) return
+        failed.complete(cause)
         pending.get()?.answer?.completeExceptionally(cause)
         fragments.get()?.close(cause)
+        sessionKey.getAndSet(null)?.fill(0)
     }
 
-    private fun JsonObject.resultObject(): JsonObject =
-        this["result"] as? JsonObject ?: throw As11ProtocolException("answer carries no result object")
+    private fun Answer.resultObject(): JsonObject =
+        message["result"] as? JsonObject ?: throw As11ProtocolException("answer carries no result object")
 
     private fun JsonObject.string(name: String, maxChars: Int): String {
         val value = (this[name] as? JsonPrimitive)?.takeIf { it.isString }?.content
@@ -531,10 +721,13 @@ public class As11Client(
         const val STATUS_INCOMPLETE = "SPOOL_INCOMPLETE"
         const val STATUS_MORE = "SPOOL_COMPLETE_MORE_DATA_PENDING"
         const val STATUS_DONE = "SPOOL_COMPLETE_NO_MORE_DATA"
+        const val ERROR_INVALID_OBJECT = -11201
+        const val INVALID_OBJECTS = "InvalidObjects"
         const val MAX_HEX_CHARS = 512
         const val MAX_FRAGMENTS = 2048
         const val MAX_FRAGMENT_CHARS = 8192
         const val MAX_ID = 1_000_000_000
+        const val MAX_CONSECUTIVE_UNDECODABLE = 3
         val JSON = Json { isLenient = false }
     }
 }

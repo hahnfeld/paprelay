@@ -72,7 +72,7 @@ class As11RequestTest {
     }
 
     @Test
-    fun `the method name never falls in the first cipher block`() {
+    fun `the method name never falls in the first cipher block, which an altered IV could rewrite`() {
         // Block 0 of the plaintext is a 2-byte length plus the first 14 JSON bytes.
         // Only that block can be rewritten undetectably by altering the IV.
         for (request in samples) {
@@ -105,8 +105,21 @@ class As11RequestTest {
     }
 
     @Test
-    fun `client ids that could break out of the JSON string are refused`() {
-        assertFailsWith<IllegalArgumentException> { As11Request.RequestSession("a\",\"method\":\"Set") }
+    fun `a client id is bounded and escaped, whatever characters the machine chose`() {
+        val awkward = "a\",\"method\":\"Set"
+        val json = As11Request.RequestSession(awkward).encode(7)
+        val parsed = Json.parseToJsonElement(json).jsonObject
+        assertEquals("RequestSession", (parsed["method"] as JsonPrimitive).content)
+        assertEquals(awkward, (parsed["params"]!!.jsonObject["clientId"] as JsonPrimitive).content)
+
         assertFailsWith<IllegalArgumentException> { As11Request.RequestSession("") }
+        assertFailsWith<IllegalArgumentException> { As11Request.RequestSession("line\nbreak") }
+        assertFailsWith<IllegalArgumentException> { As11Request.RequestSession("x".repeat(129)) }
+    }
+
+    @Test
+    fun `a start time outside any plausible range is refused`() {
+        assertFailsWith<IllegalArgumentException> { SpoolAddress.FromMachineTime(Long.MAX_VALUE) }
+        assertFailsWith<IllegalArgumentException> { SpoolAddress.FromMachineTime(0) }
     }
 }
