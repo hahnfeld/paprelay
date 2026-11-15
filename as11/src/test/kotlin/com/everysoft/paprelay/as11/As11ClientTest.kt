@@ -498,8 +498,53 @@ class As11ClientTest {
         val link = Pausing(machine.connect(), backgroundScope, pauseAfterChunks = 1, pauseMs = 10_500)
         val client = clientOn(link)
         link.armAfterPlaintext = 2
+        // The second asking is never answered, so only the late first answer can prove the session.
+        machine.faults.answerOnlyOnce += "GetVersion"
         client.startSession(credentials, NonceRegistry.AcceptAll)
         assertTrue(client.isSecure)
+        assertEquals(2, machine.encryptedMethodsSeen.count { it == "GetVersion" })
+    }
+
+    @Test
+    fun `after a failed session setup the client reports that failure, never a stale session`() = runTest {
+        val credentials = connect().pair { "0420" }
+        machine.faults.silentMethods += "GetVersion"
+        val client = connect()
+        assertFailsWith<As11AuthException.SessionUnproven> { client.startSession(credentials, NonceRegistry.AcceptAll) }
+        machine.faults.silentMethods.clear()
+        // Not "already in a session": the key did not outlive the failure.
+        assertFailsWith<As11AuthException.SessionUnproven> { client.startSession(credentials, NonceRegistry.AcceptAll) }
+        assertFalse(client.isSecure)
+    }
+
+    @Test
+    fun `nothing can be asked before a session is open`() = runTest {
+        val client = connect()
+        assertFailsWith<IllegalStateException> { client.get(serial) }
+        assertFailsWith<IllegalStateException> { client.getDateTime() }
+        assertFailsWith<IllegalStateException> { client.getVersion() }
+        assertFailsWith<IllegalStateException> { client.pullSpoolRound(SpoolName.SUMMARY, from) }
+        assertFailsWith<IllegalStateException> { client.discardPairKey() }
+        assertTrue(machine.encryptedMethodsSeen.isEmpty())
+    }
+
+    @Test
+    fun `an empty hash string counts as no hash`() = runTest {
+        machine.spools["Summary"] = listOf(bytes(500))
+        machine.faults.emptySpoolHash = true
+        assertFailsWith<As11SpoolUnverifiedException> { securedClient().pullSpoolRound(SpoolName.SUMMARY, from) }
+    }
+
+    @Test
+    fun `a machine error during pairing that is not about the request being unreadable counts as a refusal`() = runTest {
+        // The machine's real codes are not documented, so anything but "could not parse" is taken as its answer.
+        val failure = assertFailsWith<As11AuthException.PasskeyRejected> { connect().pair { "0421" } }
+        assertEquals(As11Recovery.ASK_USER, failure.recovery)
+        // The machine's own code is kept somewhere in the cause chain for the report.
+        // (The coroutine library may wrap the exception in a copy of itself on the way out.)
+        val machineError = generateSequence<Throwable>(failure) { it.cause }.filterIsInstance<As11RpcException>().firstOrNull()
+        assertNotNull(machineError)
+        assertEquals("ConfirmKeyExchange", machineError.method)
     }
 
     @Test

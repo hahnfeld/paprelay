@@ -46,6 +46,8 @@ class FileNonceRegistry(file: File, private val ceiling: Int = 200_000) : NonceR
                 file.failWrite(stream)
                 throw e
             }
+            // finishWrite only logs a failed sync or rename, so the result is checked.
+            if (entry !in read()) throw java.io.IOException("the session record was not stored")
         }
     }
 

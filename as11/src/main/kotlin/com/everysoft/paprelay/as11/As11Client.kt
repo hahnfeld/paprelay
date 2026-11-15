@@ -21,6 +21,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
@@ -32,6 +33,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -141,7 +143,7 @@ public class As11Timeouts(
     public val spoolTotalMs: Long = 300_000,
     /** Longest the link may take to accept one request. */
     public val sendMs: Long = 15_000,
-    /** Quiet period after which a half-received frame is given up on. */
+    /** How long bytes may be held before the client looks for complete frames stuck behind them. */
     public val resyncIdleMs: Long = 1_500,
     /** Pause after session setup before the first encrypted request, as the reference client does. */
     public val sessionSettleMs: Long = 200,
@@ -317,10 +319,19 @@ public class As11Client(
                 throw As11AuthException.PasskeyInvalid()
             }
             val proof = srp.computeProof(serverKey, salt, passkey)
+            // From here the machine may adopt the pairing at any moment, replacing the one
+            // it had. Being cancelled now would throw away credentials it has already
+            // accepted, so the last step runs to its own time limit regardless.
+            withContext(NonCancellable) { finishPairing(proof) }
+        }
+    }
+
+    private suspend fun finishPairing(proof: SrpProof): PairingCredentials {
+        return run {
             val confirm = try {
                 exchange(As11Request.ConfirmKeyExchange(proof.clientProof), timeouts.confirmMs).resultObject()
             } catch (e: As11RpcException) {
-                if (e.transient) throw e
+                if (e.requestNotUnderstood) throw e
                 throw As11AuthException.PasskeyRejected(e)
             }
             val serverProof = Hex.decode(confirm.string("serverConfirmation", MAX_HEX_CHARS), 64)
@@ -353,8 +364,8 @@ public class As11Client(
         val offer = try {
             exchange(As11Request.RequestSession(credentials.clientId), timeouts.sessionMs).resultObject()
         } catch (e: As11RpcException) {
-            // A damaged request or an internal fault says nothing about the pairing.
-            if (e.transient) throw e
+            // A request the machine could not parse says nothing about the pairing.
+            if (e.requestNotUnderstood) throw e
             throw As11AuthException.PairingUnknown(e)
         }
         val challenge = Hex.decode(offer.string("challenge", MAX_HEX_CHARS), 64)
@@ -367,7 +378,7 @@ public class As11Client(
                 timeouts.sessionMs,
             ).message
         } catch (e: As11RpcException) {
-            if (e.transient) throw e
+            if (e.requestNotUnderstood) throw e
             throw As11AuthException.SessionProofRejected(e)
         }
         when (((verdict["result"] as? JsonObject)?.get("confirmation") as? JsonPrimitive)?.booleanOrNull) {
@@ -377,10 +388,20 @@ public class As11Client(
             null -> counters.sessionConfirmationMissing.incrementAndGet()
         }
 
-        sessionKey.set(SessionCrypto.deriveSessionKey(credentials.pairingKey, nonce))
+        val derived = SessionCrypto.deriveSessionKey(credentials.pairingKey, nonce)
+        // Installed under the lock the key is cleared under, and only on a conversation
+        // that is still alive, so a failure can never be followed by a key being set.
+        val installed = synchronized(deframer) {
+            if (failure.get() == null) {
+                sessionKey.set(derived)
+                true
+            } else {
+                derived.fill(0)
+                false
+            }
+        }
+        if (!installed) throw failure.get() ?: As11TransportException("link closed")
         try {
-            // The conversation may have failed while the key was being derived.
-            failure.get()?.let { throw it }
             delay(timeouts.sessionSettleMs)
 
             // Nothing so far required the other end to know the pairing key. A valid
@@ -406,10 +427,14 @@ public class As11Client(
             }
             if (!proven) throw As11AuthException.SessionUnproven(lastFailure)
             recorded { nonces.remember(nonce) }
+            // The link may have dropped while the nonce was being stored.
+            failure.get()?.let { throw it }
             sessionProven = true
         } catch (e: Throwable) {
-            // However setup ends short of proof, the key must not stay usable.
+            // However setup ends short of proof, the key must not stay usable. fail() does
+            // nothing if the conversation had already failed, so the key is cleared directly too.
             fail(e as? As11Exception ?: As11TransportException("session setup was interrupted"))
+            clearSessionKey()
             throw e
         }
     }
@@ -432,6 +457,7 @@ public class As11Client(
 
     /** Reads the machine's clock, bracketed by local time so drift can be measured. */
     public suspend fun getDateTime(): MachineClockReading = rpcLock.withLock {
+        requireSession()
         val sentWall = nowMs()
         val sentElapsed = elapsedMs()
         val answer = exchange(As11Request.GetDateTime, timeouts.clockMs)
@@ -466,6 +492,7 @@ public class As11Client(
         address: SpoolAddress,
         maxSpoolSize: Int = As11Request.DEFAULT_MAX_SPOOL_SIZE,
     ): SpoolRound = rpcLock.withLock {
+        requireSession()
         val inbox = Channel<Inbound>(Channel.UNLIMITED)
         check(fragments.compareAndSet(null, inbox)) { "a download is already running" }
         try {
@@ -510,7 +537,9 @@ public class As11Client(
                         counters.strayFragments.incrementAndGet()
                         continue
                     }
-                    throw As11SpoolIntegrityException(inbound.reason)
+                    // The frame arrived intact and decrypted, so this is what the machine
+                    // sent, and asking again would get the same.
+                    throw As11SpoolIntegrityException(inbound.reason, As11Recovery.DO_NOT_RETRY)
                 }
                 is Inbound.Piece -> {
                     if (inbound.spoolId != null && inbound.spoolId != spoolId) {
@@ -539,7 +568,10 @@ public class As11Client(
 
         // Only fragments that carry data are numbered; a bare status fragment need not be.
         if (pieces.any { it.seq == null }) {
-            throw As11SpoolIntegrityException("download has a data fragment without a sequence number")
+            throw As11SpoolIntegrityException(
+                "download has a data fragment without a sequence number",
+                As11Recovery.DO_NOT_RETRY,
+            )
         }
         pieces.sortBy { it.seq }
         for (i in pieces.indices) {
@@ -553,7 +585,10 @@ public class As11Client(
         }
 
         val next = if (status == STATUS_MORE) {
-            terminal.next ?: throw As11ProtocolException("download promised more data without an address")
+            terminal.next ?: throw As11ProtocolException(
+                "download promised more data without an address",
+                recovery = As11Recovery.DO_NOT_RETRY,
+            )
         } else {
             null
         }
@@ -571,7 +606,7 @@ public class As11Client(
         val expected = try {
             Hex.decode(hashHex, 32)
         } catch (e: As11ProtocolException) {
-            throw As11SpoolIntegrityException("download carried a malformed integrity hash")
+            throw As11SpoolIntegrityException("download carried a malformed integrity hash", As11Recovery.DO_NOT_RETRY)
         }
         val actual = MessageDigest.getInstance("SHA-256").digest(data)
         if (!MessageDigest.isEqual(actual, expected)) {
@@ -581,9 +616,13 @@ public class As11Client(
     }
 
     private suspend fun call(request: As11Request.Encrypted, timeoutMs: Long): Answer = rpcLock.withLock {
-        // Nothing is asked on a session the machine has not proved.
-        if (!isSecure) throw failure.get() ?: IllegalStateException("no session")
+        requireSession()
         exchange(request, timeoutMs)
+    }
+
+    /** Nothing is asked on a session the machine has not proved. */
+    private fun requireSession() {
+        if (!isSecure) throw failure.get() ?: IllegalStateException("no session")
     }
 
     /**
@@ -676,7 +715,7 @@ public class As11Client(
     /**
      * A frame whose middle chunk was lost would otherwise hold back every frame
      * after it until enough bytes arrived to cover its declared length. When the
-     * link has been quiet for a while, look behind the pending frame for complete
+     * bytes have been held for a while, look behind the pending frame for complete
      * ones. A frame that is only arriving slowly is never dropped by this.
      */
     private suspend fun recoverFramesHiddenByLoss() {
@@ -844,7 +883,11 @@ public class As11Client(
     private fun rememberSent(sealed: ByteArray) {
         synchronized(deframer) {
             // Far beyond any real session; reached only if something is very wrong.
-            if (sentBlocks.size > MAX_SENT_BLOCKS) throw As11ProtocolException("too much was sent on one connection")
+            if (sentBlocks.size > MAX_SENT_BLOCKS) {
+                val cause = As11ProtocolException("too much was sent on one connection")
+                fail(cause)
+                throw cause
+            }
             var at = CIPHER_BLOCK // skip the IV
             while (at + CIPHER_BLOCK <= sealed.size) {
                 sentBlocks += ByteBuffer.wrap(sealed.copyOfRange(at, at + CIPHER_BLOCK))

@@ -115,6 +115,12 @@ public class FaultPlan {
      */
     public var forgeSessionProof: Boolean = false
 
+    /** Encrypted methods that are answered the first time they are asked and ignored after that. */
+    public val answerOnlyOnce: MutableSet<String> = mutableSetOf()
+
+    /** Send the integrity hash as an empty string. */
+    public var emptySpoolHash: Boolean = false
+
     /** Accept writes but never complete them. */
     public var hangSend: Boolean = false
 
@@ -224,6 +230,7 @@ public class FakeAirSense11(
                     val method = request["method"]?.jsonPrimitive?.content ?: return
                     encryptedMethodsSeen += method
                     if (method in faults.silentMethods) return
+                    if (method in faults.answerOnlyOnce && encryptedMethodsSeen.count { it == method } > 1) return
                     val answer = handleEncrypted(method, request["params"])
                     sendEncrypted(respond(request, answer))
                     if (method == "PullSpoolFragments" && answer !is Failure) {
@@ -390,7 +397,7 @@ public class FakeAirSense11(
                             if (!faults.omitSpoolHash && data.isNotEmpty()) {
                                 val hash = sha256(data)
                                 if (faults.corruptSpoolHash) hash[5] = (hash[5].toInt() xor 0x40).toByte()
-                                put("spoolHash", JsonPrimitive(hex(hash).lowercase()))
+                                put("spoolHash", JsonPrimitive(if (faults.emptySpoolHash) "" else hex(hash).lowercase()))
                             }
                             if (more) {
                                 put(

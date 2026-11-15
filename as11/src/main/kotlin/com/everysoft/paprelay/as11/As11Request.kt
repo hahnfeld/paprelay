@@ -64,7 +64,11 @@ public sealed class SpoolAddress {
     public class Continuation(public val next: JsonObject) : SpoolAddress() {
         override fun toJson(spool: SpoolName): JsonObject {
             if (next.keys != setOf(spool.wireName) || next.toString().length > MAX_CONTINUATION_CHARS) {
-                throw As11ProtocolException("machine returned an unusable continuation address")
+                // The conversation itself is fine; it is this answer that cannot be used.
+                throw As11ProtocolException(
+                    "machine returned an unusable continuation address",
+                    recovery = As11Recovery.DO_NOT_RETRY,
+                )
             }
             return next
         }

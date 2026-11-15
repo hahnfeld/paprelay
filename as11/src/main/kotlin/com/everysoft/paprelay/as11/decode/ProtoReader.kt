@@ -35,8 +35,11 @@ public object ProtoReader {
     public const val FIXED32: Int = 5
     private const val MAX_FIELD_NUMBER = (1L shl 29) - 1
 
+    /** A month of per-minute records is a few tens of thousands of fields. */
+    public const val DEFAULT_MAX_FIELDS: Int = 250_000
+
     /** @throws SpoolDecodeException if [data] is not a well-formed message. */
-    public fun read(data: ByteArray, maxFields: Int = 1_000_000): List<ProtoField> {
+    public fun read(data: ByteArray, maxFields: Int = DEFAULT_MAX_FIELDS): List<ProtoField> {
         val fields = ArrayList<ProtoField>()
         var at = 0
         while (at < data.size) {

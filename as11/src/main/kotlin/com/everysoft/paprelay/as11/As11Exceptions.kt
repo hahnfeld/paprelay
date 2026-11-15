@@ -127,16 +127,28 @@ public class As11RpcException(
     public val data: JsonElement? = null,
 ) : As11Exception("$method failed: code=$code${if (anonymous) " (no id)" else ""}") {
     /**
-     * True when the error says the request never got as far as a decision:
-     * it arrived damaged, or the machine failed internally.
+     * True when the machine could not make sense of the request at all, which
+     * points at damage in transit and says nothing about what was asked.
      */
-    public val transient: Boolean get() = anonymous || code in TRANSIENT_CODES
+    public val requestNotUnderstood: Boolean get() = anonymous || code == PARSE_ERROR || code == INVALID_REQUEST
+
+    /**
+     * True when trying again later may succeed: the request was not understood,
+     * or the machine failed internally.
+     *
+     * Pairing and session setup deliberately do not use this. The machine's
+     * codes for a wrong code or an unknown pairing are not documented, and the
+     * generic internal error is a plausible one, so there only
+     * [requestNotUnderstood] counts as "not a decision".
+     */
+    public val transient: Boolean get() = requestNotUnderstood || code == INTERNAL_ERROR
 
     override val recovery: As11Recovery get() = if (transient) As11Recovery.RETRY_LATER else As11Recovery.DO_NOT_RETRY
 
     private companion object {
-        /** JSON-RPC parse error, invalid request, internal error. */
-        val TRANSIENT_CODES = setOf(-32700, -32600, -32603)
+        const val PARSE_ERROR = -32700
+        const val INVALID_REQUEST = -32600
+        const val INTERNAL_ERROR = -32603
     }
 }
 

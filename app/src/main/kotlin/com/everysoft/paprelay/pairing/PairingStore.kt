@@ -182,12 +182,15 @@ class PairingStore(context: Context) {
         _state.value = PairingState.Paired(pairing)
     }
 
-    suspend fun clear(): Unit = lock.withLock {
-        withContext(Dispatchers.IO) {
-            file.delete()
-            deleteKey()
+    /** Runs to completion once started, so what is shown never disagrees with what is stored. */
+    suspend fun clear(): Unit = withContext(NonCancellable) {
+        lock.withLock {
+            withContext(Dispatchers.IO) {
+                file.delete()
+                deleteKey()
+                _state.value = PairingState.Absent
+            }
         }
-        _state.value = PairingState.Absent
     }
 
     private fun read(): PairingState {
