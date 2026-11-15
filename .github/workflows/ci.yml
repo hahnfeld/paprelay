@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      # Actions are pinned by commit so a moved tag cannot change what runs here.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Protocol and unit tests
+        run: ./gradlew :as11:test :app:testDebugUnitTest --console=plain
+      - name: Lint and build
+        run: ./gradlew :app:lintDebug :app:assembleRelease --console=plain
+      - name: No network permission in the release manifest
+        run: |
+          set -euo pipefail
+          apk=app/build/outputs/apk/release/app-release-unsigned.apk
+          aapt2=$(ls "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)
+          "$aapt2" dump permissions "$apk" | tee permissions.txt
+          if grep -Eq 'INTERNET|ACCESS_NETWORK_STATE|READ_' permissions.txt; then
+            echo "::error::unexpected permission in the release manifest"
+            exit 1
+          fi
+      - name: No captures or signing material in the tree
+        run: |
+          set -euo pipefail
+          if git ls-files | grep -Ei '\.(btsnoop|pcap|pcapng|cfa|jks|keystore)$|btsnoop_hci|bugreport-'; then
+            echo "::error::a capture or key file is tracked"
+            exit 1
+          fi
