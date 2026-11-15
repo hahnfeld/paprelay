@@ -21,9 +21,10 @@ public class SampleBlock internal constructor(
     /** Everything the bits can express, padding included. */
     public val samples: IntArray,
     /**
-     * How many leading samples are definitely real: those whose code began
-     * before the last seven bits of the block. Equal to `samples.size` when
-     * nothing is in doubt.
+     * How many leading samples are definitely real: everything up to the last
+     * sample whose code either began before the last seven bits of the block
+     * or has a value other than zero (padding cannot produce one). Equal to
+     * `samples.size` when nothing is in doubt.
      */
     public val certain: Int,
     /**
@@ -145,7 +146,10 @@ public object SampleSeries {
                 throw SpoolDecodeException("sample block decodes outside the 16-bit range")
             }
             out[count++] = sample.toInt()
-            if (!mayBePadding) certain = count
+            // Padding is whatever a bit writer leaves behind: zeros, which read as codes of
+            // value zero, or ones, which never complete a code. A code with any other value
+            // was therefore written on purpose, wherever it sits.
+            if (!mayBePadding || encoded != 0L) certain = count
         }
         var unread = if (exhausted) 0 else totalBits - bit
         if (!exhausted && count.toLong() == possible) {
