@@ -1,95 +1,182 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Wording rules: short sentences, plain words, a subject in every sentence, no idioms.
+     These are read by people who are not fluent in English, and by translators. -->
 <resources>
     <string name="app_name" translatable="false">PAPRelay</string>
 
-    <string name="action_about">About</string>
+    <!-- Buttons -->
     <string name="action_back">Back</string>
     <string name="action_cancel">Cancel</string>
     <string name="action_confirm">Confirm</string>
     <string name="action_run_check">Run device check</string>
-    <string name="action_reconnect_check">Reconnect only</string>
+    <string name="action_reconnect_check">Check connection only</string>
     <string name="action_forget">Forget machine</string>
-    <string name="action_export">Export report</string>
+    <string name="action_export">Save report</string>
     <string name="action_stop">Stop</string>
     <string name="action_use_this">Use this machine</string>
+    <string name="action_open_settings">Open app settings</string>
 
-    
+    <!-- The picture at the top of the main screen -->
     <string name="flow_label_machine">Machine</string>
     <string name="flow_label_phone">Phone</string>
     <string name="flow_label_health">Health Connect</string>
-    <string name="flow_machine_none">Machine not connected</string>
-    <string name="flow_machine_ready">Machine paired</string>
-    <string name="flow_machine_active">Reading from the machine</string>
-    <string name="flow_machine_ok">Machine data received</string>
-    <string name="flow_machine_failed">Could not read from the machine</string>
-    <string name="flow_health_none">Health Connect not checked yet</string>
-    <string name="flow_health_active">Checking Health Connect</string>
-    <string name="flow_health_ok">Health Connect ready</string>
-    <string name="flow_health_failed">Health Connect not working</string>
+    <!-- Spoken description of the picture: first the machine link, then the Health Connect link. -->
+    <string name="flow_description">%1$s. %2$s.</string>
+    <string name="flow_machine_none">The machine is not paired</string>
+    <string name="flow_machine_ready">The machine is paired</string>
+    <string name="flow_machine_active">The phone is talking to the machine</string>
+    <string name="flow_machine_ok">The phone received data from the machine</string>
+    <string name="flow_machine_failed">The phone could not read from the machine</string>
+    <string name="flow_health_none">Health Connect is not allowed yet</string>
+    <string name="flow_health_ready">Health Connect is allowed</string>
+    <string name="flow_health_active">The phone is checking Health Connect</string>
+    <string name="flow_health_ok">Health Connect works</string>
+    <string name="flow_health_failed">Health Connect does not work</string>
+
+    <!-- Pairing status under the picture -->
     <string name="machine_unpaired">Not paired</string>
+    <string name="machine_unpaired_hint">On the machine, choose More, then myAir App, then Connect. First remove the machine from the myAir app on this phone.</string>
     <string name="machine_paired">AirSense 11 · serial ending %1$s</string>
     <string name="machine_paired_unknown">AirSense 11</string>
-    <string name="machine_paired_on">Paired %1$s</string>
-    <string name="machine_unpaired_hint">Put the machine in pairing mode: More, MyAir App, Connect. It must not be paired with the myAir app.</string>
+    <string name="machine_unreadable">Pair the machine again</string>
+    <string name="machine_unreadable_hint">This phone can no longer read its saved pairing. Put the machine in pairing mode and run the device check.</string>
+    <string name="machine_unavailable">The saved pairing could not be read</string>
+    <string name="machine_unavailable_hint">Run the device check again. If this message stays, choose Forget machine and pair again.</string>
+    <string name="machine_loading">Checking…</string>
 
-    <string name="check_heading">Device check</string>
-    <string name="check_explanation">Reads from the machine and changes nothing on it. Writes one test value to Health Connect and removes it again.</string>
-    <string name="state_passed">Passed</string>
-    <string name="state_failed">Failed</string>
-    <string name="state_running">Running</string>
-    <string name="state_skipped">Skipped</string>
-    <string name="state_pending">Waiting</string>
-    <string name="state_noted">Noted</string>
+    <string name="permission_needed">PAPRelay needs the Nearby devices permission to reach the machine. If Android does not ask for it, allow it in the app settings.</string>
 
-    <string name="verdict_idle">Not run yet</string>
+    <!-- One-line result of the device check -->
     <string name="verdict_running">Running…</string>
     <string name="verdict_passed">All checks passed</string>
     <plurals name="verdict_failed">
         <item quantity="one">%1$d check failed</item>
         <item quantity="other">%1$d checks failed</item>
     </plurals>
-    <string name="verdict_incomplete">Stopped before finishing</string>
+    <string name="verdict_stopped">Stopped</string>
+    <string name="verdict_incomplete">Not completed</string>
 
-    <string name="machine_unreadable">Pairing needs to be redone</string>
-    <string name="machine_unreadable_hint">A pairing was stored but can no longer be read on this phone. Put the machine in pairing mode and run the check to pair again.</string>
-    <string name="machine_loading">Checking…</string>
-    <string name="machine_unavailable">Pairing could not be read</string>
-    <string name="machine_unavailable_hint">Storage on this phone did not answer. Nothing is lost; run the check again in a moment.</string>
-
-    <string name="permission_needed">PAPRelay needs the Nearby devices permission to reach the machine. It was declined, so Android will not ask again.</string>
-    <string name="action_open_settings">Open app settings</string>
+    <!-- Step states, spoken by screen readers -->
+    <string name="state_passed">Passed</string>
+    <string name="state_failed">Failed</string>
+    <string name="state_running">Running</string>
+    <string name="state_skipped">Not done</string>
+    <string name="state_pending">Waiting</string>
+    <string name="state_noted">For information</string>
     <string name="state_cancelled">Stopped</string>
 
-    <string name="choose_title">Which machine is yours?</string>
-    <string name="choose_body">More than one machine is in range. The one nearest the phone usually has the strongest signal.</string>
+    <!-- Step titles -->
+    <string name="step_health">Health Connect</string>
+    <string name="step_scan">Find the machine</string>
+    <string name="step_pair">Pair</string>
+    <string name="step_session">Connect securely</string>
+    <string name="step_identity">Confirm the machine</string>
+    <string name="step_clock">Machine clock</string>
+    <string name="step_download">Download saved data</string>
 
+    <!-- Step details -->
+    <string name="detail_hc_ok">A test value was written and removed.</string>
+    <string name="detail_hc_unavailable">Health Connect is not available on this phone.</string>
+    <string name="detail_hc_no_permission">PAPRelay is not allowed to write to Health Connect.</string>
+    <string name="detail_hc_value_left">A test value was written but could not be removed. Delete it in Health Connect, under PAPRelay.</string>
+    <string name="detail_hc_not_written">Health Connect did not store the test value.</string>
+    <string name="detail_bluetooth_off">Bluetooth is off.</string>
+    <string name="detail_none_found">No machine was found. Put the machine in pairing mode. Make sure it is not paired with the myAir app.</string>
+    <string name="detail_one_found">1 machine was found (%1$s).</string>
+    <string name="detail_many_found">More than one machine was found. The check uses the machine you chose.</string>
+    <string name="detail_paired_found">The paired machine was found (%1$s).</string>
+    <string name="detail_paired_not_seen">The paired machine was not seen.</string>
+    <string name="signal_strong">strong signal</string>
+    <string name="signal_good">good signal</string>
+    <string name="signal_weak">weak signal</string>
+    <string name="detail_paired">The machine is paired.</string>
+    <string name="detail_already_paired">The machine is already paired.</string>
+    <string name="detail_pair_not_saved">The machine accepted the code, but this phone could not save the pairing. Put the machine in pairing mode and run the check again.</string>
+    <string name="detail_storage_not_working">Secure storage does not work on this phone. The check did not try to pair.</string>
+    <string name="detail_storage_unreadable_now">This phone could not read its saved pairing. Run the check again.</string>
+    <string name="detail_pairing_state_unknown">The check could not tell if a machine is paired.</string>
+    <string name="detail_pairing_unreadable">This phone can no longer read its saved pairing. Pair the machine again.</string>
+    <string name="detail_not_paired">No machine is paired.</string>
+    <string name="detail_not_attempted">This step was not tried.</string>
+    <string name="detail_not_in_reconnect">This step is not part of a connection check.</string>
+    <string name="detail_not_in_range">The machine is not in range.</string>
+    <string name="detail_session_ok">The connection is encrypted. The machine confirmed it.</string>
+    <string name="detail_no_session">There is no secure connection.</string>
+    <string name="detail_no_serial">The machine did not report a serial number.</string>
+    <string name="detail_wrong_machine">This is not the machine that was paired.</string>
+    <string name="detail_identity_ok">This is the paired machine. Its serial number ends in %1$s.</string>
+    <string name="detail_identity_unconfirmed">The machine was not confirmed.</string>
+    <string name="detail_clock_agrees">The machine clock matches this phone.</string>
+    <string name="detail_clock_behind">The machine clock is %1$.1f seconds behind this phone.</string>
+    <string name="detail_clock_ahead">The machine clock is %1$.1f seconds ahead of this phone.</string>
+    <!-- %1$s is one of the log names below; %2$d is kilobytes so far. -->
+    <string name="detail_downloading">Downloading %1$s… %2$d kB</string>
+    <string name="log_usage_events">usage events</string>
+    <string name="log_summaries">daily summaries</string>
+    <string name="log_breathing_events">breathing events</string>
+    <string name="log_per_minute">minute-by-minute data</string>
+    <string name="detail_download_ok">All saved data was downloaded and verified (%1$d kB).</string>
+    <!-- %1$d is how many of the %2$d parts worked. -->
+    <string name="detail_download_partial">Downloaded and verified: %1$d / %2$d. The report has the reason.</string>
+    <string name="detail_took_too_long">The check took too long and was stopped.</string>
+    <string name="detail_stopped">The check was stopped.</string>
+
+    <!-- What went wrong -->
+    <string name="error_connection">The connection to the machine failed.</string>
+    <string name="error_no_answer">The machine did not answer.</string>
+    <string name="error_code_rejected">The machine rejected the code. Put the machine in pairing mode and try again.</string>
+    <string name="error_code_invalid">That is not a pairing code. Put the machine in pairing mode and try again.</string>
+    <string name="error_not_the_machine">This device could not prove that it is the machine. Nothing was saved.</string>
+    <string name="error_pairing_unknown">The machine does not know this phone.</string>
+    <string name="error_pairing_rejected">The machine rejected this phone.</string>
+    <string name="error_session_unconfirmed">The machine did not confirm the connection. It may be too far away.</string>
+    <string name="error_replayed">The machine repeated an old value. Nothing was read.</string>
+    <string name="error_pairing_cancelled">Pairing was cancelled. Put the machine in pairing mode to try again.</string>
+    <string name="error_refused">The machine refused the request (code %1$d).</string>
+    <string name="error_download_damaged">A download arrived damaged.</string>
+    <string name="error_download_unverified">The machine sent data that cannot be verified.</string>
+    <string name="error_download_stalled">A download stopped before the end.</string>
+    <string name="error_data_unavailable">The machine says this data is not available.</string>
+    <string name="error_unexpected_answer">The machine gave an unexpected answer.</string>
+    <string name="error_storage">This phone could not save or read data.</string>
+    <string name="error_permission">A permission is missing.</string>
+    <string name="error_hc_unresponsive">Health Connect did not answer. Run the check again.</string>
+    <string name="error_internal">PAPRelay had an internal error. Please save the report.</string>
+
+    <!-- Dialogs -->
+    <string name="passkey_title">Type the code shown on the machine</string>
+    <string name="passkey_body">Pairing replaces the myAir app\'s connection to this machine.</string>
+    <string name="passkey_label">Code</string>
+    <string name="passkey_expiry">The code works for about two minutes.</string>
+    <string name="choose_title">Which machine is yours?</string>
+    <string name="choose_body">More than one machine is in range. The nearest machine usually has the strongest signal.</string>
+    <!-- One choice: the machine\'s name, then its signal strength. -->
+    <string name="choice_option">%1$s · %2$s</string>
+    <string name="forget_title">Forget this machine?</string>
+    <string name="forget_body">PAPRelay deletes its pairing and the data from the device check. Data already in Health Connect stays there.</string>
     <string name="export_failed">The report could not be saved.</string>
 
-    <string name="passkey_title">Enter the code on the machine</string>
-    <string name="passkey_body">The machine is showing a 4-digit code. Pairing replaces the myAir app\'s connection to this machine.</string>
-    <string name="passkey_label">Code</string>
-    <string name="passkey_expiry">The code is valid for about two minutes.</string>
+    <string name="early_build_notice">Early version. Not yet tested on a real machine.</string>
 
-    <string name="forget_title">Forget this machine?</string>
-    <string name="forget_body">PAPRelay will delete its pairing and the data this check downloaded. Data already written to Health Connect stays there.</string>
-
-    <string name="early_build_notice">Early build. Not validated against a real machine yet.</string>
-
+    <!-- About -->
     <string name="about_title">About</string>
     <string name="about_version">Version %1$s</string>
     <string name="about_attribution" translatable="false">Based on SomnoTrace, originally created by Ilya Kruchinin (https://github.com/ilyakruchinin).</string>
     <string name="about_licence">Copyright © 2026 PAPRelay contributors. PAPRelay is free software under the GNU General Public License, version 3 or later, with an attribution term inherited from SomnoTrace. It comes with absolutely no warranty. You may redistribute it under the terms of that licence; the source code is available from the project\'s repository.</string>
     <string name="about_intended_use_heading">Intended use</string>
     <string name="about_intended_use">PAPRelay transfers, stores, converts and displays data your machine has already recorded. It does not interpret the data, raise alerts, give advice or control the machine.</string>
+    <string name="about_check_heading">Device check</string>
+    <string name="about_check">The device check reads from the machine and changes nothing on it. It writes one test value to Health Connect and removes it again.</string>
     <string name="about_disclaimer_heading">Not a medical device</string>
     <string name="about_disclaimer">PAPRelay is not intended to diagnose, treat, cure or prevent any condition, and must not be used to make diagnosis or treatment decisions. Values may be wrong, late or missing. It does not replace myAir, your equipment provider\'s reporting, or advice from a clinician.</string>
     <string name="about_affiliation">PAPRelay is an independent project. It is not affiliated with or endorsed by ResMed or Google. ResMed, AirSense and myAir are trademarks of ResMed. Android and Health Connect are trademarks of Google LLC.</string>
 
+    <!-- Privacy screen, shown by Health Connect -->
     <string name="privacy_title">Privacy</string>
     <string name="privacy_heading_what">What PAPRelay does with your data</string>
     <string name="privacy_what">PAPRelay reads therapy records from your machine over Bluetooth and stores them on this phone. It writes respiratory rate to Health Connect, and other types only if you turn them on.</string>
     <string name="privacy_heading_where">Where your data goes</string>
-    <string name="privacy_where">Nowhere else. PAPRelay has no internet permission, no accounts, no analytics and no advertising. Data leaves the app only through Health Connect and through files you choose to export.</string>
+    <string name="privacy_where">Nowhere else. PAPRelay has no internet permission, no accounts, no analytics and no advertising. Data leaves the app only through Health Connect and through files you choose to save.</string>
     <string name="privacy_heading_read">What PAPRelay reads from Health Connect</string>
     <string name="privacy_read">Nothing from other apps. It asks only for permission to write, and reads back only its own records to keep them correct.</string>
     <string name="privacy_heading_delete">Removing your data</string>

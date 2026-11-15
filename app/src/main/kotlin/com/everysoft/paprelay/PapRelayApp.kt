@@ -25,5 +25,7 @@ class PapRelayApp : Application() {
         super.onCreate()
         // Read once, off the main thread; screens observe the result.
         scope.launch { pairingStore.load() }
+        // A check that was cut short may have left its test value in Health Connect.
+        scope.launch { healthConnect.removeLeftover() }
     }
 }

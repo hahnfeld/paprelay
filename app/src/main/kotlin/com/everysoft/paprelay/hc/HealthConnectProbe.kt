@@ -97,10 +97,32 @@ class HealthConnectProbe(private val context: Context) {
                     )
                 }
             }
-            throw HealthConnectUnresponsiveException()
+            // If the write had already been refused, that is the more useful thing to report.
+            throw refusal ?: HealthConnectUnresponsiveException()
         }
         refusal?.let { throw it }
         ProbeResult(written, removed)
+    }
+
+    /**
+     * Removes a test value left behind by a run that was cut short. Safe to
+     * call at any time; does nothing if there is none or permission is missing.
+     */
+    suspend fun removeLeftover() {
+        try {
+            if (!available || !hasPermission()) return
+            withTimeoutOrNull(RETRY_LIMIT_MS) {
+                HealthConnectClient.getOrCreate(context).deleteRecords(
+                    RespiratoryRateRecord::class,
+                    recordIdsList = emptyList(),
+                    clientRecordIdsList = listOf(PROBE_ID),
+                )
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Nothing to do: the next check removes it.
+        }
     }
 
     private companion object {

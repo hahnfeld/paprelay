@@ -19,9 +19,11 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -61,17 +63,33 @@ private fun Root(app: PapRelayApp) {
     var confirmForget by rememberSaveable { mutableStateOf(false) }
     var pendingFull by rememberSaveable { mutableStateOf(true) }
     var permissionRefused by rememberSaveable { mutableStateOf(false) }
+    // Whether Health Connect already lets PAPRelay write, so the picture can show that leg as ready.
+    var healthAllowed by remember { mutableStateOf(false) }
+    val lifecycleScope = rememberCoroutineScope()
+    fun refreshHealth() {
+        lifecycleScope.launch {
+            healthAllowed = try {
+                app.healthConnect.available && app.healthConnect.hasPermission()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                false
+            }
+        }
+    }
+    // On first showing, and again whenever a check finishes.
+    LaunchedEffect(running) { if (!running) refreshHealth() }
     val uiScope = rememberCoroutineScope()
 
     // The user may grant the permission in system settings and come back.
     DisposableEffect(Unit) {
         val lifecycle = (context as? ComponentActivity)?.lifecycle
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME && BLUETOOTH_PERMISSIONS.all {
-                    context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED
+            if (event == Lifecycle.Event.ON_RESUME) {
+                if (BLUETOOTH_PERMISSIONS.all { context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }) {
+                    permissionRefused = false
                 }
-            ) {
-                permissionRefused = false
+                refreshHealth()
             }
         }
         lifecycle?.addObserver(observer)
@@ -91,16 +109,21 @@ private fun Root(app: PapRelayApp) {
 
     val bluetoothPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
-    ) { granted ->
-        val denied = granted.filterValues { !it }.keys
-        // Only when Android will no longer show its own prompt is the user sent to settings.
-        // After a first refusal, tapping the button again simply asks again.
-        permissionRefused = denied.any { (context as? Activity)?.shouldShowRequestPermissionRationale(it) == false }
-        if (denied.isEmpty()) {
+    ) { _ ->
+        // The result can come back empty if the request was interrupted, so the grant itself is checked.
+        val allowed = BLUETOOTH_PERMISSIONS.all { context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
+        // Whatever the reason, the same two ways forward apply: tap again, or open settings.
+        permissionRefused = !allowed
+        if (allowed) {
             uiScope.launch {
                 // If Health Connect cannot even be asked, the check itself reports why.
-                val needsGrant = runCatching { app.healthConnect.available && !app.healthConnect.hasPermission() }
-                    .getOrDefault(false)
+                val needsGrant = try {
+                    app.healthConnect.available && !app.healthConnect.hasPermission()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    false
+                }
                 if (needsGrant) {
                     healthPermission.launch(setOf(app.healthConnect.writePermission))
                 } else {
@@ -141,6 +164,7 @@ private fun Root(app: PapRelayApp) {
             steps = steps,
             running = running,
             hasReport = check.reportText().isNotEmpty(),
+            healthAllowed = healthAllowed,
             permissionRefused = permissionRefused,
             onOpenSettings = {
                 context.startActivity(

@@ -40,6 +40,14 @@ android {
         buildConfig = true
     }
 
+    bundle {
+        // The diagnostic report is always written in English, whatever the phone's
+        // language, so every language must stay in the base package of an app bundle.
+        language {
+            enableSplit = false
+        }
+    }
+
     lint {
         warningsAsErrors = true
         abortOnError = true

@@ -54,12 +54,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -73,16 +75,16 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import com.everysoft.paprelay.BuildConfig
 import com.everysoft.paprelay.R
 import com.everysoft.paprelay.check.CheckSteps
+import com.everysoft.paprelay.check.Message
 import com.everysoft.paprelay.check.Step
 import com.everysoft.paprelay.check.StepState
 import com.everysoft.paprelay.pairing.PairingState
-import java.text.DateFormat
-import java.util.Date
 
 /**
  * Common page frame: one scrolling column of readable width. The scroll area
@@ -149,7 +151,9 @@ private fun BackButton(onBack: () -> Unit) {
             },
         contentAlignment = Alignment.Center,
     ) {
-        Canvas(Modifier.size(20.dp)) {
+        // The arrow points back the way reading came from, so it flips in right-to-left languages.
+        val flip = if (LocalLayoutDirection.current == LayoutDirection.Rtl) -1f else 1f
+        Canvas(Modifier.size(20.dp).scale(scaleX = flip, scaleY = 1f)) {
             val width = 2.dp.toPx()
             val middle = size.height / 2
             val head = size.width * 0.38f
@@ -158,16 +162,6 @@ private fun BackButton(onBack: () -> Unit) {
             drawLine(color, Offset(0f, middle), Offset(head, middle + head), width, StrokeCap.Round)
         }
     }
-}
-
-@Composable
-private fun SectionLabel(@StringRes text: Int) {
-    Text(
-        stringResource(text).uppercase(),
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(bottom = 8.dp).semantics { heading() },
-    )
 }
 
 @Composable
@@ -186,6 +180,7 @@ fun HomeScreen(
     steps: List<Step>,
     running: Boolean,
     hasReport: Boolean,
+    healthAllowed: Boolean,
     permissionRefused: Boolean,
     onOpenSettings: () -> Unit,
     onRunFull: () -> Unit,
@@ -197,10 +192,13 @@ fun HomeScreen(
 ) {
     Page(
         title = stringResource(R.string.app_name),
-        action = { TextButton(onClick = onAbout) { Text(stringResource(R.string.action_about)) } },
+        action = { TextButton(onClick = onAbout) { Text(stringResource(R.string.about_title)) } },
     ) {
         // The picture comes first: it says what the app does and how far it has got.
-        FlowDiagram(machineLink = machineLink(steps, pairing), healthLink = healthLink(steps))
+        FlowDiagram(
+            machineLink = machineLink(steps, pairing, running),
+            healthLink = healthLink(steps, healthAllowed),
+        )
         Spacer(Modifier.height(28.dp))
         when (pairing) {
             PairingState.Loading -> Text(stringResource(R.string.machine_loading), style = MaterialTheme.typography.titleMedium)
@@ -221,13 +219,6 @@ fun HomeScreen(
                 Text(
                     if (serial != null) stringResource(R.string.machine_paired, serial.takeLast(4)) else stringResource(R.string.machine_paired_unknown),
                     style = MaterialTheme.typography.titleMedium,
-                )
-                Secondary(
-                    stringResource(
-                        R.string.machine_paired_on,
-                        DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(pairing.pairing.pairedAtMs)),
-                    ),
-                    Modifier.padding(top = 4.dp),
                 )
             }
         }
@@ -252,30 +243,42 @@ fun HomeScreen(
             }
         }
 
-        Spacer(Modifier.height(36.dp))
-        SectionLabel(R.string.check_heading)
-        Text(
-            verdict(steps, running),
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
-        )
-        Spacer(Modifier.height(8.dp))
-        steps.forEachIndexed { index, step ->
-            if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            StepRow(step)
-        }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-        Spacer(Modifier.height(8.dp))
-        // Text buttons carry 12 dp of padding; pull them out so their labels sit on the text margins.
-        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            TextButton(onClick = onExport, enabled = hasReport && !running, modifier = Modifier.offset(x = (-12).dp)) {
-                Text(stringResource(R.string.action_export))
+        // Nothing is listed until a check has been started: an untouched list is only noise.
+        val started = running || steps.any { it.state != StepState.PENDING }
+        if (started) {
+            Spacer(Modifier.height(32.dp))
+            Text(
+                verdict(steps, running),
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.semantics {
+                    heading()
+                    liveRegion = LiveRegionMode.Polite
+                },
+            )
+            Spacer(Modifier.height(8.dp))
+            steps.forEachIndexed { index, step ->
+                if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                StepRow(step)
             }
-            // Offered whenever something is stored, readable or not, so there is always a way to start over.
-            if (pairing is PairingState.Paired || pairing == PairingState.Unreadable || pairing == PairingState.Unavailable) {
-                TextButton(onClick = onForget, enabled = !running, modifier = Modifier.offset(x = 12.dp)) {
-                    Text(stringResource(R.string.action_forget), color = MaterialTheme.colorScheme.error)
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        }
+
+        val canExport = hasReport && !running
+        // Offered whenever something is stored, readable or not, so there is always a way to start over.
+        val canForget = pairing is PairingState.Paired || pairing == PairingState.Unreadable || pairing == PairingState.Unavailable
+        if (canExport || canForget) {
+            Spacer(Modifier.height(8.dp))
+            // Text buttons carry 12 dp of padding; pull them out so their labels sit on the text margins.
+            FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                if (canExport) {
+                    TextButton(onClick = onExport, modifier = Modifier.offset(x = (-12).dp)) {
+                        Text(stringResource(R.string.action_export))
+                    }
+                }
+                if (canForget) {
+                    TextButton(onClick = onForget, enabled = !running, modifier = Modifier.offset(x = if (canExport) 12.dp else (-12).dp)) {
+                        Text(stringResource(R.string.action_forget), color = MaterialTheme.colorScheme.error)
+                    }
                 }
             }
         }
@@ -285,40 +288,55 @@ fun HomeScreen(
     }
 }
 
-/** The machine-to-phone leg, from the steps that travel along it. */
-private fun machineLink(steps: List<Step>, pairing: PairingState): LinkState {
+/**
+ * The machine-to-phone leg, from the steps that travel along it.
+ *
+ * A failure that lies with the phone itself (its storage, Bluetooth being off)
+ * is not drawn as a broken link to the machine: the machine was never the
+ * problem. A tick needs both a passed check and a pairing that still exists.
+ */
+private fun machineLink(steps: List<Step>, pairing: PairingState, running: Boolean): LinkState {
     val leg = steps.filter { it.id != CheckSteps.HEALTH }
+    val healthDone = steps.firstOrNull { it.id == CheckSteps.HEALTH }?.state.let { it != StepState.PENDING && it != StepState.RUNNING }
+    val machineFailed = leg.any { it.state == StepState.FAILED && !it.onPhone }
+    val paired = pairing is PairingState.Paired
     return when {
         leg.any { it.state == StepState.RUNNING } -> LinkState.ACTIVE
-        leg.any { it.state == StepState.FAILED } -> LinkState.FAILED
-        leg.lastOrNull()?.state == StepState.PASSED -> LinkState.OK
-        pairing is PairingState.Paired -> LinkState.READY
+        // Between two steps of a run, such as the pause after pairing.
+        running && healthDone && !machineFailed && leg.any { it.state == StepState.PENDING } -> LinkState.ACTIVE
+        machineFailed -> LinkState.FAILED
+        paired && leg.lastOrNull()?.state == StepState.PASSED -> LinkState.OK
+        paired -> LinkState.READY
         else -> LinkState.NONE
     }
 }
 
 /** The phone-to-Health-Connect leg. */
-private fun healthLink(steps: List<Step>): LinkState = when (steps.firstOrNull { it.id == CheckSteps.HEALTH }?.state) {
-    StepState.RUNNING -> LinkState.ACTIVE
-    StepState.PASSED -> LinkState.OK
-    StepState.FAILED -> LinkState.FAILED
-    else -> LinkState.NONE
-}
+private fun healthLink(steps: List<Step>, allowed: Boolean): LinkState =
+    when (steps.firstOrNull { it.id == CheckSteps.HEALTH }?.state) {
+        StepState.RUNNING -> LinkState.ACTIVE
+        StepState.PASSED -> LinkState.OK
+        StepState.FAILED -> LinkState.FAILED
+        else -> if (allowed) LinkState.READY else LinkState.NONE
+    }
 
-/** One line that says how the whole check went. */
+/** One line that says how the whole check went. Shown only once a check has started. */
 @Composable
 private fun verdict(steps: List<Step>, running: Boolean): String {
     val failed = steps.count { it.state == StepState.FAILED }
     return when {
         running -> stringResource(R.string.verdict_running)
-        steps.all { it.state == StepState.PENDING } -> stringResource(R.string.verdict_idle)
-        steps.any { it.state == StepState.CANCELLED } -> stringResource(R.string.verdict_incomplete)
+        steps.any { it.state == StepState.CANCELLED } -> stringResource(R.string.verdict_stopped)
         failed > 0 -> pluralStringResource(R.plurals.verdict_failed, failed, failed)
-        // "Passed" means the last step did, not merely that nothing was attempted.
+        // "Passed" means the last step did, not merely that nothing went wrong.
         steps.lastOrNull()?.state == StepState.PASSED -> stringResource(R.string.verdict_passed)
         else -> stringResource(R.string.verdict_incomplete)
     }
 }
+
+/** This message in the user's language. */
+@Composable
+private fun Message.text(): String = stringResource(id, *args.map { if (it is Message) it.text() else it }.toTypedArray())
 
 @Composable
 private fun StepRow(step: Step) {
@@ -333,6 +351,7 @@ private fun StepRow(step: Step) {
             StepState.PENDING -> R.string.state_pending
         },
     )
+    val detail = step.detail?.text()
     // Read as one item: title, outcome, detail.
     Row(
         Modifier
@@ -344,10 +363,10 @@ private fun StepRow(step: Step) {
         Box(Modifier.padding(top = 4.dp).size(16.dp), contentAlignment = Alignment.Center) { StateMark(step.state) }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            Text(step.title, style = MaterialTheme.typography.bodyLarge)
-            if (step.detail.isNotEmpty()) {
+            Text(stringResource(CheckSteps.title(step.id)), style = MaterialTheme.typography.bodyLarge)
+            if (!detail.isNullOrEmpty()) {
                 Text(
-                    step.detail,
+                    detail,
                     style = MaterialTheme.typography.bodyMedium,
                     color = if (step.state == StepState.FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 2.dp),
@@ -410,8 +429,8 @@ fun AboutScreen(onBack: () -> Unit) {
         Paragraph(R.string.about_licence)
         Heading(R.string.about_intended_use_heading)
         Paragraph(R.string.about_intended_use)
-        Heading(R.string.check_heading)
-        Paragraph(R.string.check_explanation)
+        Heading(R.string.about_check_heading)
+        Paragraph(R.string.about_check)
         Heading(R.string.about_disclaimer_heading)
         Paragraph(R.string.about_disclaimer)
         Spacer(Modifier.height(12.dp))
@@ -486,7 +505,7 @@ fun PasskeyDialog(onConfirm: (String) -> Unit, onCancel: () -> Unit) {
 }
 
 @Composable
-fun ChoiceDialog(options: List<String>, onChoose: (Int) -> Unit, onCancel: () -> Unit) {
+fun ChoiceDialog(options: List<Message>, onChoose: (Int) -> Unit, onCancel: () -> Unit) {
     var selected by rememberSaveable { mutableIntStateOf(0) }
     AlertDialog(
         onDismissRequest = {},
@@ -506,7 +525,7 @@ fun ChoiceDialog(options: List<String>, onChoose: (Int) -> Unit, onCancel: () ->
                     ) {
                         RadioButton(selected = selected == index, onClick = null)
                         Spacer(Modifier.width(12.dp))
-                        Text(label, style = MaterialTheme.typography.bodyLarge)
+                        Text(label.text(), style = MaterialTheme.typography.bodyLarge)
                     }
                 }
             }

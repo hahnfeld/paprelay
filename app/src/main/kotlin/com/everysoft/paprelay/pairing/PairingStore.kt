@@ -106,7 +106,10 @@ class PairingStore(context: Context) {
                 roundTrip()
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                if (!isPermanentKeyLoss(e)) throw IOException("secure storage is not available right now", e)
+                // With no stored pairing the key protects nothing, so a faulty one is simply
+                // replaced. Otherwise it is kept unless it is known to be gone for good.
+                val protectsAPairing = file.baseFile.exists()
+                if (protectsAPairing && !isPermanentKeyLoss(e)) throw IOException("secure storage is not available right now", e)
                 deleteKey()
                 try {
                     roundTrip()
@@ -120,7 +123,7 @@ class PairingStore(context: Context) {
             try {
                 stream.write(ByteArray(PROBE_BYTES))
                 probe.finishWrite(stream)
-                // finishWrite only logs a failed sync or rename.
+                // finishWrite only logs a failed rename.
                 if (probe.baseFile.length() != PROBE_BYTES.toLong()) throw IOException("storage did not keep a test file")
             } catch (e: IOException) {
                 probe.failWrite(stream)
@@ -161,7 +164,8 @@ class PairingStore(context: Context) {
                     file.failWrite(stream)
                     throw e
                 }
-                // finishWrite only logs a failed sync or rename, so the result is checked here.
+                // finishWrite only logs a failed rename, so that much is checked here. A failed
+                // sync to disk cannot be seen from this side: the read comes from memory.
                 val stored = try {
                     file.readFully()
                 } catch (e: IOException) {
@@ -197,7 +201,8 @@ class PairingStore(context: Context) {
         val blob = try {
             file.readFully()
         } catch (e: java.io.FileNotFoundException) {
-            return PairingState.Absent
+            // Also thrown when the file is there but cannot be opened just now.
+            return if (file.baseFile.exists()) PairingState.Unavailable else PairingState.Absent
         } catch (e: IOException) {
             return PairingState.Unavailable
         }
