@@ -81,6 +81,21 @@ class GattOperationsTest {
     }
 
     @Test
+    fun `an optional request the stack refuses is reported, not thrown`() = runTest {
+        assertEquals(-1, operations.run(GattOperation.MTU, 1_000, refusedResult = -1) { false })
+        // The queue is free again at once.
+        val next = async { operations.run(GattOperation.DISCOVERY, 1_000) { true } }
+        runCurrent()
+        operations.complete(GattOperation.DISCOVERY, 0)
+        assertEquals(0, next.await())
+    }
+
+    @Test
+    fun `an optional request that was accepted and never answered still fails`() = runTest {
+        assertFailsWith<As11TransportException> { operations.run(GattOperation.MTU, 100, refusedResult = -1) { true } }
+    }
+
+    @Test
     fun `a link failure ends the waiting request and every later one`() = runTest {
         val waiting = launch { assertFailsWith<As11TransportException> { operations.run(GattOperation.WRITE, 60_000) { true } } }
         runCurrent()

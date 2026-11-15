@@ -51,16 +51,43 @@ class AdvertisementTest {
     }
 
     @Test
-    fun `the report form hides names and addresses but keeps the structure`() {
-        val address = field(0x1B, byteArrayOf(0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66))
-        val redacted = Advertisement.redactedHex(flags + service + name + address)
-        assertEquals("020106" + "030356FD" + "0E09" + "xx".repeat(13) + "081B" + "xx".repeat(7), redacted)
+    fun `the report form shows structure and hides anything identifying`() {
+        val manufacturer = field(0xFF, byteArrayOf(0x3D, 0x02, 9, 8, 7, 6))
+        val serviceData = field(0x16, byteArrayOf(0x56, 0xFD.toByte(), 1, 2, 3))
+        val redacted = Advertisement.redactedHex(flags + service + name + manufacturer + serviceData)
+        assertEquals(
+            "020106" + "030356FD" + "0E09" + "xx".repeat(13) + "07FF" + "xx".repeat(6) + "0616" + "xx".repeat(5),
+            redacted,
+        )
+    }
 
-        // The machine's own trailer runs off the end; what is there of it is hidden too.
-        val broken = byteArrayOf(0x08, 0x1B, 0, 0x11, 0x22, 0x33)
-        assertEquals("020106" + "081B" + "xx".repeat(4), Advertisement.redactedHex(flags + broken))
-        // Nothing that looks like the name or address bytes survives.
-        for (secret in listOf("526573", "112233")) assertFalse(redacted.contains(secret))
+    @Test
+    fun `nothing after the machine's short address structure is shown, even when it is not at the end`() {
+        // As Android delivers it: the advertisement, whose trailing address structure is
+        // one byte short, followed directly by the scan response carrying the name.
+        val shortAddress = byteArrayOf(0x08, 0x1B, 0, 0x11, 0x22, 0x33, 0x44, 0x55)
+        val redacted = Advertisement.redactedHex(flags + service + shortAddress + name)
+        assertEquals("020106" + "030356FD" + "081B" + "xx".repeat(6 + name.size), redacted)
+        for (secret in listOf("526573", "4D6564", "112233", "3132")) assertFalse(redacted.contains(secret), secret)
+
+        // A well-formed address structure is blanked the same way.
+        val address = field(0x1B, byteArrayOf(0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66))
+        assertEquals("020106" + "081B" + "xx".repeat(7 + name.size), Advertisement.redactedHex(flags + address + name))
+
+        // And so is a structure that runs off the end.
+        assertEquals("020106" + "0909" + "xx".repeat(3), Advertisement.redactedHex(flags + byteArrayOf(0x09, 0x09, 0x52, 0x65, 0x73)))
+    }
+
+    @Test
+    fun `no input can make the report form reveal a name`() {
+        // Slide a name through every position after a short address structure of every plausible length.
+        val needle = "5265734D6564" // "ResMed"
+        for (claimed in 2..12) {
+            for (present in 0 until claimed) {
+                val trailer = byteArrayOf(claimed.toByte(), 0x1B) + ByteArray(present) { 0x41 }
+                assertFalse(Advertisement.redactedHex(flags + trailer + name).contains(needle), "claimed=$claimed present=$present")
+            }
+        }
     }
 
     @Test

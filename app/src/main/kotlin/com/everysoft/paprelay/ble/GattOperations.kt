@@ -35,16 +35,21 @@ class GattOperations {
      * Starts one request and waits for its completion status.
      *
      * @param start issues the request; returns false if the stack refused it.
+     * @param refusedResult if not null, returned when the stack refuses the request,
+     *   for requests that are optional. A request that was accepted and then goes
+     *   unanswered always throws: the link is stuck behind it.
      * @throws As11TransportException if it cannot be started, times out, or the link fails meanwhile.
      */
-    suspend fun run(kind: GattOperation, timeoutMs: Long, start: () -> Boolean): Int = lock.withLock {
+    suspend fun run(kind: GattOperation, timeoutMs: Long, refusedResult: Int? = null, start: () -> Boolean): Int = lock.withLock {
         failure.get()?.let { throw it }
         val done = CompletableDeferred<Int>()
         pending.set(Pending(kind, done))
         try {
             // A failure recorded between the first check and registration would be missed.
             failure.get()?.let { throw it }
-            if (!start()) throw As11TransportException("${kind.name.lowercase()} could not be started")
+            if (!start()) {
+                return@withLock refusedResult ?: throw As11TransportException("${kind.name.lowercase()} could not be started")
+            }
             withTimeoutOrNull(timeoutMs) { done.await() }
                 // The completion may have landed in the same instant the timer fired.
                 ?: if (done.isCompleted) done.await() else throw As11TransportException("${kind.name.lowercase()} timed out")

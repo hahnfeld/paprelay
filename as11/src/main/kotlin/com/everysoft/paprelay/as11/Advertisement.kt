@@ -73,11 +73,18 @@ public class Advertisement internal constructor(
         }
 
         /**
-         * The payload as hex with identifying content blanked: the bytes of local
-         * names and of the device-address structure (type 0x1B), and everything
-         * after a structure that runs off the end, since the machine's own
-         * truncated trailer is its address. Structure lengths and types are kept,
-         * which is what diagnosing a parser disagreement needs.
+         * The payload as hex with everything that could identify the machine or
+         * its owner blanked. Works from an allowlist: each structure's length
+         * and type are shown, and its content only for the few types that carry
+         * no identity (flags, 16-bit service lists, transmit power). Names,
+         * addresses, manufacturer data, service data and anything unrecognised
+         * are blanked.
+         *
+         * Blanking is total from the first device-address structure (type 0x1B)
+         * or the first structure that runs off the end. The machine's own
+         * address structure is one byte short, so on Android, where the scan
+         * response follows the advertisement in one buffer, parsing goes out of
+         * step from there and nothing after it can be classified.
          */
         public fun redactedHex(payload: ByteArray): String {
             val out = StringBuilder(payload.size * 2)
@@ -87,27 +94,29 @@ public class Advertisement internal constructor(
             while (at < payload.size) {
                 val length = payload[at].toInt() and 0xFF
                 hex(payload[at])
-                if (length == 0) {
-                    // Padding carries nothing; anything non-zero after it is unexplained, so hide it.
+                if (length == 0 || at + 1 >= payload.size) {
                     blank(payload.size - at - 1)
                     break
                 }
-                if (at + 1 >= payload.size) break
                 hex(payload[at + 1])
                 val type = payload[at + 1].toInt() and 0xFF
-                val available = minOf(length - 1, payload.size - at - 2)
                 val overruns = at + 1 + length > payload.size
-                if (overruns || type == TYPE_LE_ADDRESS || type == TYPE_NAME_COMPLETE || type == TYPE_NAME_SHORTENED) {
-                    blank(available)
-                } else {
-                    for (i in 0 until available) hex(payload[at + 2 + i])
+                if (overruns || type == TYPE_LE_ADDRESS) {
+                    blank(payload.size - at - 2)
+                    break
                 }
-                if (overruns) break
+                if (type in SHOWN_TYPES) {
+                    for (i in 0 until length - 1) hex(payload[at + 2 + i])
+                } else {
+                    blank(length - 1)
+                }
                 at += 1 + length
             }
             return out.toString()
         }
 
+        /** Flags, incomplete and complete 16-bit service lists, transmit power. */
+        private val SHOWN_TYPES = setOf(0x01, TYPE_UUID16_INCOMPLETE, TYPE_UUID16_COMPLETE, 0x0A)
         private const val TYPE_LE_ADDRESS = 0x1B
         private const val HEX = "0123456789ABCDEF"
 

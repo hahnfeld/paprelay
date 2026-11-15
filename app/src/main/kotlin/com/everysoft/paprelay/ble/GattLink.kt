@@ -57,7 +57,7 @@ data class GattSummary(val mtu: Int, val services: List<String>, val connectAtte
  */
 @SuppressLint("MissingPermission")
 class GattLink private constructor(
-    private val context: Context,
+    private val watcher: AdapterWatcher,
     private val gatt: BluetoothGatt,
     private val callback: Callback,
     private val thread: HandlerThread,
@@ -67,52 +67,61 @@ class GattLink private constructor(
 
     private val closed = AtomicBoolean(false)
 
-    /** Android reports nothing on the connection when the radio is switched off, so listen for that too. */
-    private val adapterWatcher = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.STATE_ON)
-            if (state != BluetoothAdapter.STATE_ON) callback.fail(As11TransportException("Bluetooth was turned off"))
-        }
-    }
-
-    init {
-        context.registerReceiver(
-            adapterWatcher,
-            IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED),
-            Context.RECEIVER_NOT_EXPORTED,
-        )
-    }
-
     override val incoming: Flow<ByteArray> = callback.incoming.receiveAsFlow()
 
     override suspend fun send(frame: ByteArray) {
         val chunk = writeChunk(callback.mtu)
         var at = 0
-        while (at < frame.size) {
-            val end = minOf(frame.size, at + chunk)
-            val piece = frame.copyOfRange(at, end)
-            val status = callback.operations.run(GattOperation.WRITE, WRITE_TIMEOUT_MS) {
-                gatt.writeCharacteristic(tx, piece, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) ==
-                    BluetoothStatusCodes.SUCCESS
+        try {
+            while (at < frame.size) {
+                val end = minOf(frame.size, at + chunk)
+                val piece = frame.copyOfRange(at, end)
+                val status = callback.operations.run(GattOperation.WRITE, WRITE_TIMEOUT_MS) {
+                    gatt.writeCharacteristic(tx, piece, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) ==
+                        BluetoothStatusCodes.SUCCESS
+                }
+                if (status != BluetoothGatt.GATT_SUCCESS) throw As11TransportException("write failed, status $status")
+                at = end
             }
-            if (status != BluetoothGatt.GATT_SUCCESS) {
-                // Part of the frame is on the wire: the link cannot carry another request.
-                val cause = As11TransportException("write failed, status $status")
-                callback.fail(cause)
-                throw cause
-            }
-            at = end
+        } catch (e: As11TransportException) {
+            // Whatever went wrong, part of a frame may be on the wire and a late
+            // completion may still arrive: this link carries nothing further.
+            callback.fail(e)
+            throw e
         }
     }
 
     /** Disconnects and releases the connection. Safe to call more than once. */
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
-        runCatching { context.unregisterReceiver(adapterWatcher) }
+        watcher.stop()
         callback.fail(As11TransportException("closed"))
         runCatching { gatt.disconnect() }
         runCatching { gatt.close() }
         thread.quitSafely()
+    }
+
+    /**
+     * Android reports nothing on a connection when the radio is switched off, so
+     * that is watched for separately, from before the connection is attempted.
+     */
+    private class AdapterWatcher(private val context: Context, private val onOff: () -> Unit) : BroadcastReceiver() {
+        private val registered = AtomicBoolean(false)
+
+        fun start() {
+            // The system is the only possible sender of this protected broadcast.
+            context.registerReceiver(this, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED), Context.RECEIVER_EXPORTED)
+            registered.set(true)
+        }
+
+        fun stop() {
+            if (registered.compareAndSet(true, false)) runCatching { context.unregisterReceiver(this) }
+        }
+
+        override fun onReceive(context: Context, intent: Intent) {
+            val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.STATE_ON)
+            if (state != BluetoothAdapter.STATE_ON) onOff()
+        }
     }
 
     private class Callback : BluetoothGattCallback() {
@@ -189,6 +198,7 @@ class GattLink private constructor(
         /** Android's catch-all connection failure; often clears on a second attempt. */
         private const val GATT_ERROR = 133
         private const val RETRY_PAUSE_MS = 1_000L
+        private const val MTU_REFUSED = -1
 
         /** How many bytes one write may carry at this MTU. */
         fun writeChunk(mtu: Int): Int = (mtu - ATT_WRITE_OVERHEAD).coerceIn(DEFAULT_MTU - ATT_WRITE_OVERHEAD, MAX_WRITE_CHUNK)
@@ -226,8 +236,12 @@ class GattLink private constructor(
         ): GattLink {
             val thread = HandlerThread("paprelay-gatt").apply { start() }
             val callback = Callback()
+            val watcher = AdapterWatcher(context.applicationContext) {
+                callback.fail(As11TransportException("Bluetooth was turned off"))
+            }
             var gatt: BluetoothGatt? = null
             try {
+                watcher.start()
                 gatt = device.connectGatt(
                     context.applicationContext,
                     false,
@@ -245,12 +259,11 @@ class GattLink private constructor(
                     throw e
                 }
 
-                // Optional: without it the link stays at the default size, which is slow but correct.
-                // A late completion cannot confuse later steps: each is matched to its own kind.
-                try {
-                    callback.operations.run(GattOperation.MTU, MTU_TIMEOUT_MS) { gatt.requestMtu(REQUESTED_MTU) }
-                } catch (e: As11TransportException) {
-                    if (!callback.connected.isCompleted || callback.incoming.isClosedForSend) throw e
+                // Optional: if the stack refuses, or the machine declines, the link stays at the
+                // default size, which is slow but correct. A request that was accepted and never
+                // answered is different: nothing else can be sent behind it, so setup is abandoned.
+                callback.operations.run(GattOperation.MTU, MTU_TIMEOUT_MS, refusedResult = MTU_REFUSED) {
+                    gatt.requestMtu(REQUESTED_MTU)
                 }
 
                 val discovered = callback.operations.run(GattOperation.DISCOVERY, DISCOVERY_TIMEOUT_MS) { gatt.discoverServices() }
@@ -282,8 +295,9 @@ class GattLink private constructor(
                         it.uuid.toString().substring(0, 8) + ":" + it.properties.toString(16)
                     }
                 }
-                return GattLink(context.applicationContext, gatt, callback, thread, tx, GattSummary(callback.mtu, services, attemptNumber))
+                return GattLink(watcher, gatt, callback, thread, tx, GattSummary(callback.mtu, services, attemptNumber))
             } catch (e: Throwable) {
+                watcher.stop()
                 callback.fail(As11TransportException("setup abandoned"))
                 gatt?.let {
                     runCatching { it.disconnect() }

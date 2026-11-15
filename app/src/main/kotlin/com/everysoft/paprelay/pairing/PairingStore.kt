@@ -4,11 +4,13 @@ package com.everysoft.paprelay.pairing
 
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
 import android.security.keystore.StrongBoxUnavailableException
 import android.util.AtomicFile
 import com.everysoft.paprelay.as11.PairingCredentials
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
@@ -21,6 +23,8 @@ import java.io.File
 import java.io.IOException
 import java.security.KeyStore
 import java.security.ProviderException
+import java.security.UnrecoverableKeyException
+import javax.crypto.AEADBadTagException
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -45,6 +49,12 @@ sealed class PairingState {
      * same as never having paired.
      */
     data object Unreadable : PairingState()
+
+    /**
+     * Storage could not be read just now. Nothing is known to be lost: the
+     * pairing may well be intact, and is read again the next time it is needed.
+     */
+    data object Unavailable : PairingState()
 }
 
 /**
@@ -70,37 +80,68 @@ class PairingStore(context: Context) {
         withContext(Dispatchers.IO) { read() }.also { _state.value = it }
     }
 
-    /** The current pairing, loading it first if needed. */
-    suspend fun current(): PairingState =
-        _state.value.takeUnless { it is PairingState.Loading } ?: load()
+    /**
+     * The current pairing. Anything short of a definite answer is read again,
+     * so a passing storage fault is never remembered as a lost pairing.
+     */
+    suspend fun current(): PairingState = when (val known = _state.value) {
+        is PairingState.Paired, PairingState.Absent -> known
+        else -> load()
+    }
 
     /**
      * Proves, before a pairing is spent on the machine, that a pairing can be
-     * stored: makes sure the hardware key exists and round-trips data, replacing
-     * it if it is damaged.
+     * stored: the hardware key exists and round-trips data, and the directory
+     * accepts a synced write.
      *
-     * @throws IOException if secure storage is not usable on this phone.
+     * A key is replaced only when it is known to be permanently unusable. A
+     * fault that might pass is reported instead, because the key may still be
+     * protecting a pairing that will be readable again.
+     *
+     * @throws IOException if a pairing could not be stored right now.
      */
     suspend fun selfTest(): Unit = lock.withLock {
         withContext(Dispatchers.IO) {
             try {
                 roundTrip()
             } catch (e: Exception) {
-                if (e !is java.security.GeneralSecurityException && e !is ProviderException) throw e
-                // A damaged key is useless and holds nothing we can still read.
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                if (!isPermanentKeyLoss(e)) throw IOException("secure storage is not available right now", e)
                 deleteKey()
                 try {
                     roundTrip()
                 } catch (again: Exception) {
+                    if (again is kotlinx.coroutines.CancellationException) throw again
                     throw IOException("secure storage is not usable on this phone", again)
                 }
+            }
+            val probe = AtomicFile(File(file.baseFile.parentFile, "pairing.probe"))
+            val stream = probe.startWrite()
+            try {
+                stream.write(ByteArray(PROBE_BYTES))
+                probe.finishWrite(stream)
+            } catch (e: IOException) {
+                probe.failWrite(stream)
+                throw e
+            } finally {
+                probe.delete()
             }
         }
     }
 
-    /** @throws IOException if the pairing could not be stored durably. */
-    suspend fun save(pairing: Pairing): Unit = lock.withLock {
-        withContext(Dispatchers.IO) {
+    /**
+     * Stores the pairing durably. Runs to completion even if the caller is
+     * cancelled: by the time this is called the machine has already replaced
+     * its previous pairing with this one, so abandoning the write would lose it.
+     *
+     * @throws IOException if the pairing could not be stored.
+     */
+    suspend fun save(pairing: Pairing): Unit = withContext(NonCancellable) {
+        lock.withLock { withContext(Dispatchers.IO) { write(pairing) } }
+    }
+
+    private fun write(pairing: Pairing) {
+        run {
             val plain = encode(pairing)
             try {
                 val cipher = Cipher.getInstance(TRANSFORMATION)
@@ -126,6 +167,7 @@ class PairingStore(context: Context) {
                 plain.fill(0)
             }
         }
+        // Published here, inside the same uninterruptible step as the write.
         _state.value = PairingState.Paired(pairing)
     }
 
@@ -143,9 +185,11 @@ class PairingStore(context: Context) {
         } catch (e: java.io.FileNotFoundException) {
             return PairingState.Absent
         } catch (e: IOException) {
-            return PairingState.Unreadable
+            return PairingState.Unavailable
         }
+        if (blob.size < 1 + IV_BYTES + TAG_BITS / 8 || blob[0] != FORMAT_VERSION) return PairingState.Unreadable
         return try {
+            // The file is there but its key is not: that does not come back.
             val key = key() ?: return PairingState.Unreadable
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(TAG_BITS, blob, 1, IV_BYTES))
@@ -157,11 +201,19 @@ class PairingStore(context: Context) {
                 plain.fill(0)
             }
         } catch (e: Exception) {
-            // Key invalidated, file tampered with or truncated, or the keystore itself failing.
             if (e is kotlinx.coroutines.CancellationException) throw e
-            PairingState.Unreadable
+            // Only a key that is gone for good, or content that fails its own checks,
+            // means the pairing is lost. Anything else may be the keystore having a bad moment.
+            if (isPermanentKeyLoss(e) || e is IOException || e is IllegalArgumentException) {
+                PairingState.Unreadable
+            } else {
+                PairingState.Unavailable
+            }
         }
     }
+
+    private fun isPermanentKeyLoss(e: Throwable): Boolean =
+        e is KeyPermanentlyInvalidatedException || e is UnrecoverableKeyException || e is AEADBadTagException
 
     private fun encode(pairing: Pairing): ByteArray {
         val buffer = WipingBuffer()
@@ -192,7 +244,7 @@ class PairingStore(context: Context) {
         val sealed = encrypt.doFinal(probe)
         val decrypt = Cipher.getInstance(TRANSFORMATION)
         decrypt.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(TAG_BITS, encrypt.iv))
-        check(decrypt.doFinal(sealed).contentEquals(probe)) { "secure storage returned different data" }
+        if (!decrypt.doFinal(sealed).contentEquals(probe)) throw IOException("secure storage returned different data")
     }
 
     private fun deleteKey() {
@@ -237,6 +289,7 @@ class PairingStore(context: Context) {
         const val IV_BYTES = 12
         const val TAG_BITS = 128
         const val FORMAT_VERSION: Byte = 1
+        const val PROBE_BYTES = 256
         val AAD = ALIAS.toByteArray(Charsets.US_ASCII)
     }
 }

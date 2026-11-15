@@ -4,7 +4,13 @@ package com.everysoft.paprelay.as11
 
 import kotlinx.serialization.json.JsonElement
 
-/** What a caller should do about a failure, so it never has to read messages. */
+/**
+ * What a caller should do about a failure, so it never has to read messages.
+ *
+ * Every kind of retry must be capped by the caller. A fault that recurs on
+ * every attempt is permanent whatever its type says, and the caller is the
+ * only one who can see that.
+ */
 public enum class As11Recovery {
     /** The link or the machine was not ready. Try again on a later connection. */
     RETRY_LATER,
@@ -37,9 +43,11 @@ public sealed class As11Exception(message: String, cause: Throwable? = null) : E
 }
 
 /** The machine sent something malformed or out of sequence. */
-public class As11ProtocolException(message: String, cause: Throwable? = null) : As11Exception(message, cause) {
-    override val recovery: As11Recovery get() = As11Recovery.RECONNECT
-}
+public class As11ProtocolException(
+    message: String,
+    cause: Throwable? = null,
+    override val recovery: As11Recovery = As11Recovery.RECONNECT,
+) : As11Exception(message, cause)
 
 /** Something about pairing or session authentication failed. */
 public sealed class As11AuthException(message: String, cause: Throwable? = null) : As11Exception(message, cause) {
@@ -56,6 +64,15 @@ public sealed class As11AuthException(message: String, cause: Throwable? = null)
         override val recovery: As11Recovery get() = As11Recovery.DO_NOT_RETRY
     }
 
+    /**
+     * What was typed is not a code the machine could have shown. Nothing was
+     * sent, so the machine's attempt is unspent, but this exchange is over:
+     * pairing has to be started again.
+     */
+    public class PasskeyInvalid : As11AuthException("the code entered is not a pairing code") {
+        override val recovery: As11Recovery get() = As11Recovery.ASK_USER
+    }
+
     /** The machine answered session setup with an error for our client id. */
     public class PairingUnknown(cause: Throwable?) : As11AuthException("the machine does not recognise this pairing", cause) {
         override val recovery: As11Recovery get() = As11Recovery.PAIRING_SUSPECT
@@ -67,17 +84,26 @@ public sealed class As11AuthException(message: String, cause: Throwable? = null)
     }
 
     /**
-     * Session setup appeared to succeed, but the other end then failed to
-     * produce a single valid encrypted answer. Only the real machine can, so
-     * until it does the session is not treated as open.
+     * Session setup appeared to succeed, but no valid encrypted answer
+     * followed. Only the real machine can produce one, so until it does the
+     * session is not treated as open.
+     *
+     * This says nothing about the pairing: a forgotten pairing or a wrong key
+     * is refused earlier, by name. Silence here means the phone is at the edge
+     * of range, the machine dropped its first request, or the other end is not
+     * the machine.
      */
     public class SessionUnproven(cause: Throwable?) : As11AuthException("the session could not be confirmed", cause) {
-        override val recovery: As11Recovery get() = As11Recovery.PAIRING_SUSPECT
+        override val recovery: As11Recovery get() = As11Recovery.RECONNECT
     }
 
-    /** Session setup presented a nonce that was used before: a replay, or a faulty machine. */
+    /**
+     * Session setup presented a nonce that was used before. The setup messages
+     * are not encrypted, so anyone in range can replay an old one; refusing it
+     * and trying again on a new connection is the whole remedy.
+     */
     public class NonceReplayed : As11AuthException("session setup reused a nonce") {
-        override val recovery: As11Recovery get() = As11Recovery.DO_NOT_RETRY
+        override val recovery: As11Recovery get() = As11Recovery.RECONNECT
     }
 }
 
@@ -100,7 +126,18 @@ public class As11RpcException(
     /** The error's `data` member, which for some errors carries partial results. */
     public val data: JsonElement? = null,
 ) : As11Exception("$method failed: code=$code${if (anonymous) " (no id)" else ""}") {
-    override val recovery: As11Recovery get() = if (anonymous) As11Recovery.RETRY_LATER else As11Recovery.DO_NOT_RETRY
+    /**
+     * True when the error says the request never got as far as a decision:
+     * it arrived damaged, or the machine failed internally.
+     */
+    public val transient: Boolean get() = anonymous || code in TRANSIENT_CODES
+
+    override val recovery: As11Recovery get() = if (transient) As11Recovery.RETRY_LATER else As11Recovery.DO_NOT_RETRY
+
+    private companion object {
+        /** JSON-RPC parse error, invalid request, internal error. */
+        val TRANSIENT_CODES = setOf(-32700, -32600, -32603)
+    }
 }
 
 /**
@@ -115,10 +152,14 @@ public class As11TimeoutException(
     override val recovery: As11Recovery get() = As11Recovery.RETRY_LATER
 }
 
-/** A download round arrived damaged: a gap, a repeat, a size overrun or a hash mismatch. */
-public class As11SpoolIntegrityException(message: String) : As11Exception(message) {
-    override val recovery: As11Recovery get() = As11Recovery.REPEAT_ROUND
-}
+/**
+ * A download round arrived damaged: a gap, a repeat or a hash mismatch, which a
+ * second attempt usually cures; or more data than was asked for, which it will not.
+ */
+public class As11SpoolIntegrityException(
+    message: String,
+    override val recovery: As11Recovery = As11Recovery.REPEAT_ROUND,
+) : As11Exception(message)
 
 /**
  * A download round arrived without the hash that proves it is intact. PAPRelay

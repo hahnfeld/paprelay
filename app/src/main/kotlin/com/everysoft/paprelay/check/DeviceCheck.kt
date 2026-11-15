@@ -50,7 +50,7 @@ import java.io.IOException
 import java.time.Instant
 import java.util.Locale
 
-enum class StepState { PENDING, RUNNING, PASSED, FAILED, SKIPPED, NOTED }
+enum class StepState { PENDING, RUNNING, PASSED, FAILED, SKIPPED, NOTED, CANCELLED }
 
 data class Step(val id: String, val title: String, val state: StepState = StepState.PENDING, val detail: String = "")
 
@@ -59,6 +59,9 @@ class MachineChoice(val options: List<String>, val answer: CompletableDeferred<I
 
 /** A check that failed for a reason this class can state plainly. */
 private class CheckFailure(message: String) : Exception(message)
+
+/** A step that found something worth saying but is not a failure. */
+private class Observation(message: String) : Exception(message)
 
 /**
  * The first-contact check: establishes, on the user's own phone and machine,
@@ -106,7 +109,8 @@ class DeviceCheck(
      */
     @Synchronized
     fun start(full: Boolean) {
-        if (job?.isActive == true) return
+        // A cancelled run is still unwinding until it completes; wait for that.
+        if (job?.isCompleted == false) return
         _running.value = true
         job = scope.launch {
             try {
@@ -118,9 +122,9 @@ class DeviceCheck(
                     report.appendLine("phone ${Build.MANUFACTURER} ${Build.MODEL}  mode ${if (full) "full" else "reconnect"}")
                 }
                 val finished = withTimeoutOrNull(OVERALL_LIMIT_MS) { execute(full) }
-                if (finished == null) closeOpenSteps("Stopped: the check took too long")
+                if (finished == null) closeOpenSteps(StepState.FAILED, "Stopped: the check took too long")
             } catch (e: CancellationException) {
-                closeOpenSteps("Cancelled")
+                closeOpenSteps(StepState.CANCELLED, "Stopped")
                 throw e
             } finally {
                 _passkeyRequest.value = null
@@ -155,24 +159,40 @@ class DeviceCheck(
         var state = store.current()
         var target: BluetoothDevice? = null
         if (full) {
+            val alreadyPaired = (state as? PairingState.Paired)?.pairing
             step(SCAN) {
                 if (!scanner.bluetoothEnabled) throw CheckFailure("Bluetooth is off")
                 val found = scanner.scan(SCAN_MS, platformFilter = false)
                 found.forEachIndexed { index, sighting -> note("  machine ${index + 1}: ${describe(sighting)}") }
-                target = when (found.size) {
-                    0 -> throw CheckFailure("No machine found. Put it in pairing mode and make sure it is not paired with myAir")
-                    1 -> found[0].device
-                    else -> found[choose(found)].device
+                // Whether the system's own scan filter can see this machine decides how
+                // background discovery has to work. Recorded in the report only.
+                progress(SCAN, "Checking how the system sees it…")
+                val filtered = runCatching { scanner.scan(FILTER_SCAN_MS, platformFilter = true).size }
+                note("  system scan filter: ${filtered.getOrNull()?.let { "saw $it machine(s)" } ?: "could not run"}")
+
+                if (alreadyPaired != null) {
+                    // Nothing to choose: the question is only whether the paired machine is there.
+                    val mine = found.firstOrNull { it.device.address.equals(alreadyPaired.address, ignoreCase = true) }
+                        ?: throw Observation("The paired machine was not seen advertising")
+                    "Paired machine found (${signal(mine.rssi)})"
+                } else {
+                    target = when (found.size) {
+                        0 -> throw CheckFailure("No machine found. Put it in pairing mode and make sure it is not paired with myAir")
+                        1 -> found[0].device
+                        else -> found[choose(found)].device
+                    }
+                    if (found.size == 1) "1 machine found (${signal(found[0].rssi)})" else "${found.size} machines found; using the one you chose"
                 }
-                if (found.size == 1) "1 machine found (${signal(found[0].rssi)})" else "${found.size} machines found; using the one you chose"
-            }
-            step(FILTERED_SCAN, noteOnly = true) {
-                val found = scanner.scan(SCAN_MS, platformFilter = true)
-                if (found.isEmpty()) "Not usable with this machine; PAPRelay scans without it" else "Works"
             }
         } else {
             skip(SCAN, "Not part of a reconnect check")
-            skip(FILTERED_SCAN, "Not part of a reconnect check")
+        }
+
+        if (state is PairingState.Unavailable) {
+            // Pairing now could replace a pairing that is still good.
+            fail(PAIR, "Storage on this phone could not be read just now. Try again in a moment")
+            listOf(SESSION, IDENTITY, CLOCK, DOWNLOAD).forEach { skip(it, "Pairing state unknown") }
+            return
         }
 
         if (full && state !is PairingState.Paired) {
@@ -183,6 +203,7 @@ class DeviceCheck(
                 try {
                     store.selfTest()
                 } catch (e: IOException) {
+                    note("  ${code(e)}")
                     throw CheckFailure("Secure storage is not working on this phone, so pairing was not attempted")
                 }
                 GattLink.open(context, machine, CONNECT_MS).use { link ->
@@ -193,6 +214,7 @@ class DeviceCheck(
                         try {
                             store.save(Pairing(credentials, machine.address, null, System.currentTimeMillis()))
                         } catch (e: IOException) {
+                            note("  ${code(e)}")
                             throw CheckFailure(
                                 "The machine accepted the code but the pairing could not be saved. " +
                                     "Put the machine back in pairing mode and run the check again",
@@ -225,7 +247,14 @@ class DeviceCheck(
                     .firstOrNull { it.device.address.equals(paired.address, ignoreCase = true) }
                 note("  paired machine ${if (sighting != null) "seen advertising, ${signal(sighting.rssi)}" else "not seen advertising; trying a direct connection"}")
                 val device = sighting?.device ?: scanner.deviceByAddress(paired.address) ?: throw CheckFailure("Bluetooth is off")
-                val opened = GattLink.open(context, device, CONNECT_MS)
+                val opened = try {
+                    // A machine that is not advertising cannot be connected to, so do not wait long for it.
+                    GattLink.open(context, device, if (sighting != null) CONNECT_MS else UNSEEN_CONNECT_MS)
+                } catch (e: As11TransportException) {
+                    if (sighting != null) throw e
+                    note("  ${code(e)}")
+                    throw CheckFailure("The machine is not in range, or is not advertising")
+                }
                 link = opened
                 note("  mtu ${opened.summary.mtu}, connect attempts ${opened.summary.connectAttempts}")
                 val created = As11Client(opened, scope)
@@ -286,9 +315,10 @@ class DeviceCheck(
                     }
                 }
                 var totalBytes = 0L
-                var failed = 0
+                var succeeded = 0
                 for (spool in SpoolName.entries) {
                     try {
+                        progress(DOWNLOAD, "Downloading ${friendly(spool)}…")
                         val days = if (spool == SpoolName.SUMMARY) SUMMARY_DAYS else DETAIL_DAYS
                         var address: SpoolAddress = SpoolAddress.FromMachineTime(machineNow - days * DAY_MS)
                         var rounds = 0
@@ -300,21 +330,26 @@ class DeviceCheck(
                             note("  ${spool.wireName} round $rounds: ${round.data.size} bytes sha256 ${round.sha256?.let { Hex.encode(it).take(16) } ?: "-"} more=${round.next != null}")
                             rounds++
                             bytes += round.data.size
+                            progress(DOWNLOAD, "Downloading ${friendly(spool)}… ${(totalBytes + bytes) / 1024} kB")
                             address = SpoolAddress.Continuation(round.next ?: break)
+                            if (rounds == MAX_ROUNDS) throw CheckFailure("more data than this check reads in one go")
                         }
                         totalBytes += bytes
+                        succeeded++
                         note("  ${spool.wireName}: $bytes bytes in $rounds round(s), ${System.currentTimeMillis() - started} ms")
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
                         // One log failing must not hide whether the others work.
-                        failed++
                         note("  ${spool.wireName}: FAILED ${code(e)}: ${explain(e)}")
-                        if (session.terminated.isCompleted) break
+                        if (session.terminated.isCompleted) {
+                            note("  the connection ended; later logs were not attempted")
+                            break
+                        }
                     }
                 }
                 val logs = SpoolName.entries.size
-                if (failed > 0) throw CheckFailure("${logs - failed} of $logs logs downloaded; see the report for the rest")
+                if (succeeded < logs) throw CheckFailure("$succeeded of $logs logs downloaded and verified; the report says why")
                 "$logs logs downloaded and verified (${totalBytes / 1024} kB)"
             }
             note("counters ${session.counters.snapshot()} discarded=${session.discardedBytes} crcFailures=${session.payloadCrcFailures} abandonedFrames=${session.abandonedFrames}")
@@ -353,13 +388,14 @@ class DeviceCheck(
             (if (Build.VERSION.SDK_INT >= 35) " addressType=${s.device.addressType}" else "") +
             " adv=${s.redactedHex}"
 
-    private suspend fun step(id: String, noteOnly: Boolean = false, body: suspend () -> String) {
+    private suspend fun step(id: String, body: suspend () -> String) {
         set(id, StepState.RUNNING, "")
         try {
-            val detail = body()
-            set(id, if (noteOnly) StepState.NOTED else StepState.PASSED, detail)
+            set(id, StepState.PASSED, body())
         } catch (e: CancellationException) {
             throw e
+        } catch (e: Observation) {
+            set(id, StepState.NOTED, e.message.orEmpty())
         } catch (e: Exception) {
             note("  ${code(e)}")
             set(id, StepState.FAILED, explain(e))
@@ -368,11 +404,18 @@ class DeviceCheck(
 
     private fun skip(id: String, why: String) = set(id, StepState.SKIPPED, why)
 
-    private fun closeOpenSteps(why: String) {
+    private fun fail(id: String, why: String) = set(id, StepState.FAILED, why)
+
+    /** What a long step is doing right now. Shown on screen, not written to the report. */
+    private fun progress(id: String, detail: String) {
+        _steps.update { list -> list.map { if (it.id == id && it.state == StepState.RUNNING) it.copy(detail = detail) else it } }
+    }
+
+    private fun closeOpenSteps(running: StepState, why: String) {
         for (step in _steps.value) {
             when (step.state) {
-                StepState.RUNNING -> set(step.id, StepState.FAILED, why)
-                StepState.PENDING -> set(step.id, StepState.SKIPPED, why)
+                StepState.RUNNING -> set(step.id, running, why)
+                StepState.PENDING -> set(step.id, StepState.SKIPPED, "")
                 else -> Unit
             }
         }
@@ -392,7 +435,6 @@ class DeviceCheck(
     private companion object {
         const val HEALTH = "health"
         const val SCAN = "scan"
-        const val FILTERED_SCAN = "filtered"
         const val PAIR = "pair"
         const val SESSION = "session"
         const val IDENTITY = "identity"
@@ -400,7 +442,9 @@ class DeviceCheck(
         const val DOWNLOAD = "download"
 
         const val SCAN_MS = 8_000L
+        const val FILTER_SCAN_MS = 5_000L
         const val CONNECT_MS = 20_000L
+        const val UNSEEN_CONNECT_MS = 6_000L
         const val RECONNECT_PAUSE_MS = 6_000L
         const val OVERALL_LIMIT_MS = 20 * 60_000L
         const val DAY_MS = 86_400_000L
@@ -414,13 +458,19 @@ class DeviceCheck(
         fun template() = listOf(
             Step(HEALTH, "Health Connect accepts writes"),
             Step(SCAN, "Machine is in range"),
-            Step(FILTERED_SCAN, "System scan filter"),
             Step(PAIR, "Pairing"),
             Step(SESSION, "Encrypted session"),
             Step(IDENTITY, "Machine identity"),
             Step(CLOCK, "Machine clock"),
             Step(DOWNLOAD, "Stored data downloads and verifies"),
         )
+
+        fun friendly(spool: SpoolName): String = when (spool) {
+            SpoolName.USAGE_EVENTS -> "usage events"
+            SpoolName.SUMMARY -> "daily summaries"
+            SpoolName.RESPIRATORY_EVENTS -> "breathing events"
+            SpoolName.ONE_MINUTE -> "per-minute data"
+        }
 
         fun signal(rssi: Int): String = when {
             rssi >= -60 -> "strong signal"
@@ -429,7 +479,8 @@ class DeviceCheck(
         }
 
         /** Device-supplied text made safe for one line of the report or the screen. */
-        fun printable(text: String): String = text.take(60).map { if (it in ' '..'~') it else '?' }.joinToString("")
+        fun printable(text: String, limit: Int = 60): String =
+            text.take(limit).map { if (it in ' '..'~') it else '?' }.joinToString("")
 
         /**
          * What went wrong, in words fit for the screen. Written out case by case:
@@ -441,10 +492,11 @@ class DeviceCheck(
                 is As11TransportException -> "Connection problem: ${e.message}"
                 is As11TimeoutException -> "The machine did not answer (${e.operation})"
                 is As11AuthException.PasskeyRejected -> "The machine rejected the code. Put it back in pairing mode and try again"
+                is As11AuthException.PasskeyInvalid -> "That is not a pairing code. Put the machine back in pairing mode and try again"
                 is As11AuthException.MachineUnauthenticated -> "This device could not prove it is the machine. Nothing was saved"
                 is As11AuthException.PairingUnknown -> "The machine does not recognise this phone's pairing"
                 is As11AuthException.SessionProofRejected -> "The machine rejected this phone's pairing"
-                is As11AuthException.SessionUnproven -> "The machine did not confirm the session"
+                is As11AuthException.SessionUnproven -> "The machine did not confirm the session. It may be at the edge of range"
                 is As11AuthException.NonceReplayed -> "The machine repeated an old session value. Nothing was read"
                 is As11PairingCancelledException -> "Pairing was cancelled. The machine must be put back in pairing mode"
                 is As11RpcException -> "The machine refused the request (${e.method}, code ${e.code})"
@@ -469,6 +521,7 @@ class DeviceCheck(
                     is As11TransportException -> "transport"
                     is As11TimeoutException -> "timeout"
                     is As11AuthException.PasskeyRejected -> "auth.passkey-rejected"
+                    is As11AuthException.PasskeyInvalid -> "auth.passkey-invalid"
                     is As11AuthException.MachineUnauthenticated -> "auth.machine-unauthenticated"
                     is As11AuthException.PairingUnknown -> "auth.pairing-unknown"
                     is As11AuthException.SessionProofRejected -> "auth.session-proof-rejected"
@@ -487,11 +540,16 @@ class DeviceCheck(
                 // A few messages quote a short value from the machine, so they are made printable.
                 "$kind [${e.recovery}] ${printable(e.message.orEmpty())}" + (e.cause?.let { " <- ${code(it)}" } ?: "")
             }
-            is IOException -> "io"
-            is SecurityException -> "permission"
-            is IllegalStateException -> "state"
-            is IllegalArgumentException -> "argument"
-            else -> "other"
+            else -> {
+                // Platform class names are never shortened by the release build, so they are
+                // safe to print. Others would be meaningless; the frames below can be mapped back.
+                val name = e.javaClass.name
+                val type = if (PLATFORM_PREFIXES.any(name::startsWith)) name else "app"
+                val frames = e.stackTrace.take(3).joinToString(" < ") { "${it.className}.${it.methodName}:${it.lineNumber}" }
+                "unexpected $type: ${printable(e.message.orEmpty(), limit = 200)} at $frames" + (e.cause?.takeIf { it !== e }?.let { " <- ${code(it)}" } ?: "")
+            }
         }
+
+        val PLATFORM_PREFIXES = listOf("java.", "javax.", "android.", "kotlin.", "kotlinx.")
     }
 }

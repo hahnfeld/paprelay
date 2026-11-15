@@ -3,7 +3,12 @@
 package com.everysoft.paprelay.ui
 
 import android.Manifest
+import android.app.Activity
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -12,6 +17,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,7 +55,15 @@ private fun Root(app: PapRelayApp) {
     var showAbout by rememberSaveable { mutableStateOf(false) }
     var confirmForget by rememberSaveable { mutableStateOf(false) }
     var pendingFull by rememberSaveable { mutableStateOf(true) }
+    var permissionRefused by rememberSaveable { mutableStateOf(false) }
     val uiScope = rememberCoroutineScope()
+
+    // A run takes a few minutes and needs the user nearby for the code; do not let the screen sleep on it.
+    DisposableEffect(running) {
+        val window = (context as? Activity)?.window
+        if (running) window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose { window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+    }
 
     val healthPermission = rememberLauncherForActivityResult(
         PermissionController.createRequestPermissionResultContract(),
@@ -58,7 +72,8 @@ private fun Root(app: PapRelayApp) {
     val bluetoothPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { granted ->
-        if (granted.values.all { it }) {
+        permissionRefused = !granted.values.all { it }
+        if (!permissionRefused) {
             uiScope.launch {
                 if (app.healthConnect.available && !app.healthConnect.hasPermission()) {
                     healthPermission.launch(setOf(app.healthConnect.writePermission))
@@ -66,8 +81,6 @@ private fun Root(app: PapRelayApp) {
                     check.start(pendingFull)
                 }
             }
-        } else {
-            Toast.makeText(context, R.string.permission_bluetooth_denied, Toast.LENGTH_LONG).show()
         }
     }
 
@@ -102,6 +115,12 @@ private fun Root(app: PapRelayApp) {
             steps = steps,
             running = running,
             hasReport = check.reportText().isNotEmpty(),
+            permissionRefused = permissionRefused,
+            onOpenSettings = {
+                context.startActivity(
+                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)),
+                )
+            },
             onRunFull = { request(full = true) },
             onRunReconnect = { request(full = false) },
             onStop = { check.cancel() },

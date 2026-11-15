@@ -106,7 +106,10 @@ public class FigDeframer(private val maxPayload: Int = DEFAULT_MAX_PAYLOAD) {
     public var abandonedFrames: Long = 0
         private set
 
-    /** True while bytes of an unfinished frame are being held. */
+    /**
+     * True while any bytes are being held: an unfinished frame, or up to three
+     * bytes that might be the start of a sync word.
+     */
     public val hasPartialFrame: Boolean get() = length > 0
 
     init {
@@ -126,7 +129,14 @@ public class FigDeframer(private val maxPayload: Int = DEFAULT_MAX_PAYLOAD) {
      * satisfy with bytes belonging to later frames, so those frames stay hidden
      * behind it. This looks past the pending frame for one that is complete and
      * passes both CRCs. Only then is the pending frame known to be dead and
-     * dropped; a frame that is merely arriving slowly is left alone.
+     * dropped; a frame that is merely arriving slowly is left alone, because
+     * nothing complete can lie behind a frame whose own bytes are still coming.
+     *
+     * One case is indistinguishable: a pending frame whose payload itself
+     * contains a complete, CRC-valid frame. That inner frame would be delivered
+     * and the outer one lost. Payloads here are JSON or ciphertext, where that
+     * cannot arise by chance, and a party able to craft such bytes can inject
+     * frames directly, so it costs them one dropped frame and gains nothing.
      */
     public fun recoverHiddenFrames(): List<FigFrame> {
         val later = firstCompleteFrameFrom(1)

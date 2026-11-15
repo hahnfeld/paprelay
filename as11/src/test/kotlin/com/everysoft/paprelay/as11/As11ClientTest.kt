@@ -51,6 +51,24 @@ class As11ClientTest {
         }
     }
 
+    /** A link on which the machine also sends a plaintext heartbeat at a steady interval. */
+    private class Chattering(private val inner: As11Transport, scope: CoroutineScope, everyMs: Long) : As11Transport {
+        private val pipe = Channel<ByteArray>(Channel.UNLIMITED)
+
+        init {
+            scope.launch { inner.incoming.collect { pipe.send(it) } }
+            scope.launch {
+                while (true) {
+                    kotlinx.coroutines.delay(everyMs)
+                    pipe.send(Fig.encode(0x0392, """{"jsonrpc":"2.0","method":"HeartBeat"}""".toByteArray()))
+                }
+            }
+        }
+
+        override val incoming: Flow<ByteArray> = pipe.receiveAsFlow()
+        override suspend fun send(frame: ByteArray) = inner.send(frame)
+    }
+
     /** A link that stops delivering for a while part-way through an answer, then carries on. */
     private class Pausing(
         private val inner: As11Transport,
@@ -60,6 +78,10 @@ class As11ClientTest {
     ) : As11Transport {
         private val pipe = Channel<ByteArray>(Channel.UNLIMITED)
         var armed = false
+
+        /** Arm automatically once this many frames have been sent, counting from zero. */
+        var armAfterPlaintext: Int = -1
+        private var sent = 0
 
         init {
             scope.launch {
@@ -72,7 +94,10 @@ class As11ClientTest {
         }
 
         override val incoming: Flow<ByteArray> = pipe.receiveAsFlow()
-        override suspend fun send(frame: ByteArray) = inner.send(frame)
+        override suspend fun send(frame: ByteArray) {
+            if (sent++ == armAfterPlaintext) armed = true
+            inner.send(frame)
+        }
     }
 
     private fun TestScope.clientOn(transport: As11Transport): As11Client = As11Client(
@@ -153,7 +178,8 @@ class As11ClientTest {
     fun `each way session setup can be refused has its own type`() = runTest {
         val credentials = connect().pair { "0420" }
         val stranger = PairingCredentials("client-unknown", credentials.pairingKey)
-        assertFailsWith<As11AuthException.PairingUnknown> { connect().startSession(stranger, NonceRegistry.AcceptAll) }
+        val unknown = assertFailsWith<As11AuthException.PairingUnknown> { connect().startSession(stranger, NonceRegistry.AcceptAll) }
+        assertEquals(As11Recovery.PAIRING_SUSPECT, unknown.recovery)
 
         val wrongKey = PairingCredentials(credentials.clientId, ByteArray(32) { 9 })
         val rejected = assertFailsWith<As11AuthException.SessionProofRejected> {
@@ -183,6 +209,7 @@ class As11ClientTest {
         val failure = assertFailsWith<As11RpcException> { connect().startSession(credentials, NonceRegistry.AcceptAll) }
         assertTrue(failure.anonymous)
         assertEquals(-32700, failure.code)
+        assertEquals(As11Recovery.RETRY_LATER, failure.recovery)
     }
 
     @Test
@@ -200,7 +227,9 @@ class As11ClientTest {
         machine.faults.fixedNonce = ByteArray(32) { 3 }
         connect().startSession(credentials, registry)
         val replayed = connect()
-        assertFailsWith<As11AuthException.NonceReplayed> { replayed.startSession(credentials, registry) }
+        val failure = assertFailsWith<As11AuthException.NonceReplayed> { replayed.startSession(credentials, registry) }
+        // Anyone in range can replay setup messages; it must not switch syncing off.
+        assertEquals(As11Recovery.RECONNECT, failure.recovery)
         assertFalse(replayed.isSecure)
     }
 
@@ -220,9 +249,11 @@ class As11ClientTest {
 
     @Test
     fun `a code that is not a code is refused without spending the machine's attempt`() = runTest {
-        assertFailsWith<As11AuthException.PasskeyRejected> { connect().pair { "12" } }
-        // The machine never saw a confirmation, so the right code still works on a new link.
-        assertNotNull(connect().pair { "0420" })
+        val failure = assertFailsWith<As11AuthException.PasskeyInvalid> { connect().pair { "12" } }
+        assertEquals(As11Recovery.ASK_USER, failure.recovery)
+        // The machine was never sent a confirmation.
+        assertEquals(listOf("StartKeyExchange"), machine.plaintextMethodsSeen)
+        assertNull(machine.pairedClientId)
     }
 
     @Test
@@ -437,9 +468,66 @@ class As11ClientTest {
         val failure = assertFailsWith<As11AuthException.SessionUnproven> {
             client.startSession(credentials, NonceRegistry.AcceptAll)
         }
-        assertEquals(As11Recovery.PAIRING_SUSPECT, failure.recovery)
+        // Silence after setup is not evidence that the pairing is gone.
+        assertEquals(As11Recovery.RECONNECT, failure.recovery)
         assertFalse(client.isSecure)
         assertTrue(client.terminated.isCompleted)
+    }
+
+    @Test
+    fun `a keyless device that echoes doctored ciphertext cannot fake the session proof`() = runTest {
+        val credentials = connect().pair { "0420" }
+        val registry = RememberingRegistry()
+        machine.faults.forgeSessionProof = true
+        val client = connect()
+        val failure = assertFailsWith<As11ProtocolException> { client.startSession(credentials, registry) }
+        assertTrue(failure.message!!.contains("own encrypted data"), failure.message)
+        assertFalse(client.isSecure)
+        assertTrue(client.terminated.isCompleted)
+        assertTrue(registry.seen.isEmpty())
+        // And nothing can be asked on it afterwards.
+        assertFailsWith<As11ProtocolException> { client.get(serial) }
+        assertFailsWith<As11ProtocolException> { client.discardPairKey() }
+    }
+
+    @Test
+    fun `a late answer to the first proof request still proves the session`() = runTest {
+        val credentials = connect().pair { "0420" }
+        // Slower than one request's patience, quicker than two.
+        machine.faults.responseDelayMs = 0
+        val link = Pausing(machine.connect(), backgroundScope, pauseAfterChunks = 1, pauseMs = 10_500)
+        val client = clientOn(link)
+        link.armAfterPlaintext = 2
+        client.startSession(credentials, NonceRegistry.AcceptAll)
+        assertTrue(client.isSecure)
+    }
+
+    @Test
+    fun `a session interrupted before it is proven leaves nothing usable`() = runTest {
+        val credentials = connect().pair { "0420" }
+        machine.faults.silentMethods += "GetVersion"
+        val client = connect()
+        val setup = launch { client.startSession(credentials, NonceRegistry.AcceptAll) }
+        advanceTimeBy(2_000) // past session setup, inside the proof
+        setup.cancel()
+        setup.join()
+        assertFalse(client.isSecure)
+        assertTrue(client.terminated.isCompleted)
+        machine.faults.silentMethods.clear()
+        assertFailsWith<As11TransportException> { client.get(serial) }
+    }
+
+    @Test
+    fun `failing to record the nonce ends the session instead of leaving it half-open`() = runTest {
+        val credentials = connect().pair { "0420" }
+        val broken = object : NonceRegistry {
+            override suspend fun isKnown(nonce: ByteArray): Boolean = false
+            override suspend fun remember(nonce: ByteArray): Unit = throw java.io.IOException("disk full")
+        }
+        val client = connect()
+        assertFailsWith<As11NonceStoreException> { client.startSession(credentials, broken) }
+        assertFalse(client.isSecure)
+        assertFailsWith<As11NonceStoreException> { client.get(serial) }
     }
 
     @Test
@@ -477,15 +565,54 @@ class As11ClientTest {
     @Test
     fun `sustained tampering exhausts the session's budget even when some frames get through`() = runTest {
         val client = securedClient()
-        var outcome: As11Exception? = null
+        var requests = 0
         // Two damaged, one clean, repeatedly: never three in a row.
-        for (i in 0 until 30) {
-            machine.faults.corruptEncryptedFrames = if (i % 3 == 2) 0 else 1
-            outcome = runCatching { client.get(serial) }.exceptionOrNull() as? As11Exception
-            if (client.terminated.isCompleted) break
+        while (requests < 30 && !client.terminated.isCompleted) {
+            machine.faults.corruptEncryptedFrames = if (requests % 3 == 2) 0 else 1
+            runCatching { client.get(serial) }
+            requests++
         }
+        // Without a budget the loop would run to its end with the conversation still alive.
+        assertTrue(client.terminated.isCompleted, "still alive after $requests requests")
         assertIs<As11ProtocolException>(client.terminated.await())
-        assertNotNull(outcome)
+        assertTrue(requests < 30)
+    }
+
+    @Test
+    fun `other traffic does not keep a dead frame in the way`() = runTest {
+        machine.spools["Summary"] = listOf(bytes(2_000))
+        val credentials = connect().pair { "0420" }
+        // A heartbeat every half second: the link is never quiet.
+        val link = Chattering(machine.connect(), backgroundScope, everyMs = 500)
+        val client = clientOn(link).also { it.startSession(credentials, NonceRegistry.AcceptAll) }
+        // The single 2 kB fragment is cut off after its first chunk, leaving most of it owed.
+        machine.faults.encryptedFramesBeforeChunkDrop = 2
+        machine.faults.dropChunkOfNextEncryptedFrame = 1
+        machine.faults.dropRestOfFrame = true
+        assertFailsWith<As11SpoolStalledException> { client.pullSpoolRound(SpoolName.SUMMARY, from) }
+        // The dead frame was dropped as soon as a heartbeat was seen complete behind it,
+        // not left until enough chatter had piled up to overrun what it claimed.
+        assertEquals(1, client.abandonedFrames)
+        assertEquals(0, client.payloadCrcFailures)
+        assertEquals(machine.serialNumber, client.get(serial).values["SerialNumber"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `an empty round that promises more, with no hash to check it by, is refused`() = runTest {
+        machine.spools["Summary"] = listOf(bytes(5_000), bytes(100))
+        machine.faults.separateTerminalFragment = true
+        machine.faults.omitSpoolHash = true
+        machine.faults.dropFragments += listOf(0, 1)
+        assertFailsWith<As11SpoolIntegrityException> { securedClient().pullSpoolRound(SpoolName.SUMMARY, from) }
+    }
+
+    @Test
+    fun `limits that a second attempt cannot change are not marked for repeating`() = runTest {
+        machine.spools["Summary"] = listOf(bytes(9_000))
+        val failure = assertFailsWith<As11SpoolIntegrityException> {
+            securedClient().pullSpoolRound(SpoolName.SUMMARY, from, maxSpoolSize = 1_000)
+        }
+        assertEquals(As11Recovery.DO_NOT_RETRY, failure.recovery)
     }
 
     @Test

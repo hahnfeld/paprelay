@@ -12,6 +12,10 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -23,6 +27,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -38,14 +44,18 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -61,6 +71,7 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
@@ -85,13 +96,18 @@ private fun Page(
     content: @Composable () -> Unit,
 ) {
     Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxSize()) {
-        Box(contentAlignment = Alignment.TopCenter) {
+        // Top and sides are inset outside the scroll, so text never slides under the status
+        // bar. The bottom is inset inside it, so the last lines scroll clear of the navigation bar.
+        Box(
+            Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)),
+            contentAlignment = Alignment.TopCenter,
+        ) {
             Column(
                 Modifier
                     .widthIn(max = 560.dp)
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
-                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
                     .padding(horizontal = 24.dp),
             ) {
                 Row(
@@ -169,6 +185,8 @@ fun HomeScreen(
     steps: List<Step>,
     running: Boolean,
     hasReport: Boolean,
+    permissionRefused: Boolean,
+    onOpenSettings: () -> Unit,
     onRunFull: () -> Unit,
     onRunReconnect: () -> Unit,
     onStop: () -> Unit,
@@ -190,6 +208,10 @@ fun HomeScreen(
             PairingState.Unreadable -> {
                 Text(stringResource(R.string.machine_unreadable), style = MaterialTheme.typography.titleMedium)
                 Secondary(stringResource(R.string.machine_unreadable_hint), Modifier.padding(top = 4.dp))
+            }
+            PairingState.Unavailable -> {
+                Text(stringResource(R.string.machine_unavailable), style = MaterialTheme.typography.titleMedium)
+                Secondary(stringResource(R.string.machine_unavailable_hint), Modifier.padding(top = 4.dp))
             }
             is PairingState.Paired -> {
                 val serial = pairing.pairing.serialNumber
@@ -220,6 +242,13 @@ fun HomeScreen(
             }
         }
 
+        if (permissionRefused && !running) {
+            Secondary(stringResource(R.string.permission_needed), Modifier.padding(top = 12.dp))
+            TextButton(onClick = onOpenSettings, modifier = Modifier.offset(x = (-12).dp)) {
+                Text(stringResource(R.string.action_open_settings))
+            }
+        }
+
         Spacer(Modifier.height(36.dp))
         SectionLabel(R.string.check_heading)
         Text(
@@ -236,10 +265,13 @@ fun HomeScreen(
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
         Spacer(Modifier.height(8.dp))
+        // Text buttons carry 12 dp of padding; pull them out so their labels sit on the text margins.
         FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            TextButton(onClick = onExport, enabled = hasReport && !running) { Text(stringResource(R.string.action_export)) }
+            TextButton(onClick = onExport, enabled = hasReport && !running, modifier = Modifier.offset(x = (-12).dp)) {
+                Text(stringResource(R.string.action_export))
+            }
             if (pairing is PairingState.Paired || pairing == PairingState.Unreadable) {
-                TextButton(onClick = onForget, enabled = !running) {
+                TextButton(onClick = onForget, enabled = !running, modifier = Modifier.offset(x = 12.dp)) {
                     Text(stringResource(R.string.action_forget), color = MaterialTheme.colorScheme.error)
                 }
             }
@@ -257,6 +289,7 @@ private fun verdict(steps: List<Step>, running: Boolean): String {
     return when {
         running -> stringResource(R.string.verdict_running)
         steps.all { it.state == StepState.PENDING } -> stringResource(R.string.verdict_idle)
+        steps.any { it.state == StepState.CANCELLED } -> stringResource(R.string.verdict_incomplete)
         failed > 0 -> pluralStringResource(R.plurals.verdict_failed, failed, failed)
         // "Passed" means the last step did, not merely that nothing was attempted.
         steps.lastOrNull()?.state == StepState.PASSED -> stringResource(R.string.verdict_passed)
@@ -273,6 +306,7 @@ private fun StepRow(step: Step) {
             StepState.RUNNING -> R.string.state_running
             StepState.SKIPPED -> R.string.state_skipped
             StepState.NOTED -> R.string.state_noted
+            StepState.CANCELLED -> R.string.state_cancelled
             StepState.PENDING -> R.string.state_pending
         },
     )
@@ -330,7 +364,8 @@ private fun StateMark(state: StepState) {
                 drawLine(color, Offset(0f, 0f), Offset(w, h), thick, StrokeCap.Round)
                 drawLine(color, Offset(w, 0f), Offset(0f, h), thick, StrokeCap.Round)
             }
-            StepState.SKIPPED -> drawLine(color, Offset(0f, h / 2), Offset(w, h / 2), 1.5.dp.toPx(), StrokeCap.Round)
+            StepState.SKIPPED, StepState.CANCELLED ->
+                drawLine(color, Offset(0f, h / 2), Offset(w, h / 2), 1.5.dp.toPx(), StrokeCap.Round)
             StepState.NOTED -> drawCircle(color, radius = w * 0.28f)
             else -> drawCircle(color, style = Stroke(width = 1.5.dp.toPx()))
         }
@@ -395,6 +430,8 @@ private fun Paragraph(@StringRes text: Int) {
 @Composable
 fun PasskeyDialog(onConfirm: (String) -> Unit, onCancel: () -> Unit) {
     var code by rememberSaveable { mutableStateOf("") }
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
     AlertDialog(
         onDismissRequest = {},
         properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
@@ -408,7 +445,10 @@ fun PasskeyDialog(onConfirm: (String) -> Unit, onCancel: () -> Unit) {
                     onValueChange = { entered -> code = entered.filter(Char::isDigit).take(8) },
                     label = { Text(stringResource(R.string.passkey_label)) },
                     singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { if (code.length >= 4) onConfirm(code) }),
+                    supportingText = { Text(stringResource(R.string.passkey_expiry)) },
+                    modifier = Modifier.focusRequester(focus),
                 )
             }
         },
@@ -427,15 +467,15 @@ fun ChoiceDialog(options: List<String>, onChoose: (Int) -> Unit, onCancel: () ->
         properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
         title = { Text(stringResource(R.string.choose_title)) },
         text = {
-            Column {
+            Column(Modifier.selectableGroup()) {
                 Text(stringResource(R.string.choose_body), style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(8.dp))
                 options.forEachIndexed { index, label ->
                     Row(
                         Modifier
                             .fillMaxWidth()
-                            .selectable(selected = selected == index, role = Role.RadioButton, onClick = { selected = index })
-                            .padding(vertical = 10.dp),
+                            .heightIn(min = 48.dp)
+                            .selectable(selected = selected == index, role = Role.RadioButton, onClick = { selected = index }),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         RadioButton(selected = selected == index, onClick = null)

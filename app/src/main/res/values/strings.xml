@@ -15,7 +15,7 @@
 
     <string name="machine_heading">Machine</string>
     <string name="machine_unpaired">Not paired</string>
-    <string name="machine_paired">AirSense 11 ··%1$s</string>
+    <string name="machine_paired">AirSense 11 · serial ending %1$s</string>
     <string name="machine_paired_unknown">AirSense 11</string>
     <string name="machine_paired_on">Paired %1$s</string>
     <string name="machine_unpaired_hint">Put the machine in pairing mode: More, MyAir App, Connect. It must not be paired with the myAir app.</string>
@@ -41,6 +41,12 @@
     <string name="machine_unreadable">Pairing needs to be redone</string>
     <string name="machine_unreadable_hint">A pairing was stored but can no longer be read on this phone. Put the machine in pairing mode and run the check to pair again.</string>
     <string name="machine_loading">Checking…</string>
+    <string name="machine_unavailable">Pairing could not be read</string>
+    <string name="machine_unavailable_hint">Storage on this phone did not answer. Nothing is lost; run the check again in a moment.</string>
+
+    <string name="permission_needed">PAPRelay needs the Nearby devices permission to reach the machine. It was declined, so Android will not ask again.</string>
+    <string name="action_open_settings">Open app settings</string>
+    <string name="state_cancelled">Stopped</string>
 
     <string name="choose_title">Which machine is yours?</string>
     <string name="choose_body">More than one machine is in range. The one nearest the phone usually has the strongest signal.</string>
@@ -50,11 +56,11 @@
     <string name="passkey_title">Enter the code on the machine</string>
     <string name="passkey_body">The machine is showing a 4-digit code. Pairing replaces the myAir app\'s connection to this machine.</string>
     <string name="passkey_label">Code</string>
+    <string name="passkey_expiry">The code is valid for about two minutes.</string>
 
     <string name="forget_title">Forget this machine?</string>
     <string name="forget_body">PAPRelay will delete its pairing and the data this check downloaded. Data already written to Health Connect stays there.</string>
 
-    <string name="permission_bluetooth_denied">Bluetooth permission is needed to reach the machine.</string>
     <string name="early_build_notice">Early build. Not validated against a real machine yet.</string>
 
     <string name="about_title">About</string>

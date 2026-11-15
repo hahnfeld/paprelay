@@ -98,8 +98,22 @@ public class FaultPlan {
     /** Lose this chunk (counting from 0) of the next encrypted frame, as a missed notification would. */
     public var dropChunkOfNextEncryptedFrame: Int? = null
 
+    /**
+     * With [dropChunkOfNextEncryptedFrame]: lose that chunk and every one after
+     * it, as a longer radio dropout would.
+     */
+    public var dropRestOfFrame: Boolean = false
+
     /** Let this many encrypted frames through before [dropChunkOfNextEncryptedFrame] applies. */
     public var encryptedFramesBeforeChunkDrop: Int = 0
+
+    /**
+     * Behave as a device that holds no key: answer the first encrypted request
+     * by sending back its first cipher block under an adjusted IV, so that it
+     * decrypts to a bare `{"id":N}`. This is the strongest forgery available
+     * without the key, because the encryption has no authentication.
+     */
+    public var forgeSessionProof: Boolean = false
 
     /** Accept writes but never complete them. */
     public var hangSend: Boolean = false
@@ -136,6 +150,9 @@ public class FakeAirSense11(
     /** Stored data: for each log, the rounds it will hand out in order. */
     public val spools: MutableMap<String, List<ByteArray>> = mutableMapOf()
 
+    /** Methods of every request received in the clear, in order. */
+    public val plaintextMethodsSeen: MutableList<String> = mutableListOf()
+
     /** Methods of every command accepted on the encrypted channel, in order. */
     public val encryptedMethodsSeen: MutableList<String> = mutableListOf()
 
@@ -161,6 +178,7 @@ public class FakeAirSense11(
         private var nextSpoolId = 12
         private val openSpools = HashMap<Int, Pair<String, Int>>()
         private var closed = false
+        private var lastPlaintextId = 0
 
         override val incoming: Flow<ByteArray> = toClient.receiveAsFlow()
 
@@ -183,6 +201,8 @@ public class FakeAirSense11(
                     if (sessionKey != null) return
                     val request = parse(payload) ?: return
                     val method = request["method"]?.jsonPrimitive?.content ?: return
+                    plaintextMethodsSeen += method
+                    lastPlaintextId = request["id"]?.jsonPrimitive?.int ?: lastPlaintextId
                     if (method in faults.silentMethods) return
                     if (method in faults.parseErrorMethods) {
                         emit(CHANNEL_RX_PLAIN, PARSE_ERROR.toByteArray())
@@ -195,6 +215,10 @@ public class FakeAirSense11(
                     }
                 }
                 Fig.CHANNEL_TX_ENCRYPTED -> {
+                    if (faults.forgeSessionProof) {
+                        forgeAnswer(payload)
+                        return
+                    }
                     val key = sessionKey ?: return
                     val request = parse(decrypt(key, payload) ?: return) ?: return
                     val method = request["method"]?.jsonPrimitive?.content ?: return
@@ -207,6 +231,21 @@ public class FakeAirSense11(
                     }
                 }
             }
+        }
+
+        /** Uses only what a keyless eavesdropper has: the ciphertext and the predictable request. */
+        private fun forgeAnswer(payload: ByteArray) {
+            val id = lastPlaintextId + 1
+            val known = """{"id":$id,"jsonrpc":"2.0","method":"GetVersion"}""".toByteArray()
+            val wanted = """{"id":$id}""".toByteArray()
+            val original = ByteArray(16)
+            original[0] = known.size.toByte()
+            known.copyInto(original, 2, 0, 14)
+            val replacement = ByteArray(16)
+            replacement[0] = wanted.size.toByte()
+            wanted.copyInto(replacement, 2)
+            val iv = ByteArray(16) { (payload[it].toInt() xor original[it].toInt() xor replacement[it].toInt()).toByte() }
+            emit(Fig.CHANNEL_RX_ENCRYPTED, iv + payload.copyOfRange(16, 32))
         }
 
         private fun handlePlain(method: String, params: JsonObject): Any = when (method) {
@@ -454,7 +493,9 @@ public class FakeAirSense11(
                     end = minOf(end, at + budget)
                     faults.disconnectAfterBytes = budget - (end - at)
                 }
-                if (end > at && index++ != dropChunk) toClient.trySend(frame.copyOfRange(at, end))
+                val lost = dropChunk != null && (index == dropChunk || (faults.dropRestOfFrame && index > dropChunk))
+                index++
+                if (end > at && !lost) toClient.trySend(frame.copyOfRange(at, end))
                 at = end
                 if (faults.disconnectAfterBytes == 0) {
                     closed = true

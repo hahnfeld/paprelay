@@ -85,15 +85,23 @@ class FigTest {
     }
 
     @Test
-    fun `a payload that happens to contain a whole valid frame is not split by recovery`() {
-        // The inner frame is complete and CRC-valid, so recovery would deliver it if the
-        // outer frame were pending. It is only reachable when the outer frame is incomplete.
+    fun `a complete frame carrying another frame as its payload is delivered whole`() {
         val inner = Fig.encode(0x0396, "inner".toByteArray())
-        val outer = Fig.encode(0x0396, inner + ByteArray(40))
+        val outer = Fig.encode(0x0397, inner + ByteArray(40))
+        val delivered = FigDeframer().push(outer)
+        assertEquals(listOf(0x0397), delivered.map { it.channel })
+    }
+
+    @Test
+    fun `the documented blind spot - a frame nested in a still-arriving frame is taken for a later one`() {
+        // Recovery cannot tell these apart. It cannot arise by chance in JSON or
+        // ciphertext, and costs a deliberate sender exactly one frame of their own.
+        val inner = Fig.encode(0x0396, "inner".toByteArray())
+        val outer = Fig.encode(0x0397, inner + ByteArray(40))
         val deframer = FigDeframer()
-        val delivered = deframer.push(outer)
-        assertEquals(1, delivered.size)
-        assertEquals(0, deframer.recoverHiddenFrames().size)
+        assertEquals(0, deframer.push(outer.copyOf(outer.size - 10)).size)
+        assertEquals(listOf("inner"), deframer.recoverHiddenFrames().map { String(it.payload) })
+        assertEquals(1, deframer.abandonedFrames)
     }
 
     @Test

@@ -203,7 +203,8 @@ public class As11Client(
 ) : AutoCloseable {
     private class Answer(val message: JsonObject, val arrivedElapsedMs: Long)
 
-    private class Pending(val id: Int, val answer: CompletableDeferred<Answer>)
+    /** [alsoId] is an earlier request for the same thing whose late answer is just as good. */
+    private class Pending(val id: Int, val alsoId: Int?, val answer: CompletableDeferred<Answer>)
 
     private sealed class Inbound {
         class Piece(
@@ -227,7 +228,9 @@ public class As11Client(
     private val failure = AtomicReference<As11Exception?>(null)
     private val failed = CompletableDeferred<As11Exception>()
     private val sessionKey = AtomicReference<ByteArray?>(null)
-    private var chunksSeen = 0L // guarded by the deframer lock
+    /** Every ciphertext block this client has sent on this connection. Guarded by the deframer lock. */
+    private val sentBlocks = HashSet<ByteBuffer>()
+    private var lastRequestId = 0 // guarded by rpcLock
     private val consecutiveUndecodable = AtomicInteger()
     private val totalUndecodable = AtomicInteger()
 
@@ -241,12 +244,7 @@ public class As11Client(
             coroutineScope {
                 // A failure in either coroutine ends both: the reader never runs half-alive.
                 val watchdog = launch { recoverFramesHiddenByLoss() }
-                transport.incoming.collect { bytes ->
-                    handle {
-                        chunksSeen++
-                        deframer.push(bytes)
-                    }
-                }
+                transport.incoming.collect { bytes -> handle { deframer.push(bytes) } }
                 watchdog.cancel()
             }
             fail(As11TransportException("link closed"))
@@ -277,13 +275,16 @@ public class As11Client(
     /**
      * First pairing. The machine displays its code as soon as the exchange
      * starts, so [askPasskey] is invoked straight away and should return what
-     * the user reads off the screen. It is cancelled if the exchange fails.
+     * the user reads off the screen. It is cancelled if the exchange fails, the
+     * link drops or the user takes too long, and it must honour that
+     * cancellation: this call does not return until [askPasskey] has.
      *
      * Never retried automatically: every attempt gives a device impersonating
      * the machine one guess at the code. After pairing, open a new connection
      * before calling [startSession], as the reference client does.
      *
-     * @throws As11AuthException.PasskeyRejected if the machine rejects the code, or it is not a code at all.
+     * @throws As11AuthException.PasskeyRejected if the machine rejects the code.
+     * @throws As11AuthException.PasskeyInvalid if what was typed is not a code; nothing is sent.
      * @throws As11PairingCancelledException if [askPasskey] is cancelled or takes too long.
      * @throws As11AuthException.MachineUnauthenticated if the other end cannot prove it knows the code.
      */
@@ -313,13 +314,13 @@ public class As11Client(
             } ?: throw As11PairingCancelledException("the pairing code was not entered in time")
             if (!Srp6aClient.isValidPasskey(passkey)) {
                 // Not sent: a malformed code would only spend the machine's one attempt.
-                throw As11AuthException.PasskeyRejected(null)
+                throw As11AuthException.PasskeyInvalid()
             }
             val proof = srp.computeProof(serverKey, salt, passkey)
             val confirm = try {
                 exchange(As11Request.ConfirmKeyExchange(proof.clientProof), timeouts.confirmMs).resultObject()
             } catch (e: As11RpcException) {
-                if (e.anonymous) throw e
+                if (e.transient) throw e
                 throw As11AuthException.PasskeyRejected(e)
             }
             val serverProof = Hex.decode(confirm.string("serverConfirmation", MAX_HEX_CHARS), 64)
@@ -352,7 +353,8 @@ public class As11Client(
         val offer = try {
             exchange(As11Request.RequestSession(credentials.clientId), timeouts.sessionMs).resultObject()
         } catch (e: As11RpcException) {
-            if (e.anonymous) throw e
+            // A damaged request or an internal fault says nothing about the pairing.
+            if (e.transient) throw e
             throw As11AuthException.PairingUnknown(e)
         }
         val challenge = Hex.decode(offer.string("challenge", MAX_HEX_CHARS), 64)
@@ -365,7 +367,7 @@ public class As11Client(
                 timeouts.sessionMs,
             ).message
         } catch (e: As11RpcException) {
-            if (e.anonymous) throw e
+            if (e.transient) throw e
             throw As11AuthException.SessionProofRejected(e)
         }
         when (((verdict["result"] as? JsonObject)?.get("confirmation") as? JsonPrimitive)?.booleanOrNull) {
@@ -376,36 +378,40 @@ public class As11Client(
         }
 
         sessionKey.set(SessionCrypto.deriveSessionKey(credentials.pairingKey, nonce))
-        // The conversation may have failed while the key was being derived.
-        failure.get()?.let {
-            clearSessionKey()
-            throw it
-        }
-        delay(timeouts.sessionSettleMs)
+        try {
+            // The conversation may have failed while the key was being derived.
+            failure.get()?.let { throw it }
+            delay(timeouts.sessionSettleMs)
 
-        // Nothing so far required the other end to know the pairing key. A valid
-        // encrypted answer does, so the session counts as open only once one arrives.
-        // The reference client sees the first encrypted request go unanswered at times.
-        var lastFailure: As11Exception? = null
-        for (attempt in 1..SESSION_PROOF_ATTEMPTS) {
-            try {
-                exchange(As11Request.GetVersion, timeouts.rpcMs)
-                sessionProven = true
-                break
-            } catch (e: As11TimeoutException) {
-                lastFailure = e
-            } catch (e: As11RpcException) {
-                // Even a refusal is a valid encrypted answer.
-                sessionProven = true
-                break
+            // Nothing so far required the other end to know the pairing key. A valid
+            // encrypted answer does, so the session counts as open only once one arrives.
+            // The reference client sees the first encrypted request go unanswered at
+            // times, so it is asked twice, and a late answer to the first asking counts.
+            var proven = false
+            var lastFailure: As11Exception? = null
+            var firstId: Int? = null
+            for (attempt in 1..SESSION_PROOF_ATTEMPTS) {
+                try {
+                    val answer = exchange(As11Request.GetVersion, timeouts.rpcMs, alsoAccept = firstId)
+                    if (answer.resultObject().isEmpty()) throw As11ProtocolException("the session proof was empty")
+                    proven = true
+                } catch (e: As11TimeoutException) {
+                    lastFailure = e
+                    if (firstId == null) firstId = lastRequestId
+                } catch (e: As11RpcException) {
+                    // A refusal is still an answer only the holder of the key could encrypt.
+                    proven = true
+                }
+                if (proven) break
             }
+            if (!proven) throw As11AuthException.SessionUnproven(lastFailure)
+            recorded { nonces.remember(nonce) }
+            sessionProven = true
+        } catch (e: Throwable) {
+            // However setup ends short of proof, the key must not stay usable.
+            fail(e as? As11Exception ?: As11TransportException("session setup was interrupted"))
+            throw e
         }
-        if (!sessionProven) {
-            val cause = As11AuthException.SessionUnproven(lastFailure)
-            fail(cause)
-            throw cause
-        }
-        recorded { nonces.remember(nonce) }
     }
 
     /**
@@ -494,7 +500,10 @@ public class As11Client(
             val inbound = (if (wait > 0) withTimeoutOrNull(wait) { inbox.receive() } else null)
                 ?: throw As11SpoolStalledException(pieces.size)
             // Everything received counts, so a stream of irrelevant fragments cannot keep the round alive.
-            if (++seen > MAX_FRAGMENTS) throw As11SpoolIntegrityException("download exceeded its fragment limit")
+            if (++seen > MAX_FRAGMENTS) {
+                // Asking again would get the same: this is a limit, not damage.
+                throw As11SpoolIntegrityException("download exceeded its fragment limit", As11Recovery.DO_NOT_RETRY)
+            }
             when (inbound) {
                 is Inbound.Unreadable -> {
                     if (inbound.spoolId != null && inbound.spoolId != spoolId) {
@@ -511,7 +520,7 @@ public class As11Client(
                     total += inbound.data.size
                     // The machine may overshoot its own limit by a fragment; anything more is abuse.
                     if (total > maxSpoolSize.toLong() + As11Request.MAX_FRAGMENT_SIZE) {
-                        throw As11SpoolIntegrityException("download exceeded its size limit")
+                        throw As11SpoolIntegrityException("download exceeded its size limit", As11Recovery.DO_NOT_RETRY)
                     }
                     if (inbound.data.isNotEmpty()) pieces.add(inbound)
                     if (inbound.status != null && inbound.status != STATUS_INCOMPLETE) terminal = inbound
@@ -522,7 +531,10 @@ public class As11Client(
         val status = terminal.status!!
         if (status.startsWith("ERROR_")) throw As11SpoolUnavailableException(status.take(60))
         if (status != STATUS_DONE && status != STATUS_MORE) {
-            throw As11ProtocolException("download ended with unknown status '${status.take(60)}'")
+            throw As11ProtocolException(
+                "download ended with unknown status '${status.take(60)}'",
+                recovery = As11Recovery.DO_NOT_RETRY,
+            )
         }
 
         // Only fragments that carry data are numbered; a bare status fragment need not be.
@@ -547,10 +559,14 @@ public class As11Client(
         }
         // A hash is checked whenever one is sent, including for a round that arrived
         // empty: if every data fragment was lost, the hash is what gives it away.
-        val hashHex = terminal.hashHex
+        // An empty hash is treated as none, as the reference client does.
+        val hashHex = terminal.hashHex?.takeIf { it.isNotEmpty() }
         if (hashHex == null) {
             if (data.isNotEmpty()) throw As11SpoolUnverifiedException()
-            return SpoolRound(data, null, next)
+            // "More to come" with nothing delivered and nothing to check it against
+            // could be a round whose data was all lost. Following it would skip that data.
+            if (next != null) throw As11SpoolIntegrityException("download delivered nothing but promised more")
+            return SpoolRound(data, null, null)
         }
         val expected = try {
             Hex.decode(hashHex, 32)
@@ -564,30 +580,43 @@ public class As11Client(
         return SpoolRound(data, if (data.isEmpty()) null else actual, next)
     }
 
-    private suspend fun call(request: As11Request.Encrypted, timeoutMs: Long): Answer =
-        rpcLock.withLock { exchange(request, timeoutMs) }
+    private suspend fun call(request: As11Request.Encrypted, timeoutMs: Long): Answer = rpcLock.withLock {
+        // Nothing is asked on a session the machine has not proved.
+        if (!isSecure) throw failure.get() ?: IllegalStateException("no session")
+        exchange(request, timeoutMs)
+    }
 
-    /** Sends [request] and returns the machine's answer. Caller holds [rpcLock]. */
-    private suspend fun exchange(request: As11Request, timeoutMs: Long): Answer {
+    /**
+     * Sends [request] and returns the machine's answer. Caller holds [rpcLock].
+     *
+     * @param alsoAccept the id of an earlier, unanswered request for the same
+     *   thing, whose answer is to be accepted too should it arrive late.
+     */
+    private suspend fun exchange(request: As11Request, timeoutMs: Long, alsoAccept: Int? = null): Answer {
         failure.get()?.let { throw it }
         val id = nextId
         nextId = if (nextId >= MAX_ID) 1000 else nextId + 1
+        lastRequestId = id
         val answer = CompletableDeferred<Answer>()
         val unmatchedBefore = counters.unmatchedResponses.get()
-        pending.set(Pending(id, answer))
+        pending.set(Pending(id, alsoAccept, answer))
         try {
             // A failure recorded between the first check and registration would be missed.
             failure.get()?.let { throw it }
             val json = request.encode(id).toByteArray(Charsets.UTF_8)
             val frame = when (request) {
                 is As11Request.Encrypted -> {
-                    // A private copy, so closing the client cannot blank the key mid-encryption.
-                    val key = sessionKey.get()?.copyOf() ?: throw IllegalStateException("no session")
-                    try {
-                        Fig.encode(Fig.CHANNEL_TX_ENCRYPTED, SessionCrypto.encrypt(key, json, random))
+                    // A private copy taken under the lock the key is blanked under, so a
+                    // failing conversation cannot hand over a half-blanked key.
+                    val key = synchronized(deframer) { sessionKey.get()?.copyOf() }
+                        ?: throw failure.get() ?: IllegalStateException("no session")
+                    val sealed = try {
+                        SessionCrypto.encrypt(key, json, random)
                     } finally {
                         key.fill(0)
                     }
+                    rememberSent(sealed)
+                    Fig.encode(Fig.CHANNEL_TX_ENCRYPTED, sealed)
                 }
                 is As11Request.Plaintext -> {
                     check(sessionKey.get() == null) { "plaintext is not sent once a session exists" }
@@ -651,20 +680,15 @@ public class As11Client(
      * ones. A frame that is only arriving slowly is never dropped by this.
      */
     private suspend fun recoverFramesHiddenByLoss() {
-        var lastSeen = -1L
-        var quietTicks = 0
+        var heldTicks = 0
         while (true) {
             delay(timeouts.resyncIdleMs / 2)
             handle {
-                val seen = chunksSeen
-                quietTicks = if (deframer.hasPartialFrame && seen == lastSeen) quietTicks + 1 else 0
-                lastSeen = seen
-                if (quietTicks >= 2) {
-                    quietTicks = 0
-                    deframer.recoverHiddenFrames()
-                } else {
-                    emptyList()
-                }
+                // Triggered by how long bytes have been held, not by the link being quiet:
+                // other traffic must not keep a dead frame in the way. Looking is always
+                // safe, because only a complete later frame makes anything get dropped.
+                heldTicks = if (deframer.hasPartialFrame) heldTicks + 1 else 0
+                if (heldTicks >= 2) deframer.recoverHiddenFrames() else emptyList()
             }
         }
     }
@@ -680,6 +704,8 @@ public class As11Client(
                 produce().forEach(::onFrame)
             } catch (e: As11Exception) {
                 throw e
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: RuntimeException) {
                 // A bug in message handling must not be reported as a bad link.
                 throw As11DefectException(e)
@@ -694,6 +720,13 @@ public class As11Client(
                 // The machine sends heartbeats here. Nothing on this channel is acted on.
                 counters.plaintextAfterSession.incrementAndGet()
                 return
+            }
+            // The encryption has no authentication, so someone without the key can still
+                // build a frame that decrypts to text of their choosing, by reusing blocks
+                // of what this client sent and adjusting the IV. They have no other block
+                // whose decryption they know. The real machine never sends ours back.
+            if (containsSentBlock(frame.payload)) {
+                throw As11ProtocolException("the other end sent back this app's own encrypted data")
             }
             val parsed = try {
                 val decrypted = SessionCrypto.decrypt(key, frame.payload)
@@ -753,7 +786,8 @@ public class As11Client(
                 val numeric = (id as? JsonPrimitive)?.takeIf { !it.isString }?.intOrNull
                 // The machine reports requests it could not parse with a null id.
                 val anonymousError = id is JsonNull && message["error"] is JsonObject
-                if (waiting != null && (numeric == waiting.id || anonymousError)) {
+                val expected = numeric != null && (numeric == waiting?.id || numeric == waiting?.alsoId)
+                if (waiting != null && (expected || anonymousError)) {
                     waiting.answer.complete(Answer(message, elapsedMs()))
                 } else {
                     counters.unmatchedResponses.incrementAndGet()
@@ -807,6 +841,28 @@ public class As11Client(
         clearSessionKey()
     }
 
+    private fun rememberSent(sealed: ByteArray) {
+        synchronized(deframer) {
+            // Far beyond any real session; reached only if something is very wrong.
+            if (sentBlocks.size > MAX_SENT_BLOCKS) throw As11ProtocolException("too much was sent on one connection")
+            var at = CIPHER_BLOCK // skip the IV
+            while (at + CIPHER_BLOCK <= sealed.size) {
+                sentBlocks += ByteBuffer.wrap(sealed.copyOfRange(at, at + CIPHER_BLOCK))
+                at += CIPHER_BLOCK
+            }
+        }
+    }
+
+    /** Caller holds the deframer lock. */
+    private fun containsSentBlock(payload: ByteArray): Boolean {
+        var at = CIPHER_BLOCK
+        while (at + CIPHER_BLOCK <= payload.size) {
+            if (ByteBuffer.wrap(payload, at, CIPHER_BLOCK).slice() in sentBlocks) return true
+            at += CIPHER_BLOCK
+        }
+        return false
+    }
+
     /** Takes the lock the receive path decrypts under, so the key is never blanked mid-use. */
     private fun clearSessionKey() {
         synchronized(deframer) {
@@ -851,6 +907,8 @@ public class As11Client(
         const val MAX_CONSECUTIVE_UNDECODABLE = 3
         const val MAX_UNDECODABLE_PER_SESSION = 8
         const val SESSION_PROOF_ATTEMPTS = 2
+        const val CIPHER_BLOCK = 16
+        const val MAX_SENT_BLOCKS = 200_000
         val JSON = Json { isLenient = false }
     }
 }
