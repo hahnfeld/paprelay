@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
@@ -41,7 +42,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.everysoft.paprelay.R
-import kotlin.math.sign
 
 /** The state of one leg of the journey from the machine to Health Connect. */
 enum class LinkState {
@@ -76,7 +76,13 @@ enum class LinkState {
  * travel are mirrored; the drawings themselves are not.
  */
 @Composable
-fun FlowDiagram(machineLink: LinkState, healthLink: LinkState, modifier: Modifier = Modifier) {
+fun FlowDiagram(
+    machineLink: LinkState,
+    healthLink: LinkState,
+    modifier: Modifier = Modifier,
+    /** True when something went wrong on the phone itself, such as its storage or Bluetooth being off. */
+    phoneFault: Boolean = false,
+) {
     val scheme = MaterialTheme.colorScheme
     val palette = Palette(ink = scheme.onSurface, line = scheme.outline, bad = scheme.error, onBad = scheme.onError, paper = scheme.surface)
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
@@ -93,15 +99,17 @@ fun FlowDiagram(machineLink: LinkState, healthLink: LinkState, modifier: Modifie
         null
     }
 
-    val description = stringResource(
+    val links = stringResource(
         R.string.flow_description,
         stringResource(describe(machineLink, machine = true)),
         stringResource(describe(healthLink, machine = false)),
     )
+    val description = if (phoneFault) stringResource(R.string.flow_with_phone_fault, links) else links
 
     Column(modifier.fillMaxWidth().clearAndSetSemantics { contentDescription = description }) {
         Spacer(
-            Modifier.fillMaxWidth().height(DIAGRAM_HEIGHT).drawWithCache {
+            // Its own layer, so the moving dashes repaint this strip and not the whole page.
+            Modifier.fillMaxWidth().height(DIAGRAM_HEIGHT).graphicsLayer().drawWithCache {
                 val unit = size.height
                 val spots = Spots(size.width, unit, rtl)
                 val stroke = 2.dp.toPx()
@@ -117,8 +125,10 @@ fun FlowDiagram(machineLink: LinkState, healthLink: LinkState, modifier: Modifie
                     }
                     // Each link runs from the end nearer the machine to the end nearer Health Connect.
                     val d = spots.direction
-                    link(machineLink, spots.machineEdge + d * gap, spots.phoneNearEdge - d * gap, middle, travel, palette)
-                    link(healthLink, spots.phoneFarEdge + d * gap, spots.healthEdge - d * gap, middle, travel, palette)
+                    link(machineLink, spots.machineEdge + d * gap, spots.phoneNearEdge - d * gap, d, middle, travel, palette)
+                    link(healthLink, spots.phoneFarEdge + d * gap, spots.healthEdge - d * gap, d, middle, travel, palette)
+                    // A fault on the phone is marked on the phone, at its upper corner, clear of both links.
+                    if (phoneFault) crossBadge(Offset(spots.phoneFarEdge, unit * 0.16f), palette)
                 }
             },
         )
@@ -133,8 +143,13 @@ fun FlowDiagram(machineLink: LinkState, healthLink: LinkState, modifier: Modifie
         ) { measurables, constraints ->
             val width = constraints.maxWidth
             val spots = Spots(width.toFloat(), DIAGRAM_HEIGHT.toPx(), rtl)
-            val loose = constraints.copy(minWidth = 0, minHeight = 0, maxWidth = width / 3)
-            val (machine, phone, health) = measurables.map { it.measure(loose) }
+            // The short middle caption is measured first; the two ends then share what is left,
+            // so a long name wraps only when the screen really has no room for it.
+            val phone = measurables[1].measure(constraints.copy(minWidth = 0, minHeight = 0, maxWidth = width / 3))
+            val side = ((width - phone.width) / 2 - 8.dp.roundToPx()).coerceAtLeast(0)
+            val ends = constraints.copy(minWidth = 0, minHeight = 0, maxWidth = side)
+            val machine = measurables[0].measure(ends)
+            val health = measurables[2].measure(ends)
             fun centred(placeable: androidx.compose.ui.layout.Placeable, centre: Float): Int =
                 (centre - placeable.width / 2f).toInt().coerceIn(0, (width - placeable.width).coerceAtLeast(0))
             layout(width, maxOf(machine.height, phone.height, health.height)) {
@@ -236,10 +251,10 @@ private fun heartPath(unit: Float): Path {
     val h = unit
     return Path().apply {
         moveTo(w * 0.50f, h * 0.86f)
-        cubicTo(w * -0.03f, h * 0.58f, w * 0.02f, h * 0.18f, w * 0.30f, h * 0.18f)
+        cubicTo(w * -0.13f, h * 0.58f, w * -0.08f, h * 0.18f, w * 0.30f, h * 0.18f)
         cubicTo(w * 0.42f, h * 0.18f, w * 0.50f, h * 0.26f, w * 0.50f, h * 0.34f)
         cubicTo(w * 0.50f, h * 0.26f, w * 0.58f, h * 0.18f, w * 0.70f, h * 0.18f)
-        cubicTo(w * 0.98f, h * 0.18f, w * 1.03f, h * 0.58f, w * 0.50f, h * 0.86f)
+        cubicTo(w * 1.08f, h * 0.18f, w * 1.13f, h * 0.58f, w * 0.50f, h * 0.86f)
         close()
     }
 }
@@ -248,9 +263,17 @@ private fun heartPath(unit: Float): Path {
  * One leg, drawn along the line y = [y] from [from] (the end nearer the
  * machine) to [to]. [to] may be to the left of [from] in right-to-left layouts.
  */
-private fun DrawScope.link(state: LinkState, from: Float, to: Float, y: Float, travel: State<Float>?, palette: Palette) {
-    val heading = sign(to - from)
-    if (heading == 0f || (to - from) * heading < 12.dp.toPx()) return
+private fun DrawScope.link(
+    state: LinkState,
+    from: Float,
+    to: Float,
+    heading: Float,
+    y: Float,
+    travel: State<Float>?,
+    palette: Palette,
+) {
+    // Too narrow to draw a link, or so narrow that the two ends have crossed.
+    if ((to - from) * heading < 12.dp.toPx()) return
     val width = 2.dp.toPx()
     val start = Offset(from, y)
     val end = Offset(to, y)

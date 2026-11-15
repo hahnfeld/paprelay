@@ -147,6 +147,8 @@ class DeviceCheck(
 
     fun reportText(): String = synchronized(report) { report.toString() }
 
+    fun hasReport(): Boolean = synchronized(report) { report.isNotEmpty() }
+
     /**
      * Starts a run; ignored if one is in progress. It outlives the screen that
      * started it and stops on its own after [OVERALL_LIMIT_MS] at most.
@@ -188,17 +190,16 @@ class DeviceCheck(
     }
 
     /**
-     * Deletes the therapy data the check downloaded and forgets the last run's
-     * outcome, so nothing on screen describes a machine that is no longer paired.
-     * Called when the machine is forgotten; does nothing to a run in progress.
+     * Deletes the therapy data the check downloaded and clears the last run's
+     * outcome from the screen, so nothing describes a machine that is no longer
+     * paired. The report is kept: it holds nothing secret, and after a failed
+     * attempt it is the one thing worth saving. Called when the machine is
+     * forgotten; does nothing to a run in progress.
      */
     suspend fun clearData() {
         withContext(Dispatchers.IO) { dataDirectory().deleteRecursively() }
         synchronized(this) {
-            if (job?.isCompleted != false) {
-                _steps.value = template()
-                synchronized(report) { report.setLength(0) }
-            }
+            if (job?.isCompleted != false) _steps.value = template()
         }
     }
 
@@ -408,6 +409,7 @@ class DeviceCheck(
                 }
                 var totalBytes = 0L
                 var succeeded = 0
+                var machineFault = false
                 for (spool in SpoolName.entries) {
                     try {
                         progress(DOWNLOAD, Message(R.string.detail_downloading, friendly(spool), totalBytes / 1024))
@@ -434,6 +436,7 @@ class DeviceCheck(
                     } catch (e: Exception) {
                         // One log failing must not hide whether the others work.
                         note("  ${spool.wireName}: FAILED ${code(e)}")
+                        if (!isPhoneSide(e)) machineFault = true
                         if (session.terminated.isCompleted) {
                             note("  the connection ended; later logs were not attempted")
                             break
@@ -441,7 +444,8 @@ class DeviceCheck(
                     }
                 }
                 val logs = SpoolName.entries.size
-                if (succeeded < logs) throw CheckFailure(Message(R.string.detail_download_partial, succeeded, logs))
+                // If every failure was this phone failing to store what it received, the machine is not to blame.
+                if (succeeded < logs) throw CheckFailure(Message(R.string.detail_download_partial, succeeded, logs), onPhone = !machineFault)
                 Message(R.string.detail_download_ok, totalBytes / 1024)
             }
             note("counters ${session.counters.snapshot()} discarded=${session.discardedBytes} crcFailures=${session.payloadCrcFailures} abandonedFrames=${session.abandonedFrames}")
@@ -615,10 +619,21 @@ class DeviceCheck(
                 is As11DefectException -> Message(R.string.error_internal)
             }
             is HealthConnectUnresponsiveException -> Message(R.string.error_hc_unresponsive)
-            is IOException -> Message(R.string.error_storage)
-            is SecurityException -> Message(R.string.error_permission)
-            else -> Message(R.string.error_internal)
+            else -> healthConnectError(e)?.let { Message(R.string.error_hc_reported, it.errorCode) } ?: when (e) {
+                is IOException -> Message(R.string.error_storage)
+                is SecurityException -> Message(R.string.error_permission)
+                else -> Message(R.string.error_internal)
+            }
         }
+
+        /** Health Connect reports its own faults wrapped inside ordinary exceptions; this digs one out. */
+        fun healthConnectError(e: Throwable): android.health.connect.HealthConnectException? =
+            generateSequence(e) { it.cause?.takeIf { cause -> cause !== it } }
+                .take(MAX_CAUSE_DEPTH)
+                .filterIsInstance<android.health.connect.HealthConnectException>()
+                .firstOrNull()
+
+        const val MAX_CAUSE_DEPTH = 8
 
         /** A stable label for the report; survives release builds. */
         fun code(e: Throwable): String = when (e) {
@@ -649,7 +664,7 @@ class DeviceCheck(
                 "$kind [${e.recovery}] ${printable(e.message.orEmpty())}" + (e.cause?.let { " <- ${code(it)}" } ?: "")
             }
             is HealthConnectUnresponsiveException -> "health-connect.unresponsive"
-            else -> {
+            else -> healthConnectError(e)?.let { "health-connect code ${it.errorCode} ${printable(it.message.orEmpty(), limit = 200)}" } ?: run {
                 // Platform class names are never shortened by the release build, so they are
                 // safe to print. Others would be meaningless; the frames below can be mapped back.
                 val name = e.javaClass.name

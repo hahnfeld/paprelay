@@ -11,6 +11,8 @@ import androidx.health.connect.client.records.metadata.Metadata
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.time.Instant
@@ -27,6 +29,8 @@ class HealthConnectUnresponsiveException : java.io.IOException("Health Connect d
  * clearly labelled test value and removes it again.
  */
 class HealthConnectProbe(private val context: Context) {
+    private val exclusive = Mutex()
+
     val available: Boolean
         get() = HealthConnectClient.getSdkStatus(context) == HealthConnectClient.SDK_AVAILABLE
 
@@ -45,6 +49,11 @@ class HealthConnectProbe(private val context: Context) {
      * check. Throws if the write is refused or nothing answers in time.
      */
     suspend fun writeAndRemove(): ProbeResult = withContext(NonCancellable) {
+        // One at a time: the clean-up at app start must not remove a value a check has just written.
+        exclusive.withLock { writeAndRemoveLocked() }
+    }
+
+    private suspend fun writeAndRemoveLocked(): ProbeResult {
         val client = HealthConnectClient.getOrCreate(context)
         val now = Instant.now()
         val record = RespiratoryRateRecord(
@@ -101,7 +110,7 @@ class HealthConnectProbe(private val context: Context) {
             throw refusal ?: HealthConnectUnresponsiveException()
         }
         refusal?.let { throw it }
-        ProbeResult(written, removed)
+        return ProbeResult(written, removed)
     }
 
     /**
@@ -111,12 +120,14 @@ class HealthConnectProbe(private val context: Context) {
     suspend fun removeLeftover() {
         try {
             if (!available || !hasPermission()) return
-            withTimeoutOrNull(RETRY_LIMIT_MS) {
+            exclusive.withLock {
+                withTimeoutOrNull(RETRY_LIMIT_MS) {
                 HealthConnectClient.getOrCreate(context).deleteRecords(
                     RespiratoryRateRecord::class,
                     recordIdsList = emptyList(),
                     clientRecordIdsList = listOf(PROBE_ID),
                 )
+                }
             }
         } catch (e: CancellationException) {
             throw e

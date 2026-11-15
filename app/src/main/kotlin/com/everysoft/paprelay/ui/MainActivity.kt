@@ -63,6 +63,7 @@ private fun Root(app: PapRelayApp) {
     var confirmForget by rememberSaveable { mutableStateOf(false) }
     var pendingFull by rememberSaveable { mutableStateOf(true) }
     var permissionRefused by rememberSaveable { mutableStateOf(false) }
+    var forgetting by remember { mutableStateOf(false) }
     // Whether Health Connect already lets PAPRelay write, so the picture can show that leg as ready.
     var healthAllowed by remember { mutableStateOf(false) }
     val lifecycleScope = rememberCoroutineScope()
@@ -163,7 +164,8 @@ private fun Root(app: PapRelayApp) {
             pairing = pairing,
             steps = steps,
             running = running,
-            hasReport = check.reportText().isNotEmpty(),
+            hasReport = check.hasReport(),
+            busy = forgetting,
             healthAllowed = healthAllowed,
             permissionRefused = permissionRefused,
             onOpenSettings = {
@@ -203,9 +205,14 @@ private fun Root(app: PapRelayApp) {
             confirm = R.string.action_forget,
             onConfirm = {
                 confirmForget = false
+                forgetting = true
                 app.scope.launch {
-                    app.pairingStore.clear()
-                    check.clearData()
+                    try {
+                        app.pairingStore.clear()
+                        check.clearData()
+                    } finally {
+                        forgetting = false
+                    }
                 }
             },
             onCancel = { confirmForget = false },

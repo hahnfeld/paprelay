@@ -180,6 +180,7 @@ fun HomeScreen(
     steps: List<Step>,
     running: Boolean,
     hasReport: Boolean,
+    busy: Boolean,
     healthAllowed: Boolean,
     permissionRefused: Boolean,
     onOpenSettings: () -> Unit,
@@ -198,6 +199,8 @@ fun HomeScreen(
         FlowDiagram(
             machineLink = machineLink(steps, pairing, running),
             healthLink = healthLink(steps, healthAllowed),
+            // A failure that lies with the phone is marked on the phone, not on either link.
+            phoneFault = steps.any { it.state == StepState.FAILED && it.onPhone && it.id != CheckSteps.HEALTH },
         )
         Spacer(Modifier.height(28.dp))
         when (pairing) {
@@ -229,9 +232,10 @@ fun HomeScreen(
             if (running) {
                 OutlinedButton(onClick = onStop) { Text(stringResource(R.string.action_stop)) }
             } else {
-                Button(onClick = onRunFull, enabled = pairing != PairingState.Loading) { Text(stringResource(R.string.action_run_check)) }
+                // Held back while a pairing is being forgotten, so a check cannot start on it.
+                Button(onClick = onRunFull, enabled = !busy && pairing != PairingState.Loading) { Text(stringResource(R.string.action_run_check)) }
                 if (pairing is PairingState.Paired) {
-                    OutlinedButton(onClick = onRunReconnect) { Text(stringResource(R.string.action_reconnect_check)) }
+                    OutlinedButton(onClick = onRunReconnect, enabled = !busy) { Text(stringResource(R.string.action_reconnect_check)) }
                 }
             }
         }
@@ -276,7 +280,7 @@ fun HomeScreen(
                     }
                 }
                 if (canForget) {
-                    TextButton(onClick = onForget, enabled = !running, modifier = Modifier.offset(x = if (canExport) 12.dp else (-12).dp)) {
+                    TextButton(onClick = onForget, enabled = !running && !busy, modifier = Modifier.offset(x = if (canExport) 12.dp else (-12).dp)) {
                         Text(stringResource(R.string.action_forget), color = MaterialTheme.colorScheme.error)
                     }
                 }

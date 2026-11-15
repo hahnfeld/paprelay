@@ -22,6 +22,8 @@
     <string name="flow_label_health">Health Connect</string>
     <!-- Spoken description of the picture: first the machine link, then the Health Connect link. -->
     <string name="flow_description">%1$s. %2$s.</string>
+    <!-- %1$s is the sentence above. Added when the fault is in the phone itself. -->
+    <string name="flow_with_phone_fault">%1$s This phone has a problem.</string>
     <string name="flow_machine_none">The machine is not paired</string>
     <string name="flow_machine_ready">The machine is paired</string>
     <string name="flow_machine_active">The phone is talking to the machine</string>
@@ -35,14 +37,14 @@
 
     <!-- Pairing status under the picture -->
     <string name="machine_unpaired">Not paired</string>
-    <string name="machine_unpaired_hint">On the machine, choose More, then myAir App, then Connect. First remove the machine from the myAir app on this phone.</string>
+    <string name="machine_unpaired_hint">First, remove the machine from the myAir app on this phone. Then, on the machine, choose More, then myAir App, then Connect.</string>
     <string name="machine_paired">AirSense 11 · serial ending %1$s</string>
     <string name="machine_paired_unknown">AirSense 11</string>
     <string name="machine_unreadable">Pair the machine again</string>
     <string name="machine_unreadable_hint">This phone can no longer read its saved pairing. Put the machine in pairing mode and run the device check.</string>
     <string name="machine_unavailable">The saved pairing could not be read</string>
     <string name="machine_unavailable_hint">Run the device check again. If this message stays, choose Forget machine and pair again.</string>
-    <string name="machine_loading">Checking…</string>
+    <string name="machine_loading">Loading…</string>
 
     <string name="permission_needed">PAPRelay needs the Nearby devices permission to reach the machine. If Android does not ask for it, allow it in the app settings.</string>
 
@@ -77,7 +79,7 @@
     <!-- Step details -->
     <string name="detail_hc_ok">A test value was written and removed.</string>
     <string name="detail_hc_unavailable">Health Connect is not available on this phone.</string>
-    <string name="detail_hc_no_permission">PAPRelay is not allowed to write to Health Connect.</string>
+    <string name="detail_hc_no_permission">PAPRelay is not allowed to write to Health Connect. Run the check again and allow it.</string>
     <string name="detail_hc_value_left">A test value was written but could not be removed. Delete it in Health Connect, under PAPRelay.</string>
     <string name="detail_hc_not_written">Health Connect did not store the test value.</string>
     <string name="detail_bluetooth_off">Bluetooth is off.</string>
@@ -86,6 +88,7 @@
     <string name="detail_many_found">More than one machine was found. The check uses the machine you chose.</string>
     <string name="detail_paired_found">The paired machine was found (%1$s).</string>
     <string name="detail_paired_not_seen">The paired machine was not seen.</string>
+    <!-- The next three are placed inside the sentences above, in brackets. -->
     <string name="signal_strong">strong signal</string>
     <string name="signal_good">good signal</string>
     <string name="signal_weak">weak signal</string>
@@ -111,13 +114,14 @@
     <string name="detail_clock_ahead">The machine clock is %1$.1f seconds ahead of this phone.</string>
     <!-- %1$s is one of the log names below; %2$d is kilobytes so far. -->
     <string name="detail_downloading">Downloading %1$s… %2$d kB</string>
+    <!-- The next four are placed inside the "Downloading" sentence above. -->
     <string name="log_usage_events">usage events</string>
     <string name="log_summaries">daily summaries</string>
     <string name="log_breathing_events">breathing events</string>
     <string name="log_per_minute">minute-by-minute data</string>
-    <string name="detail_download_ok">All saved data was downloaded and verified (%1$d kB).</string>
+    <string name="detail_download_ok">The saved data was downloaded and verified (%1$d kB).</string>
     <!-- %1$d is how many of the %2$d parts worked. -->
-    <string name="detail_download_partial">Downloaded and verified: %1$d / %2$d. The report has the reason.</string>
+    <string name="detail_download_partial">The check downloaded and verified %1$d / %2$d. The report has the reason.</string>
     <string name="detail_took_too_long">The check took too long and was stopped.</string>
     <string name="detail_stopped">The check was stopped.</string>
 
@@ -139,7 +143,8 @@
     <string name="error_data_unavailable">The machine says this data is not available.</string>
     <string name="error_unexpected_answer">The machine gave an unexpected answer.</string>
     <string name="error_storage">This phone could not save or read data.</string>
-    <string name="error_permission">A permission is missing.</string>
+    <string name="error_permission">A permission is missing. Allow it in the app settings.</string>
+    <string name="error_hc_reported">Health Connect reported an error (code %1$d).</string>
     <string name="error_hc_unresponsive">Health Connect did not answer. Run the check again.</string>
     <string name="error_internal">PAPRelay had an internal error. Please save the report.</string>
 
@@ -176,7 +181,7 @@
     <string name="privacy_heading_what">What PAPRelay does with your data</string>
     <string name="privacy_what">PAPRelay reads therapy records from your machine over Bluetooth and stores them on this phone. It writes respiratory rate to Health Connect, and other types only if you turn them on.</string>
     <string name="privacy_heading_where">Where your data goes</string>
-    <string name="privacy_where">Nowhere else. PAPRelay has no internet permission, no accounts, no analytics and no advertising. Data leaves the app only through Health Connect and through files you choose to save.</string>
+    <string name="privacy_where">Your data goes nowhere else. PAPRelay has no internet permission, no accounts, no analytics and no advertising. Data leaves the app only through Health Connect and through files you choose to save.</string>
     <string name="privacy_heading_read">What PAPRelay reads from Health Connect</string>
     <string name="privacy_read">Nothing from other apps. It asks only for permission to write, and reads back only its own records to keep them correct.</string>
     <string name="privacy_heading_delete">Removing your data</string>
