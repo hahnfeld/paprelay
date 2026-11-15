@@ -28,6 +28,7 @@ import com.everysoft.paprelay.ble.GattLink
 import com.everysoft.paprelay.ble.MachineScanner
 import com.everysoft.paprelay.ble.Sighting
 import com.everysoft.paprelay.hc.HealthConnectProbe
+import com.everysoft.paprelay.hc.HealthConnectUnresponsiveException
 import com.everysoft.paprelay.pairing.FileNonceRegistry
 import com.everysoft.paprelay.pairing.Pairing
 import com.everysoft.paprelay.pairing.PairingState
@@ -53,6 +54,17 @@ import java.util.Locale
 enum class StepState { PENDING, RUNNING, PASSED, FAILED, SKIPPED, NOTED, CANCELLED }
 
 data class Step(val id: String, val title: String, val state: StepState = StepState.PENDING, val detail: String = "")
+
+/** Identifiers of the steps, for anything that needs to tell them apart. */
+object CheckSteps {
+    const val HEALTH = "health"
+    const val SCAN = "scan"
+    const val PAIR = "pair"
+    const val SESSION = "session"
+    const val IDENTITY = "identity"
+    const val CLOCK = "clock"
+    const val DOWNLOAD = "download"
+}
 
 /** More than one machine is in range and the user has to say which is theirs. */
 class MachineChoice(val options: List<String>, val answer: CompletableDeferred<Int>)
@@ -157,7 +169,18 @@ class DeviceCheck(
         }
 
         var state = store.current()
+        if (state is PairingState.Unavailable) {
+            // Checked before anything is asked of the user: pairing now could replace a
+            // pairing that is still good, and a choice of machine would be thrown away.
+            skip(SCAN, "Pairing state unknown")
+            fail(PAIR, "Storage on this phone could not be read just now. Try again in a moment")
+            listOf(SESSION, IDENTITY, CLOCK, DOWNLOAD).forEach { skip(it, "Pairing state unknown") }
+            return
+        }
+
         var target: BluetoothDevice? = null
+        // The paired machine as seen by this run's scan, if it ran: null when not seen.
+        var scannedForPaired = false
         if (full) {
             val alreadyPaired = (state as? PairingState.Paired)?.pairing
             step(SCAN) {
@@ -167,13 +190,25 @@ class DeviceCheck(
                 // Whether the system's own scan filter can see this machine decides how
                 // background discovery has to work. Recorded in the report only.
                 progress(SCAN, "Checking how the system sees it…")
-                val filtered = runCatching { scanner.scan(FILTER_SCAN_MS, platformFilter = true).size }
-                note("  system scan filter: ${filtered.getOrNull()?.let { "saw $it machine(s)" } ?: "could not run"}")
+                val filtered = try {
+                    scanner.scan(FILTER_SCAN_MS, platformFilter = true).size
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    null
+                }
+                note("  system scan filter: ${filtered?.let { "saw $it machine(s)" } ?: "could not run"}")
 
                 if (alreadyPaired != null) {
                     // Nothing to choose: the question is only whether the paired machine is there.
+                    scannedForPaired = true
                     val mine = found.firstOrNull { it.device.address.equals(alreadyPaired.address, ignoreCase = true) }
-                        ?: throw Observation("The paired machine was not seen advertising")
+                    if (mine == null) {
+                        // Tells "out of range" apart from "its address changed".
+                        note("  paired machine not seen; ${found.size} other AirSense-like device(s) in range")
+                        throw Observation("The paired machine was not seen advertising")
+                    }
+                    target = mine.device
                     "Paired machine found (${signal(mine.rssi)})"
                 } else {
                     target = when (found.size) {
@@ -186,13 +221,6 @@ class DeviceCheck(
             }
         } else {
             skip(SCAN, "Not part of a reconnect check")
-        }
-
-        if (state is PairingState.Unavailable) {
-            // Pairing now could replace a pairing that is still good.
-            fail(PAIR, "Storage on this phone could not be read just now. Try again in a moment")
-            listOf(SESSION, IDENTITY, CLOCK, DOWNLOAD).forEach { skip(it, "Pairing state unknown") }
-            return
         }
 
         if (full && state !is PairingState.Paired) {
@@ -242,16 +270,21 @@ class DeviceCheck(
         var client: As11Client? = null
         try {
             step(SESSION) {
-                // Prefer a device seen advertising: it carries the right address type.
-                val sighting = scanner.scan(SCAN_MS, platformFilter = false, stopAtAddress = paired.address)
-                    .firstOrNull { it.device.address.equals(paired.address, ignoreCase = true) }
-                note("  paired machine ${if (sighting != null) "seen advertising, ${signal(sighting.rssi)}" else "not seen advertising; trying a direct connection"}")
-                val device = sighting?.device ?: scanner.deviceByAddress(paired.address) ?: throw CheckFailure("Bluetooth is off")
+                // Prefer a device seen advertising: it carries the right address type. A full
+                // check has just scanned, so that answer is used rather than asking again.
+                val seen: BluetoothDevice? = when {
+                    target != null -> target
+                    scannedForPaired -> null
+                    else -> scanner.scan(SCAN_MS, platformFilter = false, stopAtAddress = paired.address)
+                        .firstOrNull { it.device.address.equals(paired.address, ignoreCase = true) }?.device
+                }
+                note("  paired machine ${if (seen != null) "seen advertising" else "not seen advertising; trying a direct connection"}")
+                val device = seen ?: scanner.deviceByAddress(paired.address) ?: throw CheckFailure("Bluetooth is off")
                 val opened = try {
                     // A machine that is not advertising cannot be connected to, so do not wait long for it.
-                    GattLink.open(context, device, if (sighting != null) CONNECT_MS else UNSEEN_CONNECT_MS)
+                    GattLink.open(context, device, if (seen != null) CONNECT_MS else UNSEEN_CONNECT_MS)
                 } catch (e: As11TransportException) {
-                    if (sighting != null) throw e
+                    if (seen != null) throw e
                     note("  ${code(e)}")
                     throw CheckFailure("The machine is not in range, or is not advertising")
                 }
@@ -433,13 +466,13 @@ class DeviceCheck(
     private fun dataDirectory() = File(context.filesDir, "check")
 
     private companion object {
-        const val HEALTH = "health"
-        const val SCAN = "scan"
-        const val PAIR = "pair"
-        const val SESSION = "session"
-        const val IDENTITY = "identity"
-        const val CLOCK = "clock"
-        const val DOWNLOAD = "download"
+        const val HEALTH = CheckSteps.HEALTH
+        const val SCAN = CheckSteps.SCAN
+        const val PAIR = CheckSteps.PAIR
+        const val SESSION = CheckSteps.SESSION
+        const val IDENTITY = CheckSteps.IDENTITY
+        const val CLOCK = CheckSteps.CLOCK
+        const val DOWNLOAD = CheckSteps.DOWNLOAD
 
         const val SCAN_MS = 8_000L
         const val FILTER_SCAN_MS = 5_000L
@@ -508,6 +541,7 @@ class DeviceCheck(
                 is As11NonceStoreException -> "Storage problem on this phone"
                 is As11DefectException -> "Internal error. Please export the report"
             }
+            is HealthConnectUnresponsiveException -> "Health Connect did not answer. Try again in a moment"
             is IOException -> "Storage problem on this phone"
             is SecurityException -> "A permission is missing"
             else -> "Unexpected error. Please export the report"
@@ -546,7 +580,11 @@ class DeviceCheck(
                 val name = e.javaClass.name
                 val type = if (PLATFORM_PREFIXES.any(name::startsWith)) name else "app"
                 val frames = e.stackTrace.take(3).joinToString(" < ") { "${it.className}.${it.methodName}:${it.lineNumber}" }
-                "unexpected $type: ${printable(e.message.orEmpty(), limit = 200)} at $frames" + (e.cause?.takeIf { it !== e }?.let { " <- ${code(it)}" } ?: "")
+                // Only storage and permission errors have their message printed. Others, such
+                // as a number or date that failed to parse, quote what they were given, and
+                // that can be text from the machine.
+                val message = if (e is IOException || e is SecurityException) ": ${printable(e.message.orEmpty(), limit = 200)}" else ""
+                "unexpected $type$message at $frames" + (e.cause?.takeIf { it !== e }?.let { " <- ${code(it)}" } ?: "")
             }
         }
 

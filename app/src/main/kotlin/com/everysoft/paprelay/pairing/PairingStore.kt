@@ -120,6 +120,8 @@ class PairingStore(context: Context) {
             try {
                 stream.write(ByteArray(PROBE_BYTES))
                 probe.finishWrite(stream)
+                // finishWrite only logs a failed sync or rename.
+                if (probe.baseFile.length() != PROBE_BYTES.toLong()) throw IOException("storage did not keep a test file")
             } catch (e: IOException) {
                 probe.failWrite(stream)
                 throw e
@@ -158,6 +160,15 @@ class PairingStore(context: Context) {
                 } catch (e: IOException) {
                     file.failWrite(stream)
                     throw e
+                }
+                // finishWrite only logs a failed sync or rename, so the result is checked here.
+                val stored = try {
+                    file.readFully()
+                } catch (e: IOException) {
+                    throw IOException("the pairing was not stored", e)
+                }
+                if (stored.size != 1 + IV_BYTES + sealed.size || !stored.copyOfRange(1 + IV_BYTES, stored.size).contentEquals(sealed)) {
+                    throw IOException("the pairing was not stored intact")
                 }
             } catch (e: java.security.GeneralSecurityException) {
                 throw IOException("the pairing could not be encrypted", e)
@@ -212,8 +223,24 @@ class PairingStore(context: Context) {
         }
     }
 
-    private fun isPermanentKeyLoss(e: Throwable): Boolean =
-        e is KeyPermanentlyInvalidatedException || e is UnrecoverableKeyException || e is AEADBadTagException
+    /**
+     * Whether [e] means the key, or what it protects, is gone for good.
+     *
+     * Android reports almost every keystore fault while fetching a key as
+     * UnrecoverableKeyException, including ones that pass. It counts as permanent
+     * only when it carries no cause (the key was invalidated) or the keystore
+     * itself says the key is corrupted.
+     */
+    private fun isPermanentKeyLoss(e: Throwable): Boolean = when (e) {
+        is KeyPermanentlyInvalidatedException, is AEADBadTagException -> true
+        is UnrecoverableKeyException -> {
+            val cause = e.cause
+            cause == null ||
+                (cause is android.security.KeyStoreException &&
+                    cause.numericErrorCode == android.security.KeyStoreException.ERROR_KEY_CORRUPTED)
+        }
+        else -> false
+    }
 
     private fun encode(pairing: Pairing): ByteArray {
         val buffer = WipingBuffer()

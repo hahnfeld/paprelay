@@ -19,6 +19,9 @@ import java.time.ZoneId
 /** Outcome of the Health Connect write test. */
 class ProbeResult(val written: Int, val removed: Boolean)
 
+/** Health Connect did not answer within the time allowed. */
+class HealthConnectUnresponsiveException : java.io.IOException("Health Connect did not answer in time")
+
 /**
  * Proves that this build is allowed to write to Health Connect: writes one
  * clearly labelled test value and removes it again.
@@ -82,7 +85,20 @@ class HealthConnectProbe(private val context: Context) {
                 }
             }
         }
-        if (finished == null) throw java.io.IOException("Health Connect did not answer in time")
+        if (finished == null) {
+            // The write may still land after being given up on, so try once more to remove it.
+            // If this fails too, the next successful check removes it: the record id is fixed.
+            withTimeoutOrNull(RETRY_LIMIT_MS) {
+                runCatching {
+                    client.deleteRecords(
+                        RespiratoryRateRecord::class,
+                        recordIdsList = emptyList(),
+                        clientRecordIdsList = listOf(PROBE_ID),
+                    )
+                }
+            }
+            throw HealthConnectUnresponsiveException()
+        }
         refusal?.let { throw it }
         ProbeResult(written, removed)
     }
@@ -91,5 +107,6 @@ class HealthConnectProbe(private val context: Context) {
         const val PROBE_ID = "paprelay/probe/write-test"
         const val LIMIT_MS = 15_000L
         const val RETRY_PAUSE_MS = 500L
+        const val RETRY_LIMIT_MS = 5_000L
     }
 }

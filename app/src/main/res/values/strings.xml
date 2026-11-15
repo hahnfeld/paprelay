@@ -13,7 +13,19 @@
     <string name="action_stop">Stop</string>
     <string name="action_use_this">Use this machine</string>
 
-    <string name="machine_heading">Machine</string>
+    
+    <string name="flow_label_machine">Machine</string>
+    <string name="flow_label_phone">Phone</string>
+    <string name="flow_label_health">Health Connect</string>
+    <string name="flow_machine_none">Machine not connected</string>
+    <string name="flow_machine_ready">Machine paired</string>
+    <string name="flow_machine_active">Reading from the machine</string>
+    <string name="flow_machine_ok">Machine data received</string>
+    <string name="flow_machine_failed">Could not read from the machine</string>
+    <string name="flow_health_none">Health Connect not checked yet</string>
+    <string name="flow_health_active">Checking Health Connect</string>
+    <string name="flow_health_ok">Health Connect ready</string>
+    <string name="flow_health_failed">Health Connect not working</string>
     <string name="machine_unpaired">Not paired</string>
     <string name="machine_paired">AirSense 11 · serial ending %1$s</string>
     <string name="machine_paired_unknown">AirSense 11</string>

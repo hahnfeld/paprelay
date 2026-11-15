@@ -77,6 +77,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import com.everysoft.paprelay.BuildConfig
 import com.everysoft.paprelay.R
+import com.everysoft.paprelay.check.CheckSteps
 import com.everysoft.paprelay.check.Step
 import com.everysoft.paprelay.check.StepState
 import com.everysoft.paprelay.pairing.PairingState
@@ -198,7 +199,9 @@ fun HomeScreen(
         title = stringResource(R.string.app_name),
         action = { TextButton(onClick = onAbout) { Text(stringResource(R.string.action_about)) } },
     ) {
-        SectionLabel(R.string.machine_heading)
+        // The picture comes first: it says what the app does and how far it has got.
+        FlowDiagram(machineLink = machineLink(steps, pairing), healthLink = healthLink(steps))
+        Spacer(Modifier.height(28.dp))
         when (pairing) {
             PairingState.Loading -> Text(stringResource(R.string.machine_loading), style = MaterialTheme.typography.titleMedium)
             PairingState.Absent -> {
@@ -256,8 +259,7 @@ fun HomeScreen(
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
         )
-        Secondary(stringResource(R.string.check_explanation), Modifier.padding(top = 4.dp))
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(8.dp))
         steps.forEachIndexed { index, step ->
             if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             StepRow(step)
@@ -270,7 +272,8 @@ fun HomeScreen(
             TextButton(onClick = onExport, enabled = hasReport && !running, modifier = Modifier.offset(x = (-12).dp)) {
                 Text(stringResource(R.string.action_export))
             }
-            if (pairing is PairingState.Paired || pairing == PairingState.Unreadable) {
+            // Offered whenever something is stored, readable or not, so there is always a way to start over.
+            if (pairing is PairingState.Paired || pairing == PairingState.Unreadable || pairing == PairingState.Unavailable) {
                 TextButton(onClick = onForget, enabled = !running, modifier = Modifier.offset(x = 12.dp)) {
                     Text(stringResource(R.string.action_forget), color = MaterialTheme.colorScheme.error)
                 }
@@ -280,6 +283,26 @@ fun HomeScreen(
         Spacer(Modifier.height(24.dp))
         Secondary(stringResource(R.string.early_build_notice))
     }
+}
+
+/** The machine-to-phone leg, from the steps that travel along it. */
+private fun machineLink(steps: List<Step>, pairing: PairingState): LinkState {
+    val leg = steps.filter { it.id != CheckSteps.HEALTH }
+    return when {
+        leg.any { it.state == StepState.RUNNING } -> LinkState.ACTIVE
+        leg.any { it.state == StepState.FAILED } -> LinkState.FAILED
+        leg.lastOrNull()?.state == StepState.PASSED -> LinkState.OK
+        pairing is PairingState.Paired -> LinkState.READY
+        else -> LinkState.NONE
+    }
+}
+
+/** The phone-to-Health-Connect leg. */
+private fun healthLink(steps: List<Step>): LinkState = when (steps.firstOrNull { it.id == CheckSteps.HEALTH }?.state) {
+    StepState.RUNNING -> LinkState.ACTIVE
+    StepState.PASSED -> LinkState.OK
+    StepState.FAILED -> LinkState.FAILED
+    else -> LinkState.NONE
 }
 
 /** One line that says how the whole check went. */
@@ -387,6 +410,8 @@ fun AboutScreen(onBack: () -> Unit) {
         Paragraph(R.string.about_licence)
         Heading(R.string.about_intended_use_heading)
         Paragraph(R.string.about_intended_use)
+        Heading(R.string.check_heading)
+        Paragraph(R.string.check_explanation)
         Heading(R.string.about_disclaimer_heading)
         Paragraph(R.string.about_disclaimer)
         Spacer(Modifier.height(12.dp))
@@ -431,13 +456,14 @@ private fun Paragraph(@StringRes text: Int) {
 fun PasskeyDialog(onConfirm: (String) -> Unit, onCancel: () -> Unit) {
     var code by rememberSaveable { mutableStateOf("") }
     val focus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { focus.requestFocus() }
     AlertDialog(
         onDismissRequest = {},
         properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
         title = { Text(stringResource(R.string.passkey_title)) },
         text = {
             Column {
+                // Requested from inside the dialog's own content, once the field exists.
+                LaunchedEffect(Unit) { focus.requestFocus() }
                 Text(stringResource(R.string.passkey_body), style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(16.dp))
                 OutlinedTextField(

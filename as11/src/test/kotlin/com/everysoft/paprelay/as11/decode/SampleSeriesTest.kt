@@ -81,9 +81,61 @@ class SampleSeriesTest {
     }
 
     @Test
+    fun `the requested count is honoured at every size`() {
+        val samples = intArrayOf(10, 12, 14, 15, 19, 30)
+        val blob = encode(samples, 4)
+        for (count in 0..samples.size) {
+            assertContentEquals(samples.copyOf(count), SampleSeries.decode(blob, 4, maxSamples = count), "count=$count")
+        }
+        assertContentEquals(samples, SampleSeries.decode(blob, 4, maxSamples = 50))
+        assertFailsWith<IllegalArgumentException> { SampleSeries.decode(blob, 4, maxSamples = -1) }
+        assertFailsWith<IllegalArgumentException> { SampleSeries.decode(blob, 4, maxSamples = SampleSeries.MAX_SAMPLES + 1) }
+    }
+
+    @Test
+    fun `a block too large to be a real series is refused rather than cut short`() {
+        // 40 kB of zero bits at modulus 1 would be 320,000 samples.
+        val huge = ByteArray(4 + 40_000)
+        assertFailsWith<SpoolDecodeException> { SampleSeries.decode(huge, modulus = 1) }
+        // With an explicit count the caller has said how much to take.
+        assertEquals(1_440, SampleSeries.decode(huge, modulus = 1, maxSamples = 1_440).size)
+    }
+
+    @Test
+    fun `zero padding after a steep final slope ends the series instead of failing it`() {
+        // Seeds 31000 and 32000, one real sample 32500 (d=-500), then zero padding. Padding
+        // repeats the slope: 33000, which is out of range, so it must be recognised as padding.
+        val real = intArrayOf(31_000, 32_000, 32_500)
+        val blob = encode(real, 8).let { encoded ->
+            // Replace the encoder's ones-padding with zeros.
+            val bitsUsed = run {
+                val zigzag = 999L // -500 -> 999
+                (zigzag / 8).toInt() + 1 + 3
+            }
+            val out = encoded.copyOf()
+            for (i in bitsUsed until (out.size - 4) * 8) {
+                out[4 + i / 8] = (out[4 + i / 8].toInt() and (0x80 ushr (i % 8)).inv()).toByte()
+            }
+            out
+        }
+        assertContentEquals(real, SampleSeries.decode(blob, 8))
+    }
+
+    @Test
+    fun `decoding many small blocks does not allocate for the worst case each time`() {
+        val blob = encode(intArrayOf(1, 2, 3, 4), 4)
+        val started = System.nanoTime()
+        repeat(20_000) { SampleSeries.decode(blob, 4) }
+        val elapsedMs = (System.nanoTime() - started) / 1_000_000
+        assertTrue(elapsedMs < 2_000, "took $elapsedMs ms")
+    }
+
+    @Test
     fun `raw series are plain little-endian int16`() {
         assertContentEquals(intArrayOf(97, 96, -1), SampleSeries.decodeRaw(byteArrayOf(97, 0, 96, 0, 0xFF.toByte(), 0xFF.toByte())))
-        assertFailsWith<SpoolDecodeException> { SampleSeries.decodeRaw(byteArrayOf(1, 2, 3)) }
+        // A trailing odd byte is ignored, as the reference decoder does.
+        assertContentEquals(intArrayOf(0x0201), SampleSeries.decodeRaw(byteArrayOf(1, 2, 3)))
+        assertContentEquals(intArrayOf(0x0201), SampleSeries.decode(byteArrayOf(1, 2, 3), 4))
     }
 
     @Test

@@ -192,7 +192,8 @@ class GattLink private constructor(
         /** The largest write the reference client has been seen to use (MTU 247). */
         private const val MAX_WRITE_CHUNK = 244
         private const val WRITE_TIMEOUT_MS = 5_000L
-        private const val MTU_TIMEOUT_MS = 5_000L
+        /** Generous: Android queues this behind its own first service discovery. */
+        private const val MTU_TIMEOUT_MS = 12_000L
         private const val DISCOVERY_TIMEOUT_MS = 10_000L
 
         /** Android's catch-all connection failure; often clears on a second attempt. */

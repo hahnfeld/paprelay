@@ -67,6 +67,7 @@ class ProtoReaderTest {
             bytes(0x00, 0x01), // field number zero
             bytes(0x12, 0xFF, 0xFF, 0xFF, 0xFF, 0x0F, 0x41), // huge length
             bytes(0x08) + ByteArray(11) { 0x80.toByte() }, // varint too long
+            bytes(0x80, 0x80, 0x80, 0x80, 0x10, 0x01), // field number 2^29: one past the largest allowed
         )) {
             assertFailsWith<SpoolDecodeException> { ProtoReader.read(bad) }
         }

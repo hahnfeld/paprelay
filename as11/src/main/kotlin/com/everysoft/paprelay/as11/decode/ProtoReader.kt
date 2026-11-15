@@ -33,6 +33,7 @@ public object ProtoReader {
     public const val FIXED64: Int = 1
     public const val BYTES: Int = 2
     public const val FIXED32: Int = 5
+    private const val MAX_FIELD_NUMBER = (1L shl 29) - 1
 
     /** @throws SpoolDecodeException if [data] is not a well-formed message. */
     public fun read(data: ByteArray, maxFields: Int = 1_000_000): List<ProtoField> {
@@ -43,7 +44,8 @@ public object ProtoReader {
             val key = varint(data, at)
             at = key.next
             val number = (key.value ushr 3).toInt()
-            if (number <= 0 || key.value ushr 3 > Int.MAX_VALUE) throw SpoolDecodeException("invalid field number")
+            // Field numbers are 1 to 2^29 - 1 in the wire format.
+            if (key.value ushr 3 !in 1..MAX_FIELD_NUMBER) throw SpoolDecodeException("invalid field number")
             when (val wireType = (key.value and 7).toInt()) {
                 VARINT -> {
                     val v = varint(data, at)

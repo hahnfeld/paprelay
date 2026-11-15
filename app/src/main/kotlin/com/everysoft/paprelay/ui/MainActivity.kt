@@ -5,6 +5,7 @@ package com.everysoft.paprelay.ui
 import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
@@ -26,12 +27,16 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.health.connect.client.PermissionController
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.everysoft.paprelay.PapRelayApp
 import com.everysoft.paprelay.R
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+private val BLUETOOTH_PERMISSIONS = arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -58,6 +63,21 @@ private fun Root(app: PapRelayApp) {
     var permissionRefused by rememberSaveable { mutableStateOf(false) }
     val uiScope = rememberCoroutineScope()
 
+    // The user may grant the permission in system settings and come back.
+    DisposableEffect(Unit) {
+        val lifecycle = (context as? ComponentActivity)?.lifecycle
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME && BLUETOOTH_PERMISSIONS.all {
+                    context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED
+                }
+            ) {
+                permissionRefused = false
+            }
+        }
+        lifecycle?.addObserver(observer)
+        onDispose { lifecycle?.removeObserver(observer) }
+    }
+
     // A run takes a few minutes and needs the user nearby for the code; do not let the screen sleep on it.
     DisposableEffect(running) {
         val window = (context as? Activity)?.window
@@ -72,10 +92,16 @@ private fun Root(app: PapRelayApp) {
     val bluetoothPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { granted ->
-        permissionRefused = !granted.values.all { it }
-        if (!permissionRefused) {
+        val denied = granted.filterValues { !it }.keys
+        // Only when Android will no longer show its own prompt is the user sent to settings.
+        // After a first refusal, tapping the button again simply asks again.
+        permissionRefused = denied.any { (context as? Activity)?.shouldShowRequestPermissionRationale(it) == false }
+        if (denied.isEmpty()) {
             uiScope.launch {
-                if (app.healthConnect.available && !app.healthConnect.hasPermission()) {
+                // If Health Connect cannot even be asked, the check itself reports why.
+                val needsGrant = runCatching { app.healthConnect.available && !app.healthConnect.hasPermission() }
+                    .getOrDefault(false)
+                if (needsGrant) {
                     healthPermission.launch(setOf(app.healthConnect.writePermission))
                 } else {
                     check.start(pendingFull)
@@ -102,7 +128,7 @@ private fun Root(app: PapRelayApp) {
     fun request(full: Boolean) {
         pendingFull = full
         // Returns at once when already granted, then carries on to Health Connect.
-        bluetoothPermission.launch(arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT))
+        bluetoothPermission.launch(BLUETOOTH_PERMISSIONS)
     }
 
     BackHandler(enabled = showAbout) { showAbout = false }
