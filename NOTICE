@@ -1,0 +1,84 @@
+PAPRelay
+Copyright (C) 2026 PAPRelay contributors
+
+This program is free software: you can redistribute it and/or modify it
+under the terms of the GNU General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option)
+any later version. See the LICENSE file for the full text.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+more details.
+
+================================================================================
+ATTRIBUTION
+================================================================================
+
+Based on SomnoTrace, originally created by Ilya Kruchinin
+(https://github.com/ilyakruchinin).
+
+PAPRelay's AirSense 11 protocol module (the `as11` directory) is a Kotlin port
+of parts of SomnoTrace, Copyright (C) 2026 Ilya Kruchinin, which is licensed
+under the GNU General Public License version 3 or later together with the
+additional term reproduced below. docs/PORTING.md lists each ported file, the
+upstream file and revision it derives from, and what was changed.
+
+================================================================================
+ADDITIONAL TERMS UNDER GNU GPL VERSION 3, SECTION 7 (from SomnoTrace)
+================================================================================
+
+The following additional term, quoted verbatim from SomnoTrace's NOTICE file,
+applies to the material derived from SomnoTrace and to covered works that
+contain or are derived from it, including PAPRelay:
+
+  As permitted by Section 7(b) of the GNU General Public License version 3,
+  the following additional term applies to this Program and to all covered
+  works that contain or are derived from it:
+
+    (b) ATTRIBUTION REQUIREMENT.
+
+        Redistributions of this Program or any covered work derived from it,
+        whether in source or object/binary form, and whether modified or
+        unmodified, MUST preserve the following author attribution in a
+        reasonable and customary manner:
+
+            "Based on SomnoTrace, originally created by Ilya Kruchinin
+             (https://github.com/ilyakruchinin)."
+
+        This attribution must appear in at least one of the following,
+        appropriate to the form of redistribution:
+
+          - the project documentation (e.g. README or equivalent);
+          - an "About", credits, or legal-notices screen or menu of any
+            interactive user interface; and/or
+          - the source file headers, which must retain the existing
+            copyright and attribution notices.
+
+        Removal of this attribution, or of the existing copyright notices,
+        is not permitted. This term is an "author attribution" requirement
+        within the meaning of GPLv3 Section 7(b) and does not restrict any
+        right granted by the GNU General Public License.
+
+  In accordance with GPLv3 Section 7, you may not remove this additional
+  term from the material to which it applies. Per Section 7, this attribution
+  requirement is compatible with the GNU GPL and does not constitute a
+  "further restriction" under Section 10.
+
+PAPRelay carries the attribution in this file, in README.md, on its About
+screen, and in the header of every ported source file.
+
+SomnoTrace's optional SomnoStage model is proprietary, is not part of
+SomnoTrace's source, and is not used by or included in PAPRelay.
+
+================================================================================
+TRADEMARKS AND AFFILIATION
+================================================================================
+
+PAPRelay is an independent project. It is not affiliated with, endorsed by, or
+supported by ResMed, Google, or the authors of SomnoTrace. "ResMed",
+"AirSense" and "myAir" are trademarks of ResMed. "Android" and "Health
+Connect" are trademarks of Google LLC. They are used here only to say what
+PAPRelay works with.
+
+See THIRD-PARTY-NOTICES.md for acknowledgements and third-party licences.

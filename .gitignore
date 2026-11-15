@@ -1,0 +1,20 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+.kotlin/
+captures/
+
+# Never commit device captures or signing material. Real captures contain the
+# pairing key, the machine serial and therapy data (see docs/TESTING.md).
+*.btsnoop
+*.cfa
+*.pcap
+*.pcapng
+btsnoop_hci.log*
+bugreport-*.zip
+capture-raw/
+*.jks
+*.keystore
+keystore.properties
