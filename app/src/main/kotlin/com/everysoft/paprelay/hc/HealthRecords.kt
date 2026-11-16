@@ -86,7 +86,7 @@ class HealthRecords(private val context: Context) : NightRecords {
         val source = existing ?: answered { create(manager) }
         sourceId = source.id
         // A made-up night that a device check could not confirm it had removed goes now, before anything real
-        // is written beside it. Usually there is none; if this cannot be done, that is no reason to fail the run.
+        // is written beside it. Usually there is none.
         if (existing != null) tidy { remove(manager, source.id, FhirObservations.idsFor(PROBE_NIGHT, PROBE_TAG)) }
         existing == null
     }
@@ -99,8 +99,7 @@ class HealthRecords(private val context: Context) : NightRecords {
             // It was there when the run began and is gone: the user removed it meanwhile. The next run starts it afresh.
             ?: throw HealthSinkException(notAllowed = false)
         // What the night no longer has is cleared away. Mostly none of it was ever there, and a phone that
-        // minded being asked would otherwise fail every night; so this is done as well as it can be, and the
-        // night's own records, which matter more, are written whatever becomes of it.
+        // minded being asked for that would otherwise fail every night; that one refusal is passed over.
         if (removeIds.isNotEmpty()) tidy { remove(manager, source, removeIds) }
         for (chunk in resources.chunked(CHUNK)) {
             // Health Connect says how many it stored. Fewer than were sent is not a success.
@@ -179,18 +178,19 @@ class HealthRecords(private val context: Context) : NightRecords {
         }
     }
 
-    /** A clearing-away that is worth doing and not worth failing for. A missing permission is still a failure. */
+    /**
+     * A clearing-away of records that are mostly not there. A phone that minds being asked to
+     * remove what it does not have says so as an invalid request; that alone is passed over, so
+     * that it cannot fail every night. Anything else (no answer, an error inside Health Connect,
+     * a missing permission) fails as usual and is tried again at the next run.
+     */
     private suspend fun tidy(block: suspend () -> Unit) {
         try {
             answered(block)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: SecurityException) {
-            throw e
         } catch (e: HealthConnectException) {
-            if (e.errorCode == HealthConnectException.ERROR_SECURITY || e.errorCode == HealthConnectException.ERROR_RATE_LIMIT_EXCEEDED) throw e
-        } catch (e: Exception) {
-            // Left as it was.
+            if (e.errorCode != HealthConnectException.ERROR_INVALID_ARGUMENT) throw e
+        } catch (e: IllegalArgumentException) {
+            // The same refusal, as the system sometimes delivers it.
         }
     }
 
