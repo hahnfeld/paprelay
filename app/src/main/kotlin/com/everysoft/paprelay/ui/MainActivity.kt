@@ -25,6 +25,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -75,8 +76,9 @@ private fun Root(app: PapRelayApp) {
     // What the permissions being asked for are wanted for: a device check, or a synchronisation.
     var pendingSync by rememberSaveable { mutableStateOf(false) }
     var permissionRefused by rememberSaveable { mutableStateOf(false) }
-    // True from asking for a permission until the answer has been dealt with.
-    var askingPermission by rememberSaveable { mutableStateOf(false) }
+    // True from asking for a permission until the answer has been dealt with. Not kept across a
+    // restart of the screen: left set by mistake, it would stop the look on every later opening.
+    var askingPermission by remember { mutableStateOf(false) }
     // Whether Health Connect already lets PAPRelay write, so the picture can show that leg as
     // ready; and whether it was asked and still does not, so the way to its settings can be shown.
     var healthAllowed by rememberSaveable { mutableStateOf(false) }

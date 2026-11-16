@@ -29,6 +29,7 @@ class SyncWorker(context: Context, parameters: WorkerParameters) : CoroutineWork
             }
             // A run by hand begins the background runs.
             if (report != null) sync.keepWatch()
+            sync.followUp(report)
             return Result.success()
         }
         // With no machine there is nothing to do, now or in an hour.
@@ -55,12 +56,12 @@ class SyncWorker(context: Context, parameters: WorkerParameters) : CoroutineWork
     private fun again(sync: SyncRunner, report: SyncReport?, heard: Boolean) {
         when {
             report == null -> Unit
-            // Heard, but not reached, or lost on the way: it may have been at the edge of range. (An
-            // hourly run that finds nothing is simply a phone away from home, and waits for the next.)
-            heard && report.outcome in WORTH_ANOTHER_TRY -> sync.retryLater()
-            // A session was still going on, or had only just ended. Once it has settled it can be written:
-            // soon, and not an hour from now, when the phone may have left the house.
-            report.sessionInProgress -> sync.retryLater(SyncEngine.SETTLE_MS + 60_000)
+            // Reached and then lost: the machine is there, and nothing else will say so again soon.
+            report.outcome == SyncOutcome.CONNECTION_LOST -> sync.retryLater()
+            // Heard, but no answer: it may have been at the edge of range. (An hourly run that gets
+            // no answer is simply a phone away from home, and waits for the next.)
+            heard && report.outcome == SyncOutcome.MACHINE_AWAY -> sync.retryLater()
+            else -> sync.followUp(report)
         }
     }
 
@@ -68,7 +69,5 @@ class SyncWorker(context: Context, parameters: WorkerParameters) : CoroutineWork
         const val TAG_NOW = "now"
         const val TAG_HEARD = "heard"
         const val TAG_RETRY = "retry"
-
-        private val WORTH_ANOTHER_TRY = setOf(SyncOutcome.MACHINE_AWAY, SyncOutcome.CONNECTION_LOST)
     }
 }

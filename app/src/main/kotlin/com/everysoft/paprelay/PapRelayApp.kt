@@ -37,12 +37,13 @@ class PapRelayApp : Application() {
     private val cleaned = AtomicBoolean(false)
 
     /**
-     * A check that was cut short may have left its test value in Health Connect. Looked for once
-     * each time the app is opened in a new process, not every time the system starts it for a
+     * A check that was cut short may have left its test value in Health Connect. Looked for
+     * when the app is opened: once in each new process, and again whenever a check in this one
+     * could not confirm that its value was gone. Not every time the system starts the app for a
      * background run.
      */
     fun cleanUpOnce() {
-        if (cleaned.compareAndSet(false, true)) scope.launch { healthConnect.removeLeftover() }
+        if (cleaned.compareAndSet(false, true) || healthConnect.testValueMayRemain) scope.launch { healthConnect.removeLeftover() }
     }
 
     override fun onCreate() {

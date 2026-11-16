@@ -75,6 +75,9 @@ class SyncRunner(
      */
     private val request = AtomicInteger(IDLE)
 
+    /** Counts the requests made by hand, so that the wait begun for one cannot act on the next. */
+    private val requests = AtomicInteger(0)
+
     /** A run of this object's holds the machine. */
     private val active = AtomicBoolean(false)
 
@@ -97,15 +100,19 @@ class SyncRunner(
      */
     fun syncNow() {
         if (!enabled || active.get() || !request.compareAndSet(IDLE, REQUESTED)) return
+        val mine = requests.incrementAndGet()
         publish()
         val handedOver = runCatching { enqueue(NOW_WORK, SyncWorker.TAG_NOW) }.isSuccess
         scope.launch {
             if (handedOver) delay(START_GRACE_MS)
             // Whoever takes the request has it: the system's run when it begins, or this one. Never both.
-            if (request.compareAndSet(REQUESTED, LOCAL)) {
+            // (And only the request this wait was begun for: a later one has its own.)
+            if (requests.get() == mine && request.compareAndSet(REQUESTED, LOCAL)) {
                 try {
                     runCatching { WorkManager.getInstance(context).cancelUniqueWork(NOW_WORK) }
-                    if (runOnce() != null) keepWatch()
+                    val report = runOnce()
+                    if (report != null) keepWatch()
+                    followUp(report)
                 } finally {
                     request.set(IDLE)
                     publish()
@@ -144,12 +151,22 @@ class SyncRunner(
     }
 
     /**
-     * The machine was heard within minutes of an attempt. If that attempt did not reach it, one
-     * more is worth making once the gap has passed: the phone has probably just come into range.
-     * After any other attempt the hearing is let go, or each run would bring the next.
+     * The machine was heard within minutes of an attempt. If that attempt got no answer at all,
+     * one more is worth making once the gap has passed: the phone has probably just come into
+     * range. After any other attempt the hearing is let go: a connection that ends makes the
+     * machine be heard afresh, and each run would bring the next.
      */
     fun heardTooSoon(waitMs: Long) {
-        if (_status.value.lastReport?.outcome in NOT_REACHED) retryLater(waitMs)
+        if (_status.value.lastReport?.outcome == SyncOutcome.MACHINE_AWAY) retryLater(waitMs)
+    }
+
+    /**
+     * After a run that left a session unwritten because it had only just ended, or might still
+     * be going on: one further run once it has settled. Soon, and not an hour from now, when
+     * the phone may have left the house.
+     */
+    fun followUp(report: SyncReport?) {
+        if (report?.sessionInProgress == true) retryLater(SyncEngine.SETTLE_MS + 60_000)
     }
 
     /** False when a further attempt could change nothing until the user has acted. */
@@ -179,11 +196,11 @@ class SyncRunner(
      */
     fun retryLater(waitMs: Long = HEARD_GAP_MS) {
         if (!enabled) return
-        val request = OneTimeWorkRequestBuilder<SyncWorker>()
+        val work = OneTimeWorkRequestBuilder<SyncWorker>()
             .setInitialDelay(waitMs.coerceIn(1_000, MAX_RETRY_WAIT_MS), TimeUnit.MILLISECONDS)
             .addTag(SyncWorker.TAG_RETRY)
             .build()
-        WorkManager.getInstance(context).enqueueUniqueWork(RETRY_WORK, ExistingWorkPolicy.KEEP, request)
+        WorkManager.getInstance(context).enqueueUniqueWork(RETRY_WORK, ExistingWorkPolicy.KEEP, work)
     }
 
     /**
@@ -223,15 +240,18 @@ class SyncRunner(
         publish()
         // True until it is known that this run cannot get as far as calling the machine.
         var mayConnect = true
+        var report: SyncReport? = null
         try {
             mayConnect = engine.blockedBy() == null
             // The machine does not answer a new connection in the first seconds after the last one ended.
             if (mayConnect) delay(claim.restMs())
-            return engine.sync()?.also { latest = it }
+            report = engine.sync()?.also { latest = it }
+            return report
         } finally {
             // In this order, and at once: the screen must never show a run that holds nothing,
             // nor offer a button while the machine is still taken.
-            claim.release(connected = mayConnect)
+            // (What stood in the way may have gone between the look above and the run itself.)
+            claim.release(connected = mayConnect || report?.outcome !in PRECONDITIONS)
             active.set(false)
             publish()
             withContext(NonCancellable) { refresh() }
@@ -340,12 +360,12 @@ class SyncRunner(
     }
 
     private fun enqueue(name: String, tag: String) {
-        val request = OneTimeWorkRequestBuilder<SyncWorker>()
+        val work = OneTimeWorkRequestBuilder<SyncWorker>()
             // Run promptly and kept alive while it runs; if the system has no room for that, as ordinary work.
             .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .addTag(tag)
             .build()
-        WorkManager.getInstance(context).enqueueUniqueWork(name, ExistingWorkPolicy.KEEP, request)
+        WorkManager.getInstance(context).enqueueUniqueWork(name, ExistingWorkPolicy.KEEP, work)
     }
 
     /** Waits for a run in progress to finish: it holds the state in hand, and would overwrite the change. */
@@ -439,9 +459,6 @@ class SyncRunner(
             SyncOutcome.BLUETOOTH_OFF, SyncOutcome.BLUETOOTH_NOT_ALLOWED, SyncOutcome.HEALTH_CONNECT_NOT_ALLOWED,
             SyncOutcome.HEALTH_CONNECT_UNAVAILABLE, SyncOutcome.NOT_PAIRED, SyncOutcome.PHONE_CLOCK_WRONG,
         )
-
-        /** The machine did not answer, or the link to it was lost. */
-        val NOT_REACHED = setOf(SyncOutcome.MACHINE_AWAY, SyncOutcome.CONNECTION_LOST)
 
         /** Trying again changes nothing until the user has acted. */
         val USER_DECIDES = setOf(
