@@ -37,6 +37,38 @@ The saved report is not kept in this repository.
   `DataModelVersionIdentifier`; version sections `FlowGenerator`,
   `BluetoothModule`, `CellularModule`.
 
+## Accuracy against the SD card
+
+The bytes downloaded in that run were decoded (branch `m2-decoders`) and
+compared with the same machine's SD card for the same period, read directly
+from its EDF files. Neither the capture nor the card's files are kept in this
+repository.
+
+| What | Compared | Result |
+|---|---|---|
+| Daily summaries | 30 days; on the 12 days with therapy, every index, percentile, duration and mask-on/off time: 554 values, 28 sessions | All equal at the stored resolution. Unused days are empty on both sides |
+| Breathing events | 11 events over three sessions | Same kind, same order, same duration; times within 1.5 s (the card stores whole seconds) |
+| Per-minute log, length | Three sessions | One sample per minute of mask-on time on both sides: 123, 202 and 101 |
+| Per-minute leak and pressures | Against the card's 2-second signals, averaged per minute | Within one step of the per-minute resolution |
+| Per-minute respiratory rate | Same | Mean difference 0.13 to 0.28 breaths/min; within 0.5 on 94.6 % of 426 minutes. The machine's per-minute figure is its own average, not a resample of the 2-second signal, so exact equality is not expected |
+
+Facts this established:
+
+- **Two Rice moduli in the published reference are swapped** for this firmware:
+  respiratory rate is 8 and minute ventilation 4. The decoder refused every
+  per-minute record until this was corrected, because the signals of a record
+  disagreed about their length.
+- **The machine pads a compressed block with ones.**
+- **A per-minute sample is stamped at the end of its minute:** the first sample
+  of a session carries mask-on plus 60 s and equals the card's first minute.
+- **A breathing event is stamped at its end,** with its duration alongside. The
+  card's annotations carry the same instant.
+- **Zeros are written explicitly** in a used day's summary; an absent value means
+  no data. The machine truncates indices to tenths.
+- **Summary field 37 (respiratory flow, 5th and 95th percentile) is a plain
+  value in hundredths of L/s,** as the reference says.
+- Not confirmed by either source: per-minute inspiratory time and I:E ratio.
+
 ## Still open
 
 1. Reconnect checks 2–5 in `DEVICE-CHECK.md` (Bluetooth off and on, phone
@@ -45,4 +77,5 @@ The saved report is not kept in this repository.
    exercised, since nothing failed.
 3. Whether a long log arrives as several rounds, and whether a round can be
    empty with more pending: every log fitted in one round.
-4. Decoding the downloaded bytes and comparing them with the SD card in OSCAR.
+4. More nights for the comparison above, including a night with a timezone
+   change and one with an oximeter attached.
