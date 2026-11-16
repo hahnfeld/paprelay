@@ -132,7 +132,11 @@ private fun Root(app: PapRelayApp) {
                 if (!askingPermission) {
                     val status = app.sync.status.value
                     // Allowed in Health Connect's own settings a moment ago: the run that said "not allowed" is out of date at once.
-                    if (!healthMissing && !status.running && status.lastReport?.outcome == SyncOutcome.HEALTH_CONNECT_NOT_ALLOWED) {
+                    // (Not within moments of that run: one that ends "not allowed" with nothing missing would
+                    // otherwise bring another at every return to the screen.)
+                    val report = status.lastReport
+                    val settled = report != null && System.currentTimeMillis() - report.atMs > RECHECK_AFTER_MS
+                    if (!healthMissing && !status.running && settled && report?.outcome == SyncOutcome.HEALTH_CONNECT_NOT_ALLOWED) {
                         app.sync.syncNow()
                     } else {
                         app.sync.onForeground()
@@ -399,6 +403,8 @@ private fun Root(app: PapRelayApp) {
         )
     }
 }
+
+private const val RECHECK_AFTER_MS = 15_000L
 
 private const val PAGE_HOME = "home"
 private const val PAGE_ABOUT = "about"

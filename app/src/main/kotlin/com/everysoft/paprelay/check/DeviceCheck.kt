@@ -285,7 +285,10 @@ class DeviceCheck(
                     throw CheckFailure(Message(if (silent) R.string.error_hc_unresponsive else R.string.error_hc_failed), onPhone = true)
                 }
                 // The reason, when there is one, is Health Connect's word about a made-up night: nothing of the user's.
-                note("  health records: trial night accepted ${probe.accepted}, removed ${probe.removed}" + (probe.reason?.let { " (${printable(it, limit = 300)})" } ?: ""))
+                note(
+                    "  health records: trial night accepted ${probe.accepted}, removed ${probe.removed}, " +
+                        "removing what is not there accepted ${probe.removingAbsentAccepted}" + (probe.reason?.let { " (${printable(it, limit = 300)})" } ?: ""),
+                )
                 if (!probe.accepted) throw CheckFailure(Message(R.string.detail_records_refused), onPhone = true)
                 if (!probe.removed) throw CheckFailure(Message(R.string.detail_hc_value_left), onPhone = true)
             } else {

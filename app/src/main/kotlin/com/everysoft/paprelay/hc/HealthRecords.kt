@@ -37,8 +37,12 @@ import java.time.LocalDate
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-/** What the trial write of the device check found. [reason] is Health Connect's own word when it refused. */
-class RecordsProbe(val accepted: Boolean, val removed: Boolean, val reason: String?)
+/**
+ * What the trial write of the device check found. [reason] is Health Connect's own word when
+ * it refused. [removingAbsentAccepted] says whether asking it to remove what is not there is
+ * taken without complaint, which the clearing of a night's old records relies on; null if not tried.
+ */
+class RecordsProbe(val accepted: Boolean, val removed: Boolean, val reason: String?, val removingAbsentAccepted: Boolean?)
 
 /**
  * The phone's health records: the part of Health Connect, from Android 16, that keeps
@@ -81,8 +85,9 @@ class HealthRecords(private val context: Context) : NightRecords {
         val existing = answered { sources(manager) }.firstOrNull { it.displayName == SOURCE_NAME }
         val source = existing ?: answered { create(manager) }
         sourceId = source.id
-        // A made-up night that a device check could not confirm it had removed goes now, before anything real is written beside it.
-        if (existing != null) answered { remove(manager, source.id, FhirObservations.idsFor(PROBE_NIGHT, PROBE_TAG)) }
+        // A made-up night that a device check could not confirm it had removed goes now, before anything real
+        // is written beside it. Usually there is none; if this cannot be done, that is no reason to fail the run.
+        if (existing != null) tidy { remove(manager, source.id, FhirObservations.idsFor(PROBE_NIGHT, PROBE_TAG)) }
         existing == null
     }
 
@@ -93,7 +98,10 @@ class HealthRecords(private val context: Context) : NightRecords {
         val source = sourceId ?: answered { sources(manager) }.firstOrNull { it.displayName == SOURCE_NAME }?.id?.also { sourceId = it }
             // It was there when the run began and is gone: the user removed it meanwhile. The next run starts it afresh.
             ?: throw HealthSinkException(notAllowed = false)
-        if (removeIds.isNotEmpty()) answered { remove(manager, source, removeIds) }
+        // What the night no longer has is cleared away. Mostly none of it was ever there, and a phone that
+        // minded being asked would otherwise fail every night; so this is done as well as it can be, and the
+        // night's own records, which matter more, are written whatever becomes of it.
+        if (removeIds.isNotEmpty()) tidy { remove(manager, source, removeIds) }
         for (chunk in resources.chunked(CHUNK)) {
             // Health Connect says how many it stored. Fewer than were sent is not a success.
             if (answered { upsert(manager, source, chunk) } != chunk.size) throw HealthSinkException(notAllowed = false)
@@ -140,7 +148,20 @@ class HealthRecords(private val context: Context) : NightRecords {
                 false
             }
         }
-        RecordsProbe(accepted, removed, reason)
+        // The night is gone now. Removing it once more asks for something that is not there.
+        val again = if (!removed) {
+            null
+        } else {
+            try {
+                answered { remove(manager, source, FhirObservations.idsFor(PROBE_NIGHT, PROBE_TAG)) }
+                true
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                false
+            }
+        }
+        RecordsProbe(accepted, removed, reason, again)
     }
 
     /** Removes the made-up night a check that was cut short may have left behind. Does nothing if there is none. */
@@ -155,6 +176,21 @@ class HealthRecords(private val context: Context) : NightRecords {
             throw e
         } catch (e: Exception) {
             // Nothing to do: the next check removes it.
+        }
+    }
+
+    /** A clearing-away that is worth doing and not worth failing for. A missing permission is still a failure. */
+    private suspend fun tidy(block: suspend () -> Unit) {
+        try {
+            answered(block)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: SecurityException) {
+            throw e
+        } catch (e: HealthConnectException) {
+            if (e.errorCode == HealthConnectException.ERROR_SECURITY || e.errorCode == HealthConnectException.ERROR_RATE_LIMIT_EXCEEDED) throw e
+        } catch (e: Exception) {
+            // Left as it was.
         }
     }
 
