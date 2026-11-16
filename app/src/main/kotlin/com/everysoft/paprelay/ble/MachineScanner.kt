@@ -104,11 +104,12 @@ class MachineScanner(context: Context) {
             else -> null
         }
         // Not only the original kind of advertisement: a machine may use the extended kind,
-        // which the default settings would never deliver.
+        // which the default settings would never deliver. The radio band is left at its
+        // default: asking for every band halves the listening on the usual one, and fails
+        // silently on a phone that lacks the long-range one.
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .setLegacy(false)
-            .setPhy(ScanSettings.PHY_LE_ALL_SUPPORTED)
             .build()
         scanner.startScan(filters, settings, callback)
         val outcome = try {

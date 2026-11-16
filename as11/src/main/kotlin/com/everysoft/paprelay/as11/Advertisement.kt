@@ -86,13 +86,26 @@ public class Advertisement internal constructor(
          * response follows the advertisement in one buffer, parsing goes out of
          * step from there and nothing after it can be classified.
          */
-        public fun redactedHex(payload: ByteArray): String {
+        public fun redactedHex(whole: ByteArray): String {
+            // The original kind of advertisement, with its scan response, is 62 bytes at most.
+            // A longer (extended) one is cut there: its shape matters, not two thousand masked bytes.
+            val payload = if (whole.size > MAX_DESCRIBED_BYTES) whole.copyOf(MAX_DESCRIBED_BYTES) else whole
             val out = StringBuilder(payload.size * 2)
             fun hex(b: Byte) = out.append(HEX[(b.toInt() shr 4) and 0xF]).append(HEX[b.toInt() and 0xF])
             fun blank(count: Int) = repeat(count) { out.append("xx") }
+            // Each kind of content is shown once. A real advertisement has one of each; a second
+            // would let a payload spell something out a structure at a time.
+            val alreadyShown = HashSet<Int>()
             var at = 0
             while (at < payload.size) {
                 val length = payload[at].toInt() and 0xFF
+                // A type no advertisement uses means the walk has lost its place, usually because
+                // an earlier structure lied about its length; what looks like a header is then
+                // somebody's data, so not even that is shown.
+                if (length != 0 && at + 1 < payload.size && (payload[at + 1].toInt() and 0xFF) !in KNOWN_TYPES) {
+                    blank(payload.size - at)
+                    break
+                }
                 hex(payload[at])
                 if (length == 0 || at + 1 >= payload.size) {
                     blank(payload.size - at - 1)
@@ -112,13 +125,15 @@ public class Advertisement internal constructor(
                     TYPE_FLAGS, TYPE_TX_POWER -> content == 1
                     else -> content % 2 == 0 && content <= MAX_SHOWN_UUID_BYTES
                 }
-                if (type in SHOWN_TYPES && asExpected) {
+                val kind = if (type == TYPE_UUID16_INCOMPLETE) TYPE_UUID16_COMPLETE else type
+                if (type in SHOWN_TYPES && asExpected && alreadyShown.add(kind)) {
                     for (i in 0 until content) hex(payload[at + 2 + i])
                 } else {
                     blank(length - 1)
                 }
                 at += 1 + length
             }
+            if (whole.size > payload.size) out.append("(+").append(whole.size - payload.size).append(" bytes)")
             return out.toString()
         }
 
@@ -126,8 +141,18 @@ public class Advertisement internal constructor(
         private const val TYPE_FLAGS = 0x01
         private const val TYPE_TX_POWER = 0x0A
         private const val MAX_SHOWN_UUID_BYTES = 8
+        private const val MAX_DESCRIBED_BYTES = 62
         private val SHOWN_TYPES = setOf(TYPE_FLAGS, TYPE_UUID16_INCOMPLETE, TYPE_UUID16_COMPLETE, TYPE_TX_POWER)
         private const val TYPE_LE_ADDRESS = 0x1B
+
+        /**
+         * The structure types advertisements actually carry: flags, service lists, names, power,
+         * service data, appearance, addresses, manufacturer data. Letters and digits are not among them.
+         */
+        private val KNOWN_TYPES = setOf(
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x12, 0x14, 0x15, 0x16, 0x17, 0x19, 0x1A, 0x1B, 0x1C,
+            0x20, 0x21, 0x24, 0xFF,
+        )
         private const val HEX = "0123456789ABCDEF"
 
         private fun indexOf(haystack: ByteArray, needle: ByteArray): Int {

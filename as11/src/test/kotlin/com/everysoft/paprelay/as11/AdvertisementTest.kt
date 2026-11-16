@@ -81,6 +81,28 @@ class AdvertisementTest {
         assertEquals("020106" + "0B03" + "xx".repeat(10), Advertisement.redactedHex(flags + field(0x03, ByteArray(10) { 0x41 })))
         assertEquals("020106" + "050356FD0A18", Advertisement.redactedHex(flags + field(0x03, byteArrayOf(0x56, 0xFD.toByte(), 0x0A, 0x18))))
 
+        // A name whose structure claims to be shorter than it is: the walk lands inside the name, and
+        // what it finds there is not shown as if it were a header.
+        val lying = byteArrayOf(0x05, 0x09) + "ResMed 123456".toByteArray()
+        val shown = Advertisement.redactedHex(flags + lying)
+        assertEquals("020106" + "0509" + "xx".repeat(13), shown)
+        for (digits in listOf("6564", "3132", "3334", "3536")) assertFalse(shown.contains(digits), digits)
+
+        // The size rule is per type: two bytes are too many for flags and for power, though fine for a service list.
+        assertEquals("020106" + "0301" + "xxxx", Advertisement.redactedHex(flags + field(0x01, byteArrayOf(0x52, 0x65))))
+        assertEquals("020106" + "030A" + "xxxx", Advertisement.redactedHex(flags + field(0x0A, byteArrayOf(0x52, 0x65))))
+
+        // Each kind of content is shown once, so a payload cannot spell a name one small structure at a time.
+        val spelt = flags + field(0x0A, byteArrayOf(0x52)) + field(0x0A, byteArrayOf(0x65)) + field(0x01, byteArrayOf(0x73)) +
+            field(0x03, byteArrayOf(0x56, 0xFD.toByte())) + field(0x02, byteArrayOf(0x4D, 0x65)) + field(0x03, byteArrayOf(0x64, 0x20))
+        assertEquals("020106" + "020A52" + "020Axx" + "0201xx" + "030356FD" + "0302xxxx" + "0303xxxx", Advertisement.redactedHex(spelt))
+
+        // A long (extended) advertisement is described up to the length of an ordinary one, and no further.
+        val long = flags + field(0xFF, ByteArray(200) { 0x41 })
+        val described = Advertisement.redactedHex(long)
+        assertEquals("020106" + "C9FF" + "xx".repeat(62 - 5) + "(+${long.size - 62} bytes)", described)
+        assertFalse(described.contains("41"))
+
         // And so is a structure that runs off the end.
         assertEquals("020106" + "0909" + "xx".repeat(3), Advertisement.redactedHex(flags + byteArrayOf(0x09, 0x09, 0x52, 0x65, 0x73)))
     }
@@ -109,8 +131,13 @@ class AdvertisementTest {
         repeat(5_000) {
             val junk = ByteArray(random.nextInt(70)).also(random::nextBytes)
             Advertisement.parse(junk).looksLikeAirSense
-            // Every input byte is accounted for, shown or blanked.
-            assertEquals(junk.size * 2, Advertisement.redactedHex(junk).length)
+            // Every input byte is accounted for: shown, blanked, or counted past the first 62.
+            val described = Advertisement.redactedHex(junk)
+            if (junk.size <= 62) {
+                assertEquals(junk.size * 2, described.length)
+            } else {
+                assertEquals("(+${junk.size - 62} bytes)", described.substring(124))
+            }
         }
     }
 }
