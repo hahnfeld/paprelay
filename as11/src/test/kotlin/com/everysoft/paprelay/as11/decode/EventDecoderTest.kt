@@ -88,11 +88,17 @@ class EventDecoderTest {
         // Events directly in the entry, or a layer deeper than seen, are not waved through.
         val direct = usage(proto { message(6) { event(3, t) } })
         assertTrue(direct.decoded.isEmpty() && !direct.complete)
-        val deeper = usage(proto { message(6) { message(2) { message(1) { message(1) { event(3, t) } } } } })
+        val deeper = usage(proto { message(6) { message(1) { message(1) { message(1) { event(3, t) } } } } })
         assertTrue(deeper.decoded.isEmpty())
         // What failed there held records, so more than one may be missing.
         assertTrue(deeper.failures.single().severalRecords)
         // Several lists in one entry, and several entries, are the same nesting.
+        // Lists and events sit in field 1; the same shapes under another number are not read as them.
+        val elsewhere = usage(proto { message(6) { message(2) { message(1) { event(3, t) } } } })
+        assertTrue(elsewhere.decoded.isEmpty() && elsewhere.failures.single().severalRecords)
+        val eventElsewhere = usage(proto { message(6) { message(1) { message(1) { event(3, t) }; message(2) { event(2, t + 5) } } } })
+        assertEquals(listOf(3), eventElsewhere.decoded.map { it.code })
+        assertEquals(1, eventElsewhere.failures.size)
         val lists = usage(proto { message(6) { message(1) { message(1) { event(3, t) } }; message(1) { message(1) { event(2, t + 5) } } } })
         assertEquals(listOf(3, 2), lists.decoded.map { it.code })
         val entries = usage(proto { message(6) { message(1) { message(1) { event(3, t) } } }; message(6) { message(1) { message(1) { event(2, t + 5) } } } })

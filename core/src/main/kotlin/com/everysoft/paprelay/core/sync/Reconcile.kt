@@ -12,9 +12,12 @@ import java.time.ZoneId
  *
  * It is written **before** Health Connect is touched as well as after, so that it never
  * claims less than may be there: at any moment Health Connect holds records for no minute
- * outside [minutes] and [pendingMinutes], and none at a version above [version].
+ * outside [minutes] and [pendingMinutes], and, once the entry has been confirmed for the
+ * first time, none at a version above [version].
  *
- * @property minutes the minute numbers confirmed to have a record, in order.
+ * @property minutes the minute numbers confirmed to have a record, in order. It can be empty
+ *   in a confirmed entry: a session none of whose minutes are wanted is remembered too, so
+ *   that it is cleared once and not at every synchronisation.
  * @property fingerprint of the confirmed readings; see [SessionReadings.fingerprint]. Empty
  *   when nothing has been confirmed yet.
  * @property clockOffset the clock correction the records are written with. Fixed when the
@@ -46,10 +49,14 @@ public class LedgerEntry(
         require(version >= 1) { "versions start at one" }
         require(fingerprint.isEmpty() || FINGERPRINT.matches(fingerprint)) { "not a fingerprint" }
         require(rising(this.minutes) && rising(this.pendingMinutes.orEmpty())) { "minutes must rise" }
-        require(this.minutes.isNotEmpty() || this.pendingMinutes != null) { "an entry with nothing in it" }
+        require(this.minutes.isEmpty() || fingerprint.isNotEmpty()) { "confirmed minutes without their fingerprint" }
+        require(fingerprint.isNotEmpty() || this.pendingMinutes != null) { "an entry with nothing in it" }
     }
 
     public val key: String get() = "$machineTag/${firstMinuteEnd.epochMs}"
+
+    /** Whether a change to this session has ever been carried through and confirmed. */
+    public val everConfirmed: Boolean get() = fingerprint.isNotEmpty()
 
     /** Every minute Health Connect may hold a record for. */
     public val possiblyHeld: List<Int> get() = (minutes + pendingMinutes.orEmpty()).distinct().sorted()
@@ -80,7 +87,8 @@ public class RecordWrite(
  *  1. store [intent] in the ledger;
  *  2. delete [deleteRecordIds] from Health Connect;
  *  3. write [writes] to Health Connect;
- *  4. store [confirmed] in the ledger (or remove the entry, if it is null).
+ *  4. store [confirmed] in the ledger (or remove the entry, if it is null: only when the
+ *     session's records were removed at the user's request).
  *
  * Step 1 comes first so that the ledger always covers whatever Health Connect may hold. If
  * the app dies anywhere after it, the entry is still marked as pending, and the next
@@ -119,14 +127,26 @@ public object Reconcile {
         require(ledger == null || ledger.key == desired.key) { "the ledger entry is for another session" }
         val wanted = desired.minutes
         val fingerprint = desired.fingerprint()
-        if (ledger == null && wanted.isEmpty()) return null
         if (!force && ledger != null && ledger.pendingMinutes == null && ledger.minutes == wanted && ledger.fingerprint == fingerprint) {
             return null
         }
 
-        val possiblyHeld = ledger?.possiblyHeld.orEmpty()
-        val deletions = (possiblyHeld.toSet() - wanted.toSet()).sorted()
-            .map { SessionReadings.recordId(desired.machineTag, desired.firstMinuteEnd, it) }
+        // With no entry, nothing is known: the ledger may have been lost (a reinstall) while Health
+        // Connect kept what an earlier installation wrote, under these same ids and at versions
+        // nobody remembers. The same holds for an entry that has never been confirmed, since it
+        // began from nothing. In both cases every minute the session has, and every minute the
+        // entry names, is cleared first, the wanted ones too, so that what is written afterwards
+        // cannot lose to an old record of a higher version. An entry that has been confirmed once
+        // is trusted from then on to cover what is there and to outrank it: each confirmation
+        // follows a complete clearing or a complete write above every earlier version.
+        val trusted = ledger != null && ledger.everConfirmed
+        val possiblyHeld = if (trusted) {
+            ledger.possiblyHeld
+        } else {
+            (ledger?.possiblyHeld.orEmpty() + (0 until desired.minuteCount)).distinct().sorted()
+        }
+        val toDelete = if (trusted) (possiblyHeld.toSet() - wanted.toSet()).sorted() else possiblyHeld
+        val deletions = toDelete.map { SessionReadings.recordId(desired.machineTag, desired.firstMinuteEnd, it) }
 
         // Higher than anything ever sent for this session, and never behind the clock, so that
         // a rewrite always wins over what Health Connect holds, including the remains of a
@@ -156,11 +176,7 @@ public object Reconcile {
             version = version,
             pendingMinutes = (possiblyHeld + wanted).distinct().sorted(),
         )
-        val confirmed = if (wanted.isEmpty()) {
-            null
-        } else {
-            LedgerEntry(desired.machineTag, desired.firstMinuteEnd, wanted, fingerprint, offset, heldZone, version, pendingMinutes = null)
-        }
+        val confirmed = LedgerEntry(desired.machineTag, desired.firstMinuteEnd, wanted, fingerprint, offset, heldZone, version, pendingMinutes = null)
         return SessionChange(intent, deletions, writes, confirmed)
     }
 

@@ -35,17 +35,22 @@ public class RateReading(public val minuteEnd: MachineTime, public val hundredth
  * @property machineTag a stable, non-identifying name for the machine; part of every record id.
  * @property firstMinuteEnd the time stamp of the session's first minute, whether or not
  *   that minute has a reading.
+ * @property minuteCount how many minutes the session has at most, with or without a
+ *   reading: every record this session could ever have had lies in minutes 0 until this.
  * @property readings in time order, at most one per minute, all within the session.
  */
 public class SessionReadings(
     public val machineTag: String,
     public val firstMinuteEnd: MachineTime,
+    public val minuteCount: Int,
     readings: List<RateReading>,
 ) {
     public val readings: List<RateReading> = readings.toList()
 
     init {
         require(isValidTag(machineTag)) { "a machine tag is 4 to 32 letters, digits or dashes" }
+        require(minuteCount in 0..MAX_MINUTES) { "not a session's length" }
+        require(this.readings.all { it.minuteEnd.since(firstMinuteEnd) < minuteCount * MINUTE_MS }) { "a reading beyond the session's end" }
         var previous: MachineTime? = null
         for (reading in this.readings) {
             val offset = reading.minuteEnd.since(firstMinuteEnd)
@@ -79,6 +84,9 @@ public class SessionReadings(
 
     public companion object {
         public const val MINUTE_MS: Long = 60_000L
+
+        /** A week: far beyond any session, and a bound on what one can ask to have deleted. */
+        public const val MAX_MINUTES: Int = 7 * 24 * 60
 
         /**
          * Raised whenever the way a reading is derived from the machine's data changes (a decoding

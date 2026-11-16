@@ -23,9 +23,14 @@ class ReconcileTest {
     private val away = ZoneId.of("Europe/London")
     private val now = 1_800_000_000_000L
 
+    private companion object {
+        /** How many minutes the test session has at most. */
+        const val SPAN = 13
+    }
+
     /** A session with a reading in each of the given minutes. */
     private fun session(vararg minutes: Int, rate: (Int) -> Int = { 1200 + it * 25 }) =
-        SessionReadings(tag, first, minutes.map { RateReading(first + it * 60_000L, rate(it)) })
+        SessionReadings(tag, first, SPAN, minutes.map { RateReading(first + it * 60_000L, rate(it)) })
 
     private fun id(minute: Int) = "rr-$tag-${first.epochMs + minute * 60_000L}"
 
@@ -42,10 +47,12 @@ class ReconcileTest {
         // The machine's clock was fast, so the real moment is earlier than its stamp.
         assertEquals(Instant.ofEpochMilli(first.epochMs - 361_600), change.writes[0].time)
         assertTrue(change.writes.all { it.clockOffset == offset && it.zone == home && it.version == now })
-        assertTrue(change.deleteRecordIds.isEmpty())
+        // Nothing is known of this session, so every minute it could have is cleared first: an earlier
+        // installation may have written here, and its records must not outlive or outrank these.
+        assertEquals((0 until SPAN).map(::id), change.deleteRecordIds)
         // Before Health Connect is touched, the ledger already says what may be about to exist.
         assertEquals(emptyList(), change.intent.minutes)
-        assertEquals(listOf(0, 1, 2), change.intent.pendingMinutes)
+        assertEquals((0 until SPAN).toList(), change.intent.pendingMinutes)
         assertEquals(now, change.intent.version)
         val entry = change.confirmed!!
         assertEquals(listOf(0, 1, 2), entry.minutes)
@@ -65,9 +72,13 @@ class ReconcileTest {
         assertEquals(3, forced.writes.size)
         assertTrue(forced.deleteRecordIds.isEmpty())
         assertTrue(forced.writes.all { it.version == now + 86_400_000 && it.clockOffset == offset && it.zone == home })
-        // A session with nothing wanted and nothing known needs nothing, forced or not.
-        assertNull(Reconcile.session(session(), null, offset, home, now))
-        assertNull(Reconcile.session(session(), null, offset, home, now, force = true))
+        // A session with nothing wanted and nothing known is still cleared, once: what an earlier
+        // installation left there is not wanted either. That it was cleared is remembered.
+        val cleared = Reconcile.session(session(), null, offset, home, now)!!
+        assertEquals((0 until SPAN).map(::id), cleared.deleteRecordIds)
+        assertTrue(cleared.writes.isEmpty())
+        assertTrue(cleared.confirmed!!.let { it.minutes.isEmpty() && it.everConfirmed })
+        assertNull(Reconcile.session(session(), cleared.confirmed, offset, home, now + 1))
     }
 
     @Test
@@ -113,11 +124,12 @@ class ReconcileTest {
         assertEquals(listOf(id(1), id(3)), change.deleteRecordIds)
         assertEquals(listOf(id(0), id(2), id(4)), change.writes.map { it.recordId })
         assertEquals(listOf(0, 2, 4), change.confirmed!!.minutes)
-        // Nothing left at all: everything goes, and so does the ledger entry, once confirmed.
+        // Nothing left at all: everything goes. The entry stays, empty, so the session is not cleared again.
         val emptied = Reconcile.session(session(), written, offset, home, now + 1)!!
         assertEquals((0..4).map(::id), emptied.deleteRecordIds)
         assertTrue(emptied.writes.isEmpty())
-        assertNull(emptied.confirmed)
+        assertTrue(emptied.confirmed!!.minutes.isEmpty())
+        assertNull(Reconcile.session(session(), emptied.confirmed, offset, home, now + 2))
         assertEquals(listOf(0, 1, 2, 3, 4), emptied.intent.pendingMinutes)
     }
 
@@ -135,7 +147,9 @@ class ReconcileTest {
         val begun = Reconcile.session(session(0, 1, 2, 3, 4), null, offset, home, now)!!.intent
         // The rule is then tightened. What the unconfirmed write left behind is removed.
         val narrowed = Reconcile.session(session(0, 2, 4), begun, offset, home, now + 1)!!
-        assertEquals(listOf(id(1), id(3)), narrowed.deleteRecordIds)
+        // Nothing was ever confirmed, so nothing there is trusted: all of it is cleared, then written.
+        assertEquals((0 until SPAN).map(::id), narrowed.deleteRecordIds)
+        assertEquals(listOf(id(0), id(2), id(4)), narrowed.writes.map { it.recordId })
         // And even if the very same thing is wanted as was begun, it is not taken on trust.
         val same = Reconcile.session(session(0, 1, 2, 3, 4), begun, offset, home, now + 1)!!
         assertEquals(5, same.writes.size)
@@ -168,7 +182,9 @@ class ReconcileTest {
             repeat(40) { step ->
                 // What is wanted changes freely: minutes come and go, values change.
                 val wantedMinutes = (0 until 12).filter { random.nextInt(4) != 0 }.let { if (random.nextInt(10) == 0) emptyList() else it }
-                val desired = SessionReadings(tag, first, wantedMinutes.map { RateReading(first + it * 60_000L, 1000 + random.nextInt(4) * 25 + it) })
+                val desired = SessionReadings(tag, first, SPAN, wantedMinutes.map { RateReading(first + it * 60_000L, 1000 + random.nextInt(4) * 25 + it) })
+                // Now and then the ledger is lost altogether, as a reinstall loses it, while Health Connect keeps its records.
+                if (random.nextInt(25) == 0) ledger = null
                 // The phone's clock mostly advances, and sometimes jumps back.
                 clock += if (random.nextInt(8) == 0) -random.nextInt(100_000).toLong() else random.nextInt(100_000).toLong()
                 val change = Reconcile.session(desired, ledger, if (random.nextBoolean()) offset else drifted, if (random.nextBoolean()) home else away, clock, force = random.nextInt(15) == 0)
@@ -195,18 +211,23 @@ class ReconcileTest {
                         assertTrue(model.records.values.map { it.zone }.distinct().size <= 1, context)
                     }
                 }
-                // At every moment, interrupted or not: nothing in Health Connect is beyond what the ledger covers.
-                val covered = ledger?.possiblyHeld.orEmpty().map(::id).toSet()
-                assertTrue(covered.containsAll(model.records.keys), "$context: ${model.records.keys - covered} not covered by the ledger")
-                assertTrue(model.records.values.all { it.version <= (ledger?.version ?: 0) }, context)
+                // At every moment, interrupted or not: nothing in Health Connect is beyond what the ledger
+                // covers, or, where there is no entry, beyond the session's own minutes.
+                val covered = (ledger?.possiblyHeld ?: (0 until SPAN).toList()).map(::id).toSet()
+                assertTrue(covered.containsAll(model.records.keys), "$context: ${model.records.keys - covered} not covered")
+                // An entry that has been confirmed once also outranks everything there. (One that never has
+                // may not: what an earlier installation wrote is cleared before anything is written over it.)
+                ledger?.takeIf { it.everConfirmed }?.let { entry -> assertTrue(model.records.values.all { it.version <= entry.version }, context) }
             }
-            // Finally, with no interruption: "delete my data" leaves nothing behind.
+            // Finally, with no interruption: "delete my data" leaves nothing behind. (Where the ledger was
+            // lost and nothing has been reconciled since, there is no entry to remove by; that case is
+            // covered by the next synchronisation, which clears the session before writing it.)
             ledger?.let { entry ->
                 val removal = Reconcile.remove(entry, clock)
                 removal.deleteRecordIds.forEach(model::delete)
                 assertNull(removal.confirmed)
+                assertTrue(model.records.isEmpty(), "run $run left ${model.records.keys}")
             }
-            assertTrue(model.records.isEmpty(), "run $run left ${model.records.keys}")
         }
     }
 
@@ -238,7 +259,7 @@ class ReconcileTest {
         assertNotEquals(a, session(0, 1, 2) { 1300 }.fingerprint())
         assertNotEquals(session(1, 2).fingerprint(), session(12).fingerprint())
         val other = MachineTime(first.epochMs + 7_200_000)
-        assertEquals(a, SessionReadings(tag, other, listOf(0, 1, 2).map { RateReading(other + it * 60_000L, 1200 + it * 25) }).fingerprint())
+        assertEquals(a, SessionReadings(tag, other, SPAN, listOf(0, 1, 2).map { RateReading(other + it * 60_000L, 1200 + it * 25) }).fingerprint())
         // Pinned, so that a change to the rules version (or to the fingerprint itself) is a deliberate act:
         // it makes every session already written count as out of step.
         assertEquals(1, SessionReadings.RULES_VERSION)
@@ -252,16 +273,20 @@ class ReconcileTest {
         assertFailsWith<IllegalArgumentException> { RateReading(first, 9_001) }
         RateReading(first, 9_000)
         RateReading(first, 1)
-        assertFailsWith<IllegalArgumentException> { SessionReadings(tag, first, listOf(RateReading(first + 30_000, 1200))) }
-        assertFailsWith<IllegalArgumentException> { SessionReadings(tag, first, listOf(RateReading(first - 60_000, 1200))) }
-        assertFailsWith<IllegalArgumentException> { SessionReadings(tag, first, listOf(RateReading(first + 60_000, 1200), RateReading(first, 1200))) }
-        assertFailsWith<IllegalArgumentException> { SessionReadings(tag, first, listOf(RateReading(first, 1200), RateReading(first, 1300))) }
+        assertFailsWith<IllegalArgumentException> { SessionReadings(tag, first, SPAN, listOf(RateReading(first + 30_000, 1200))) }
+        assertFailsWith<IllegalArgumentException> { SessionReadings(tag, first, SPAN, listOf(RateReading(first - 60_000, 1200))) }
+        assertFailsWith<IllegalArgumentException> { SessionReadings(tag, first, SPAN, listOf(RateReading(first + 60_000, 1200), RateReading(first, 1200))) }
+        assertFailsWith<IllegalArgumentException> { SessionReadings(tag, first, SPAN, listOf(RateReading(first, 1200), RateReading(first, 1300))) }
+        // A reading beyond the session's own end, and a session of an impossible length.
+        assertFailsWith<IllegalArgumentException> { SessionReadings(tag, first, 2, listOf(RateReading(first + 120_000, 1200))) }
+        assertFailsWith<IllegalArgumentException> { SessionReadings(tag, first, -1, emptyList()) }
+        assertFailsWith<IllegalArgumentException> { SessionReadings(tag, first, SessionReadings.MAX_MINUTES + 1, emptyList()) }
         for (bad in listOf("", "abc", "has space", "slash/inside", "x".repeat(33), "serial:23211234567")) {
-            assertFailsWith<IllegalArgumentException>(bad) { SessionReadings(bad, first, emptyList()) }
+            assertFailsWith<IllegalArgumentException>(bad) { SessionReadings(bad, first, SPAN, emptyList()) }
             assertFailsWith<IllegalArgumentException>(bad) { LedgerEntry(bad, first, listOf(0), "", offset, home, 1, null) }
         }
         val written = done(session(0), null)
-        val elsewhere = SessionReadings(tag, first + 60_000, emptyList())
+        val elsewhere = SessionReadings(tag, first + 60_000, SPAN, emptyList())
         assertFailsWith<IllegalArgumentException> { Reconcile.session(elsewhere, written, offset, home, now) }
         val print = "f".repeat(64)
         LedgerEntry(tag, first, listOf(0, 1), print, offset, home, 1, null)
@@ -271,15 +296,17 @@ class ReconcileTest {
         assertFailsWith<IllegalArgumentException> { LedgerEntry(tag, first, listOf(0), print, offset, home, 0, null) }
         assertFailsWith<IllegalArgumentException> { LedgerEntry(tag, first, listOf(0), "not a fingerprint", offset, home, 1, null) }
         assertFailsWith<IllegalArgumentException> { LedgerEntry(tag, first, listOf(0), print, offset, home, 1, listOf(3, 2)) }
-        // An entry that covers nothing is not an entry.
+        // An entry that covers nothing is not an entry, and confirmed minutes come with their fingerprint.
         assertFailsWith<IllegalArgumentException> { LedgerEntry(tag, first, emptyList(), "", offset, home, 1, null) }
+        assertFailsWith<IllegalArgumentException> { LedgerEntry(tag, first, listOf(0), "", offset, home, 1, listOf(0)) }
+        LedgerEntry(tag, first, emptyList(), print, offset, home, 1, null)
         LedgerEntry(tag, first, emptyList(), "", offset, home, 1, emptyList())
     }
 
     @Test
     fun `the lists handed in cannot be changed afterwards`() {
         val readings = mutableListOf(RateReading(first, 1200))
-        val session = SessionReadings(tag, first, readings)
+        val session = SessionReadings(tag, first, SPAN, readings)
         readings += RateReading(first + 60_000, 1300)
         assertEquals(1, session.readings.size)
         val minutes = mutableListOf(0, 1)

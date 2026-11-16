@@ -49,6 +49,7 @@ public object EventDecoder {
     /** How deep to look for events hidden inside an event. Beyond this, it is taken to hide some. */
     private const val MAX_NESTING = 16
     private const val MAX_CODE = 1_000_000
+    private const val NESTING_FIELD = 1
     /** Generous: it guards against a mis-scaled value, and says nothing about how long an event can last. */
     private const val MAX_DURATION_MS = 24L * 60 * 60 * 1000
 
@@ -121,7 +122,9 @@ public object EventDecoder {
         val messages = ArrayList<ByteArray>()
         for (field in fields) {
             val inner = field.bytes
-            if (inner == null) into.fail("$what: a stray value among the records", severalRecords = true) else messages += inner
+            // Lists and events both sit in field 1. Anything under another number is not one of them,
+            // however much it may look like one.
+            if (inner == null || field.number != NESTING_FIELD) into.fail("$what: something other than a record among the records", severalRecords = true) else messages += inner
         }
         return messages
     }

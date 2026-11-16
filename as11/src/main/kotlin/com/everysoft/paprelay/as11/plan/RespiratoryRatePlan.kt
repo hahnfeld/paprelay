@@ -113,7 +113,9 @@ public object RespiratoryRatePlan {
             // Leak is the one signal in which zero is a reading, so it is never missing here.
             if (leak != null && litresPerMinute(leak) > limit) leaky++ else readings += RateReading(record.minuteEnd(index), hundredths)
         }
-        return SessionPlan.Planned(SessionReadings(machineTag, record.firstMinuteEnd, readings), Omitted(zero, leaky, record.uncertainTail))
+        // Every minute the session could have, the doubtful tail included: nothing outside it was ever written.
+        val span = record.sampleCount + record.uncertainTail
+        return SessionPlan.Planned(SessionReadings(machineTag, record.firstMinuteEnd, span, readings), Omitted(zero, leaky, record.uncertainTail))
     }
 
     /** The per-minute log stores leak in litres per minute; anything else here is a defect, not data. */
