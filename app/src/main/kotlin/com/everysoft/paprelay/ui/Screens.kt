@@ -192,29 +192,35 @@ fun HomeScreen(
     syncEnabled: Boolean,
     sync: SyncStatus,
     healthAllowed: Boolean,
+    healthRefused: Boolean,
     permissionRefused: Boolean,
+    pausesWhenUnused: Boolean,
     onSync: () -> Unit,
     onAcceptClock: () -> Unit,
     onStartAgain: () -> Unit,
     onPair: () -> Unit,
     onOpenCheck: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenHealthConnect: () -> Unit,
+    onOpenUnusedSetting: () -> Unit,
     onAbout: () -> Unit,
 ) {
     val paired = pairing is PairingState.Paired
+    val checkStarted = checkRunning || steps.any { it.state != StepState.PENDING }
     Page(
         title = stringResource(R.string.app_name),
         action = { TextButton(onClick = onAbout) { Text(stringResource(R.string.about_title)) } },
     ) {
-        // The picture comes first: it says what the app does and how far it has got. While a check
-        // runs, or before anything has been synchronised, it shows the check; otherwise the last
-        // synchronisation.
-        val showsSync = syncEnabled && paired && !checkRunning && (sync.running || sync.lastReport != null || sync.storeUnreadable)
-        if (showsSync) {
-            val links = syncLinks(sync, healthAllowed)
-            FlowDiagram(machineLink = links.machine, healthLink = links.health, phoneFault = links.phoneFault)
-        } else {
-            FlowDiagram(
+        // The picture comes first: it says what the app does and how far it has got. With a machine
+        // paired it shows how synchronising stands; while a check runs, or before there is a
+        // machine, it shows the check. Until the pairing has been read it shows nothing in particular.
+        when {
+            pairing == PairingState.Loading -> FlowDiagram(machineLink = LinkState.NONE, healthLink = LinkState.NONE)
+            syncEnabled && paired && !checkRunning -> {
+                val links = syncLinks(sync, healthAllowed)
+                FlowDiagram(machineLink = links.machine, healthLink = links.health, phoneFault = links.phoneFault)
+            }
+            else -> FlowDiagram(
                 machineLink = machineLink(steps, pairing, checkRunning),
                 healthLink = healthLink(steps, healthAllowed),
                 // A failure that lies with the phone is marked on the phone, not on either link.
@@ -224,38 +230,49 @@ fun HomeScreen(
         Spacer(Modifier.height(28.dp))
         MachineLine(pairing)
 
+        val free = !sync.running && !checkRunning && !busy
         if (paired && syncEnabled) {
+            // Only the sentence is announced when it changes; the time under it ticks on quietly.
             Text(
                 syncLine(sync),
                 style = MaterialTheme.typography.bodyLarge,
                 modifier = Modifier.padding(top = 12.dp).semantics { liveRegion = LiveRegionMode.Polite },
             )
-            lastCompleteLine(sync)?.let { Secondary(it, Modifier.padding(top = 4.dp)) }
+            lastTimeLine(sync)?.let { Secondary(it, Modifier.padding(top = 4.dp)) }
             Spacer(Modifier.height(20.dp))
             // Wraps instead of clipping at large font sizes.
             FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onSync, enabled = !sync.running && !checkRunning && !busy) {
-                    Text(stringResource(if (sync.running) R.string.sync_running else R.string.action_sync))
-                }
-                // Offered only when it is the way forward.
-                if (!sync.running && !checkRunning && !busy) {
-                    if (sync.storeUnreadable) {
-                        OutlinedButton(onClick = onStartAgain) { Text(stringResource(R.string.action_start_again)) }
-                    } else if (sync.lastReport?.outcome == SyncOutcome.CLOCK_CHANGED) {
-                        OutlinedButton(onClick = onAcceptClock) { Text(stringResource(R.string.action_accept_clock)) }
+                val outcome = sync.lastReport?.outcome
+                if (sync.storeUnreadable) {
+                    // The one way forward; synchronising cannot work until it is taken.
+                    Button(onClick = onStartAgain, enabled = free) { Text(stringResource(R.string.action_start_again)) }
+                } else {
+                    Button(onClick = onSync, enabled = free) { Text(stringResource(R.string.action_sync)) }
+                    // A second button only when it is the way forward.
+                    when {
+                        !free -> Unit
+                        outcome == SyncOutcome.CLOCK_CHANGED ->
+                            OutlinedButton(onClick = onAcceptClock) { Text(stringResource(R.string.action_accept_clock)) }
+                        outcome == SyncOutcome.HEALTH_CONNECT_NOT_ALLOWED || healthRefused ->
+                            OutlinedButton(onClick = onOpenHealthConnect) { Text(stringResource(R.string.action_open_health)) }
+                        outcome == SyncOutcome.BLUETOOTH_NOT_ALLOWED && !permissionRefused ->
+                            OutlinedButton(onClick = onOpenSettings) { Text(stringResource(R.string.action_open_settings)) }
                     }
                 }
+            }
+            if (healthRefused && sync.lastReport?.outcome != SyncOutcome.HEALTH_CONNECT_NOT_ALLOWED) {
+                Secondary(stringResource(R.string.sync_hc_not_allowed), Modifier.padding(top = 12.dp))
             }
         } else {
             if (paired) Secondary(stringResource(R.string.debug_no_sync), Modifier.padding(top = 12.dp))
             Spacer(Modifier.height(20.dp))
-            if (paired) {
-                Button(onClick = onOpenCheck) { Text(stringResource(R.string.action_device_check)) }
-            } else {
+            when (pairing) {
+                PairingState.Loading -> Unit
                 // Pairing is the first part of the device check, which then proves the rest works.
-                Button(onClick = onPair, enabled = !busy && !checkRunning && pairing != PairingState.Loading) {
-                    Text(stringResource(R.string.action_pair))
-                }
+                PairingState.Absent, PairingState.Unreadable ->
+                    Button(onClick = onPair, enabled = !busy && !checkRunning) { Text(stringResource(R.string.action_pair)) }
+                PairingState.Unavailable, is PairingState.Paired ->
+                    Button(onClick = onOpenCheck) { Text(stringResource(R.string.action_device_check)) }
             }
         }
 
@@ -266,7 +283,16 @@ fun HomeScreen(
             }
         }
 
-        if (paired && syncEnabled || !paired && (checkRunning || steps.any { it.state != StepState.PENDING })) {
+        // Android stops an app nobody opens. This one is meant not to need opening.
+        if (paired && syncEnabled && sync.lastReport != null && pausesWhenUnused) {
+            Secondary(stringResource(R.string.unused_hint), Modifier.padding(top = 20.dp))
+            TextButton(onClick = onOpenUnusedSetting, modifier = Modifier.offset(x = (-12).dp)) {
+                Text(stringResource(R.string.action_unused_setting))
+            }
+        }
+
+        // Where the primary button is not already the way to the check.
+        if (paired && syncEnabled || pairing == PairingState.Unreadable || pairing == PairingState.Absent && checkStarted) {
             Spacer(Modifier.height(24.dp))
             // Text buttons carry 12 dp of padding; pulled out so the label sits on the text margin.
             TextButton(onClick = onOpenCheck, modifier = Modifier.offset(x = (-12).dp)) {
@@ -313,17 +339,23 @@ fun CheckScreen(
     busy: Boolean,
     syncEnabled: Boolean,
     syncRunning: Boolean,
+    permissionRefused: Boolean,
     onRunFull: () -> Unit,
     onRunReconnect: () -> Unit,
     onStop: () -> Unit,
+    onSync: () -> Unit,
     onExport: () -> Unit,
     onRewrite: () -> Unit,
     onForget: () -> Unit,
+    onOpenSettings: () -> Unit,
     onBack: () -> Unit,
 ) {
     val paired = pairing is PairingState.Paired
+    val passed = !running && steps.lastOrNull()?.state == StepState.PASSED && steps.none { it.state == StepState.FAILED || it.state == StepState.CANCELLED }
     Page(title = stringResource(R.string.action_device_check), onBack = onBack) {
         MachineLine(pairing)
+        // Why nothing here can be started just now.
+        if (syncRunning) Secondary(stringResource(R.string.sync_running), Modifier.padding(top = 4.dp))
         Spacer(Modifier.height(20.dp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (running) {
@@ -334,10 +366,24 @@ fun CheckScreen(
             } else {
                 // Held back while a pairing is being forgotten or the machine is in use, so a check cannot start on it.
                 val free = !busy && !syncRunning && pairing != PairingState.Loading
-                Button(onClick = onRunFull, enabled = free) { Text(stringResource(R.string.action_run_check)) }
+                // Everything works: what comes next is to synchronise, and that is the button to see.
+                val next = passed && paired && syncEnabled
+                if (next) {
+                    Button(onClick = onSync, enabled = free) { Text(stringResource(R.string.action_sync)) }
+                    OutlinedButton(onClick = onRunFull, enabled = free) { Text(stringResource(R.string.action_run_check)) }
+                } else {
+                    Button(onClick = onRunFull, enabled = free) { Text(stringResource(R.string.action_run_check)) }
+                }
                 if (paired) {
                     OutlinedButton(onClick = onRunReconnect, enabled = free) { Text(stringResource(R.string.action_reconnect_check)) }
                 }
+            }
+        }
+
+        if (permissionRefused && !running) {
+            Secondary(stringResource(R.string.permission_needed), Modifier.padding(top = 12.dp))
+            TextButton(onClick = onOpenSettings, modifier = Modifier.offset(x = (-12).dp)) {
+                Text(stringResource(R.string.action_open_settings))
             }
         }
 
@@ -390,14 +436,16 @@ private fun syncLinks(sync: SyncStatus, healthAllowed: Boolean): SyncLinks {
     if (sync.running) return SyncLinks(LinkState.ACTIVE, idleHealth, phoneFault = false)
     if (sync.storeUnreadable) return SyncLinks(LinkState.READY, idleHealth, phoneFault = true)
     return when (sync.lastReport?.outcome) {
-        SyncOutcome.COMPLETE, SyncOutcome.PARTIAL -> SyncLinks(LinkState.OK, LinkState.OK, phoneFault = false)
-        // Out of range is the ordinary state of a phone that is not at home; nothing is wrong.
-        SyncOutcome.MACHINE_AWAY, null -> SyncLinks(LinkState.READY, idleHealth, phoneFault = false)
+        SyncOutcome.COMPLETE -> SyncLinks(LinkState.OK, LinkState.OK, phoneFault = false)
+        // Under way, with nothing wrong: no ticks until everything is across. And out of range is
+        // the ordinary state of a phone that is not at home.
+        SyncOutcome.PARTIAL, SyncOutcome.MACHINE_AWAY, null -> SyncLinks(LinkState.READY, idleHealth, phoneFault = false)
         SyncOutcome.BLUETOOTH_OFF, SyncOutcome.BLUETOOTH_NOT_ALLOWED, SyncOutcome.PHONE_CLOCK_WRONG, SyncOutcome.INTERNAL,
         -> SyncLinks(LinkState.READY, idleHealth, phoneFault = true)
         SyncOutcome.HEALTH_CONNECT_NOT_ALLOWED -> SyncLinks(LinkState.READY, LinkState.NONE, phoneFault = false)
         SyncOutcome.HEALTH_CONNECT_UNAVAILABLE, SyncOutcome.HEALTH_CONNECT_FAILED -> SyncLinks(LinkState.READY, LinkState.FAILED, phoneFault = false)
-        SyncOutcome.NOT_PAIRED -> SyncLinks(LinkState.NONE, idleHealth, phoneFault = false)
+        // Shown only with a machine paired, so this is the leftover of a run made while there was none.
+        SyncOutcome.NOT_PAIRED -> SyncLinks(LinkState.READY, idleHealth, phoneFault = false)
         SyncOutcome.PAIRING_REJECTED, SyncOutcome.WRONG_MACHINE, SyncOutcome.SOFTWARE_NOT_CONFIRMED, SyncOutcome.CLOCK_UNRELIABLE,
         SyncOutcome.CLOCK_CHANGED, SyncOutcome.CONNECTION_LOST, SyncOutcome.DATA_NOT_UNDERSTOOD,
         -> SyncLinks(LinkState.FAILED, idleHealth, phoneFault = false)
@@ -535,7 +583,7 @@ fun AboutScreen(onBack: () -> Unit) {
     Page(title = stringResource(R.string.about_title), onBack = onBack) {
         Text(stringResource(R.string.app_name), style = MaterialTheme.typography.titleMedium)
         Text(
-            stringResource(R.string.about_version, BuildConfig.VERSION_NAME),
+            stringResource(R.string.about_version, BuildConfig.VERSION_NAME + " (" + BuildConfig.GIT_COMMIT + ")"),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontFamily = FontFamily.Monospace,
@@ -694,18 +742,12 @@ private fun ago(atMs: Long, now: Long): String =
 @Composable
 private fun syncLine(sync: SyncStatus): String {
     val report = sync.lastReport
-    val now = currentTime()
     return when {
         sync.running -> stringResource(R.string.sync_running)
         sync.storeUnreadable -> stringResource(R.string.sync_store_unreadable)
         report == null -> stringResource(R.string.sync_never)
         else -> when (report.outcome) {
-            SyncOutcome.COMPLETE ->
-                if (now - report.atMs < DateUtils.MINUTE_IN_MILLIS) {
-                    stringResource(R.string.sync_complete_now)
-                } else {
-                    stringResource(R.string.sync_complete, ago(report.atMs, now))
-                }
+            SyncOutcome.COMPLETE -> stringResource(R.string.sync_complete)
             SyncOutcome.PARTIAL -> stringResource(R.string.sync_partial)
             SyncOutcome.MACHINE_AWAY -> stringResource(R.string.sync_machine_away)
             SyncOutcome.BLUETOOTH_OFF -> stringResource(R.string.detail_bluetooth_off)
@@ -718,7 +760,8 @@ private fun syncLine(sync: SyncStatus): String {
             SyncOutcome.SOFTWARE_NOT_CONFIRMED -> stringResource(R.string.sync_software_not_confirmed)
             SyncOutcome.CLOCK_UNRELIABLE -> stringResource(R.string.sync_clock_unreliable)
             SyncOutcome.CLOCK_CHANGED -> stringResource(R.string.sync_clock_changed)
-            SyncOutcome.NOT_PAIRED -> stringResource(R.string.detail_not_paired)
+            // Shown only with a machine paired: a run made while there was none says nothing about now.
+            SyncOutcome.NOT_PAIRED -> stringResource(R.string.sync_never)
             SyncOutcome.CONNECTION_LOST -> stringResource(R.string.sync_connection_lost)
             SyncOutcome.DATA_NOT_UNDERSTOOD -> stringResource(R.string.sync_data_not_understood)
             SyncOutcome.HEALTH_CONNECT_FAILED -> stringResource(R.string.sync_hc_failed)
@@ -727,10 +770,15 @@ private fun syncLine(sync: SyncStatus): String {
     }
 }
 
-/** When everything was last in step, said only while the latest attempt did not get that far. */
+/** The line of times under the sentence: when it last synchronised, or when everything was last in step. */
 @Composable
-private fun lastCompleteLine(sync: SyncStatus): String? {
+private fun lastTimeLine(sync: SyncStatus): String? {
+    if (sync.running || sync.storeUnreadable) return null
+    val now = currentTime()
+    val report = sync.lastReport
+    if (report?.outcome == SyncOutcome.COMPLETE) {
+        return if (now - report.atMs < DateUtils.MINUTE_IN_MILLIS) stringResource(R.string.sync_last_now) else stringResource(R.string.sync_last, ago(report.atMs, now))
+    }
     val at = sync.lastCompleteAtMs ?: return null
-    if (sync.running || sync.storeUnreadable || sync.lastReport?.outcome == SyncOutcome.COMPLETE) return null
-    return stringResource(R.string.sync_last_complete, ago(at, currentTime()))
+    return stringResource(R.string.sync_last_complete, ago(at, now))
 }

@@ -3,6 +3,7 @@
 package com.everysoft.paprelay.sync
 
 import android.content.Context
+import android.health.connect.HealthConnectException
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.RespiratoryRateRecord
@@ -55,7 +56,9 @@ class HealthConnectSink(private val context: Context) : HealthSink {
         } catch (e: Exception) {
             // Among these: Health Connect's rate limit, which the library reports as an illegal state.
             // The cause is kept for the type only; a record's own text holds a time and a rate, and is never logged.
-            throw HealthSinkException(notAllowed = false, cause = e)
+            val limited = generateSequence<Throwable>(e) { it.cause?.takeIf { cause -> cause !== it } }.take(MAX_CAUSE_DEPTH)
+                .any { it is HealthConnectException && it.errorCode == HealthConnectException.ERROR_RATE_LIMIT_EXCEEDED }
+            throw HealthSinkException(notAllowed = false, cause = e, rateLimited = limited)
         }
     }
 
@@ -77,5 +80,6 @@ class HealthConnectSink(private val context: Context) : HealthSink {
         /** Well inside what Health Connect takes in one call. */
         const val CHUNK = 500
         const val ANSWER_MS = 30_000L
+        const val MAX_CAUSE_DEPTH = 8
     }
 }

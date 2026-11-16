@@ -190,7 +190,7 @@ class DeviceCheck(
                 synchronized(report) {
                     report.setLength(0)
                     report.appendLine("PAPRelay device check  ${Instant.now()}")
-                    report.appendLine("app ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})  android ${Build.VERSION.RELEASE} sdk ${Build.VERSION.SDK_INT}")
+                    report.appendLine("app ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) ${BuildConfig.GIT_COMMIT}  android ${Build.VERSION.RELEASE} sdk ${Build.VERSION.SDK_INT}")
                     report.appendLine("phone ${Build.MANUFACTURER} ${Build.MODEL}  mode ${if (full) "full" else "reconnect"}")
                 }
                 val finished = withTimeoutOrNull(OVERALL_LIMIT_MS) { execute(full) }
@@ -224,13 +224,13 @@ class DeviceCheck(
     /**
      * Removes the stored pairing, what the check downloaded and what synchronising
      * remembers. Ignored while a run or a synchronisation is in progress; neither
-     * can start until it has finished.
+     * can start until it has finished. Returns false if it was ignored.
      */
     @Synchronized
-    fun forgetMachine() {
-        if (job?.isCompleted == false || _forgetting.value) return
+    fun forgetMachine(): Boolean {
+        if (job?.isCompleted == false || _forgetting.value) return false
         // Not under a synchronisation either: it is using the pairing this removes.
-        if (!claim.tryTake()) return
+        if (!claim.tryTake()) return false
         _forgetting.value = true
         scope.launch {
             try {
@@ -242,6 +242,7 @@ class DeviceCheck(
                 _forgetting.value = false
             }
         }
+        return true
     }
 
     /**
@@ -716,7 +717,7 @@ class DeviceCheck(
 
     private fun dataDirectory() = File(context.filesDir, "check")
 
-    private companion object {
+    internal companion object {
         const val HEALTH = CheckSteps.HEALTH
         const val SCAN = CheckSteps.SCAN
         const val PAIR = CheckSteps.PAIR

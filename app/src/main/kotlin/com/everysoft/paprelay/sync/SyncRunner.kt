@@ -5,15 +5,22 @@ package com.everysoft.paprelay.sync
 import android.content.Context
 import android.os.SystemClock
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.everysoft.paprelay.BuildConfig
 import com.everysoft.paprelay.as11.SpoolName
 import com.everysoft.paprelay.as11.SpoolRound
 import com.everysoft.paprelay.ble.MachineClaim
+import com.everysoft.paprelay.ble.PresenceWatch
+import com.everysoft.paprelay.pairing.PairingState
+import com.everysoft.paprelay.pairing.PairingStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -21,7 +28,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.time.DateTimeException
+import java.time.Instant
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
 
 /** What the screen needs to know about synchronising. */
@@ -29,14 +38,16 @@ class SyncStatus(
     val running: Boolean,
     val lastReport: SyncReport?,
     val lastCompleteAtMs: Long?,
-    /** True when the stored record of synchronising cannot be read. */
+    /** True when the stored record of synchronising is damaged and cannot be read. */
     val storeUnreadable: Boolean,
 )
 
 /**
- * Runs synchronisations for the app: on request, and on a schedule in the background.
- * Both go through the same engine, and both need the [claim] on the machine, so only one
- * thing talks to the machine at a time.
+ * Runs synchronisations for the app. There are three reasons for one: the user asks, the
+ * phone hears the machine come into range, and an hour has passed. All three are handed to
+ * the system as work to run, so that a run is not frozen or dropped when the screen goes
+ * off or the app is left; all go through the same engine, and all need the [claim] on the
+ * machine, so only one thing talks to the machine at a time.
  *
  * Synchronising is switched off in the debug build. Health Connect files records under the
  * app that wrote them, and the debug build is a different app to it than the released one:
@@ -48,9 +59,19 @@ class SyncRunner(
     connector: MachineConnector,
     sink: HealthSink,
     private val claim: MachineClaim,
+    private val pairings: PairingStore,
+    describe: (Throwable) -> String?,
 ) {
     private val store = SyncStore(File(context.noBackupFilesDir, "sync.json"))
-    private val engine = SyncEngine(connector, sink, store, System::currentTimeMillis, ::keepRaw, phoneClockWrong = ::phoneClockWrong)
+    private val engine =
+        SyncEngine(connector, sink, store, System::currentTimeMillis, ::keepRaw, phoneClockWrong = ::phoneClockWrong, describe = describe)
+    private val presence = PresenceWatch(context)
+
+    /** Asked for by hand and not yet begun. */
+    private val requested = AtomicBoolean(false)
+
+    /** A run of this object's holds the machine. */
+    private val active = AtomicBoolean(false)
 
     /** The report of the latest run in this process: shown even if it could not be stored. */
     @Volatile
@@ -65,11 +86,48 @@ class SyncRunner(
     suspend fun load() = refresh()
 
     /**
-     * Starts a run and returns at once. Once a run has been asked for by hand, the hourly
-     * background run is asked for too: the first one is always made with the user watching.
+     * Asks for a run now and returns at once. It is given to the system to run, so that it
+     * carries on if the screen goes off; if the system has not begun it within a few seconds
+     * it is run here instead.
      */
     fun syncNow() {
-        scope.launch { if (runOnce() != null) schedule() }
+        if (!enabled || !requested.compareAndSet(false, true)) return
+        publish()
+        enqueue(NOW_WORK, SyncWorker.TAG_NOW)
+        scope.launch {
+            delay(START_GRACE_MS)
+            if (requested.get()) {
+                WorkManager.getInstance(context).cancelUniqueWork(NOW_WORK)
+                if (runOnce() != null) keepWatch()
+            }
+        }
+    }
+
+    /** The phone has heard the paired machine come into range. */
+    fun onMachineHeard() {
+        if (!enabled) return
+        enqueue(HEARD_WORK, SyncWorker.TAG_HEARD)
+    }
+
+    /**
+     * The app has come to the front. If the last attempt is old, or was stopped by something
+     * the user may since have put right (Bluetooth, a permission), a run is started, so that
+     * what the screen says is how things are now. Never before the first run by hand.
+     */
+    fun onForeground() {
+        if (!enabled) return
+        scope.launch {
+            refresh()
+            val status = _status.value
+            val report = status.lastReport ?: return@launch
+            if (status.running || status.storeUnreadable) return@launch
+            val again = when (report.outcome) {
+                in PRECONDITIONS -> engine.blockedBy() == null
+                in USER_DECIDES -> false
+                else -> abs(System.currentTimeMillis() - report.atMs) > FRESH_MS
+            }
+            if (again) syncNow()
+        }
     }
 
     /**
@@ -78,17 +136,38 @@ class SyncRunner(
      * synchronise.
      */
     suspend fun runOnce(): SyncReport? {
-        if (!enabled || !claim.tryTake()) return null
-        setRunning(true)
+        if (!enabled) return null
+        if (!claim.tryTake()) {
+            requested.set(false)
+            publish()
+            return null
+        }
+        active.set(true)
+        requested.set(false)
+        publish()
         try {
+            // The machine does not answer a new connection in the first seconds after the last one ended.
+            delay(claim.restMs())
             return engine.sync()?.also { latest = it }
         } finally {
             // In this order, and at once: the screen must never show a run that holds nothing,
             // nor offer a button while the machine is still taken.
             claim.release()
-            setRunning(false)
+            active.set(false)
+            publish()
             withContext(NonCancellable) { refresh() }
         }
+    }
+
+    /**
+     * True if hearing the machine is no reason for a run just now: everything came across a
+     * short while ago, or an attempt of any kind was made in the last few minutes (a machine at
+     * the edge of range is heard, lost and heard again).
+     */
+    fun heardTooSoon(): Boolean {
+        val report = _status.value.lastReport ?: return false
+        val age = abs(System.currentTimeMillis() - report.atMs)
+        return age < HEARD_GAP_MS || (report.outcome == SyncOutcome.COMPLETE && age < FRESH_MS)
     }
 
     /**
@@ -99,7 +178,7 @@ class SyncRunner(
     fun acceptMachineClock() {
         scope.launch {
             change { it.with(clock = null).fromTheStart() }
-            runOnce()
+            syncNow()
         }
     }
 
@@ -107,7 +186,7 @@ class SyncRunner(
     fun rewriteEverything() {
         scope.launch {
             change { it.with(rewriteRequested = true).fromTheStart() }
-            runOnce()
+            syncNow()
         }
     }
 
@@ -120,7 +199,7 @@ class SyncRunner(
             engine.whileIdle { withContext(Dispatchers.IO) { store.delete() } }
             latest = null
             refresh()
-            runOnce()
+            syncNow()
         }
     }
 
@@ -129,10 +208,10 @@ class SyncRunner(
 
     /**
      * Forgets everything about synchronising, when the machine is forgotten, and stops the
-     * hourly run. Health Connect is not touched.
+     * background runs. Health Connect is not touched.
      */
     suspend fun forget() {
-        unschedule()
+        stopWatch()
         engine.whileIdle {
             withContext(Dispatchers.IO) {
                 store.delete()
@@ -143,15 +222,59 @@ class SyncRunner(
         refresh()
     }
 
-    /** Has the system run a synchronisation about once an hour from now on. Safe to call repeatedly. */
-    fun schedule() {
+    /**
+     * From now on: a run about once an hour, and one when the machine is heard coming into
+     * range. Asked for after a run by hand and at every start of the app. Safe to call repeatedly.
+     */
+    fun keepWatch() {
         if (!enabled) return
-        val hourly = PeriodicWorkRequestBuilder<SyncWorker>(1, TimeUnit.HOURS).build()
-        WorkManager.getInstance(context).enqueueUniquePeriodicWork(WORK_NAME, ExistingPeriodicWorkPolicy.KEEP, hourly)
+        val hourly = PeriodicWorkRequestBuilder<SyncWorker>(1, TimeUnit.HOURS)
+            // Not at once: the run that led here has only just finished.
+            .setInitialDelay(1, TimeUnit.HOURS)
+            .build()
+        WorkManager.getInstance(context).enqueueUniquePeriodicWork(HOURLY_WORK, ExistingPeriodicWorkPolicy.UPDATE, hourly)
+        listenForMachine()
     }
 
-    fun unschedule() {
-        WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
+    /**
+     * Asks the phone to say when the paired machine is heard. Renewed by every background run:
+     * the phone forgets the request when Bluetooth is switched off or the phone restarts. A
+     * request already in place is left as it is.
+     */
+    fun listenForMachine() {
+        if (!enabled) return
+        (pairings.state.value as? PairingState.Paired)?.let { presence.start(it.pairing.address) }
+    }
+
+    /** Stops the background runs. */
+    fun stopWatch() {
+        val work = WorkManager.getInstance(context)
+        for (name in listOf(HOURLY_WORK, NOW_WORK, HEARD_WORK)) work.cancelUniqueWork(name)
+        presence.stop()
+    }
+
+    /** The last attempts, for the saved report: outcomes, counts and failure labels only. */
+    fun reportText(): String {
+        val status = _status.value
+        val report = status.lastReport
+        return buildString {
+            appendLine("sync enabled $enabled")
+            if (status.storeUnreadable) appendLine("sync record unreadable")
+            if (report != null) {
+                appendLine("sync last ${report.outcome} at ${Instant.ofEpochMilli(report.atMs)} sessions ${report.sessions} written ${report.readingsWritten}")
+                report.code?.let { appendLine("  $it") }
+            }
+            status.lastCompleteAtMs?.let { appendLine("sync last complete at ${Instant.ofEpochMilli(it)}") }
+        }
+    }
+
+    private fun enqueue(name: String, tag: String) {
+        val request = OneTimeWorkRequestBuilder<SyncWorker>()
+            // Run promptly and kept alive while it runs; if the system has no room for that, as ordinary work.
+            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            .addTag(tag)
+            .build()
+        WorkManager.getInstance(context).enqueueUniqueWork(name, ExistingWorkPolicy.KEEP, request)
     }
 
     /** Waits for a run in progress to finish: it holds the state in hand, and would overwrite the change. */
@@ -160,16 +283,27 @@ class SyncRunner(
         refresh()
     }
 
-    private fun setRunning(running: Boolean) {
-        _status.update { SyncStatus(running, it.lastReport, it.lastCompleteAtMs, it.storeUnreadable) }
+    private fun publish() {
+        _status.update { SyncStatus(requested.get() || active.get(), it.lastReport, it.lastCompleteAtMs, it.storeUnreadable) }
     }
 
     /** Reads the stored report again. Whether a run is in progress is not its affair. */
     private suspend fun refresh() {
         val state = withContext(Dispatchers.IO) { runCatching { store.read() } }
-        // A run that could not store its report has still happened, and is what the screen should say.
-        val report = listOfNotNull(state.getOrNull()?.lastReport, latest).maxByOrNull { it.atMs }
-        _status.update { SyncStatus(it.running, report, state.getOrNull()?.lastCompleteAtMs, storeUnreadable = state.isFailure) }
+        _status.update { before ->
+            val stored = state.getOrNull()
+            when {
+                stored != null -> {
+                    // A run that could not store its report has still happened, and is what the screen should say.
+                    val report = listOfNotNull(stored.lastReport, latest).maxByOrNull { it.atMs }
+                    SyncStatus(before.running, report, stored.lastCompleteAtMs, storeUnreadable = false)
+                }
+                // Damaged: the user is told, and offered a fresh start.
+                state.exceptionOrNull() is SyncStateUnreadableException -> SyncStatus(before.running, latest, null, storeUnreadable = true)
+                // Could not be read this time (the storage was busy or full). What is known stays as it was.
+                else -> SyncStatus(before.running, latest ?: before.lastReport, before.lastCompleteAtMs, before.storeUnreadable)
+            }
+        }
     }
 
     /**
@@ -200,9 +334,31 @@ class SyncRunner(
     }
 
     private companion object {
-        const val WORK_NAME = "sync"
+        const val HOURLY_WORK = "sync"
+        const val NOW_WORK = "sync-now"
+        const val HEARD_WORK = "sync-heard"
         const val RAW_DIRECTORY = "raw"
         const val MAX_RAW_FILES = 400
         const val PHONE_CLOCK_TOLERANCE_MS = 30_000L
+
+        /** How long the system is given to begin a run asked for by hand. */
+        const val START_GRACE_MS = 4_000L
+
+        /** A complete run younger than this is not repeated just because the app is opened or the machine heard. */
+        const val FRESH_MS = 15L * 60 * 1000
+
+        /** The least time between an attempt of any kind and one begun because the machine was heard. */
+        const val HEARD_GAP_MS = 5L * 60 * 1000
+
+        /** Stopped before anything was asked of the machine, by something the user can put right. */
+        val PRECONDITIONS = setOf(
+            SyncOutcome.BLUETOOTH_OFF, SyncOutcome.BLUETOOTH_NOT_ALLOWED, SyncOutcome.HEALTH_CONNECT_NOT_ALLOWED,
+            SyncOutcome.HEALTH_CONNECT_UNAVAILABLE, SyncOutcome.NOT_PAIRED, SyncOutcome.PHONE_CLOCK_WRONG,
+        )
+
+        /** Trying again changes nothing until the user has acted. */
+        val USER_DECIDES = setOf(
+            SyncOutcome.CLOCK_CHANGED, SyncOutcome.PAIRING_REJECTED, SyncOutcome.WRONG_MACHINE, SyncOutcome.SOFTWARE_NOT_CONFIRMED,
+        )
     }
 }

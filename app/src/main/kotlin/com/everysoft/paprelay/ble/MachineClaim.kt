@@ -2,6 +2,7 @@
 // PAPRelay — Copyright (C) 2026 PAPRelay contributors.
 package com.everysoft.paprelay.ble
 
+import android.os.SystemClock
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -13,11 +14,29 @@ import java.util.concurrent.atomic.AtomicBoolean
 class MachineClaim {
     private val held = AtomicBoolean(false)
 
+    @Volatile
+    private var releasedAt = Long.MIN_VALUE
+
     /** Takes the claim, or returns false at once if something else holds it. */
     fun tryTake(): Boolean = held.compareAndSet(false, true)
 
     /** Gives it up. Only whoever took it may call this. */
     fun release() {
+        releasedAt = SystemClock.elapsedRealtime()
         held.set(false)
+    }
+
+    /**
+     * How long the holder should still wait before calling the machine: after a connection
+     * ends, the machine needs a few seconds before it answers a new one.
+     */
+    fun restMs(): Long {
+        val since = releasedAt
+        if (since == Long.MIN_VALUE) return 0
+        return (REST_MS - (SystemClock.elapsedRealtime() - since)).coerceIn(0, REST_MS)
+    }
+
+    private companion object {
+        const val REST_MS = 6_000L
     }
 }

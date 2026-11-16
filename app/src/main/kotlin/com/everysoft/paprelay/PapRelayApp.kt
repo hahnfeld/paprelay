@@ -28,7 +28,7 @@ class PapRelayApp : Application() {
         DeviceCheck(this, scope, pairingStore, scanner, healthConnect, claim) { sync.forget() }
     }
     val sync: SyncRunner by lazy {
-        SyncRunner(this, scope, GattMachineConnector(this, scope, pairingStore, scanner), HealthConnectSink(this), claim)
+        SyncRunner(this, scope, GattMachineConnector(this, scope, pairingStore, scanner), HealthConnectSink(this), claim, pairingStore, DeviceCheck::code)
     }
 
     override fun onCreate() {
@@ -38,8 +38,9 @@ class PapRelayApp : Application() {
             val pairing = pairingStore.load()
             sync.load()
             // Once the user has synchronised by hand, the system is asked to do it about once an
-            // hour. Asked again at every start, in case the system has dropped the request.
-            if (pairing is PairingState.Paired && sync.status.value.lastReport != null) sync.schedule()
+            // hour and when the machine comes into range. Asked again at every start, in case
+            // the system has dropped the request.
+            if (pairing is PairingState.Paired && sync.status.value.lastReport != null) sync.keepWatch()
         }
         // A check that was cut short may have left its test value in Health Connect.
         scope.launch { healthConnect.removeLeftover() }

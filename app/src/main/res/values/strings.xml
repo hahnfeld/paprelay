@@ -19,20 +19,23 @@
     <string name="action_pair">Pair the machine</string>
     <string name="action_device_check">Device check</string>
     <string name="action_rewrite">Write everything again</string>
+    <string name="action_open_health">Open Health Connect</string>
+    <string name="action_unused_setting">Open that setting</string>
 
     <!-- How synchronising stands. One sentence each. -->
     <string name="sync_running">Synchronising…</string>
     <string name="sync_never">PAPRelay has not synchronised yet.</string>
     <!-- %1$s is a time such as "5 minutes ago". -->
-    <string name="sync_complete">Health Connect is up to date. Last synchronised %1$s.</string>
-    <string name="sync_complete_now">Health Connect is up to date. Synchronised just now.</string>
+    <string name="sync_complete">Health Connect is up to date.</string>
+    <string name="sync_last">Last synchronised %1$s.</string>
+    <string name="sync_last_now">Synchronised just now.</string>
     <!-- %1$s is a time such as "5 minutes ago". Shown under a sentence that says what went wrong since. -->
     <string name="sync_last_complete">Last complete synchronisation: %1$s.</string>
     <string name="sync_partial">Not every night is in Health Connect yet. PAPRelay will try again.</string>
     <string name="sync_machine_away">The machine did not answer. It may be out of range. PAPRelay will try again.</string>
-    <string name="sync_bluetooth_not_allowed">PAPRelay is not allowed to use Bluetooth. Choose Synchronise now and allow it.</string>
-    <string name="sync_hc_not_allowed">PAPRelay is not allowed to write to Health Connect. Choose Synchronise now and allow it.</string>
-    <string name="sync_pairing_rejected">The machine no longer accepts this phone. Forget the machine and pair again.</string>
+    <string name="sync_bluetooth_not_allowed">PAPRelay is not allowed to use Bluetooth. Choose Synchronise now and allow it. If Android does not ask, allow Nearby devices in the app settings.</string>
+    <string name="sync_hc_not_allowed">PAPRelay is not allowed to write to Health Connect. Open Health Connect and allow respiratory rate for PAPRelay.</string>
+    <string name="sync_pairing_rejected">The machine no longer accepts this phone. Open Device check, choose Forget machine, and pair again.</string>
     <string name="sync_wrong_machine">The machine that answered is not the paired machine. Nothing was written.</string>
     <string name="sync_software_not_confirmed">PAPRelay cannot yet read this machine\'s software version. Nothing was written.</string>
     <string name="sync_clock_unreliable">The machine\'s clock cannot be trusted at the moment. PAPRelay will try again.</string>
@@ -76,7 +79,9 @@
     <string name="machine_unreadable">Pair the machine again</string>
     <string name="machine_unreadable_hint">This phone can no longer read its saved pairing. Put the machine in pairing mode and run the device check.</string>
     <string name="machine_unavailable">The saved pairing could not be read</string>
-    <string name="machine_unavailable_hint">Run the device check again. If this message stays, choose Forget machine and pair again.</string>
+    <string name="machine_unavailable_hint">Open Device check and run it. If this message stays, choose Forget machine there and pair again.</string>
+    <string name="unused_hint">Android pauses apps that are not opened for some months. PAPRelay would then stop synchronising. Turn off “Pause app activity if unused” for PAPRelay.</string>
+    <string name="busy_try_again">PAPRelay is busy. Try again in a moment.</string>
     <string name="machine_loading">Loading…</string>
 
     <string name="permission_needed">PAPRelay needs the Nearby devices permission to reach the machine. If Android does not ask for it, allow it in the app settings.</string>
@@ -195,6 +200,8 @@
     <string name="forget_title">Forget this machine?</string>
     <string name="forget_body">PAPRelay deletes its pairing and the data it downloaded. The last report can still be saved until you close the app. Data already in Health Connect stays there.</string>
     <string name="export_failed">The report could not be saved.</string>
+    <string name="accept_clock_title">Use the machine\'s clock as it is now?</string>
+    <string name="accept_clock_body">PAPRelay gives the nights since the last synchronisation times from the machine\'s clock as it is now. If the clock was changed after some of those nights, they get the wrong time. This cannot be undone.</string>
     <string name="rewrite_title">Write everything again?</string>
     <string name="rewrite_body">PAPRelay writes every night the machine still holds to Health Connect again. Use this if the data in Health Connect was deleted.</string>
 
@@ -206,7 +213,7 @@
     <string name="about_intended_use_heading">Intended use</string>
     <string name="about_intended_use">PAPRelay transfers, stores, converts and displays data your machine has already recorded. It does not interpret the data, raise alerts, give advice or control the machine.</string>
     <string name="about_check_heading">Device check</string>
-    <string name="about_check">The device check reads from the machine and changes nothing on it. It writes one test value to Health Connect and removes it again.</string>
+    <string name="about_check">The device check reads from the machine and changes none of its settings or data. Pairing replaces the myAir app\'s connection to the machine. The check writes one test value to Health Connect and removes it again.</string>
     <string name="about_disclaimer_heading">Not a medical device</string>
     <string name="about_disclaimer">PAPRelay is not intended to diagnose, treat, cure or prevent any condition, and must not be used to make diagnosis or treatment decisions. Values may be wrong, late or missing. It does not replace myAir, your equipment provider\'s reporting, or advice from a clinician.</string>
     <string name="about_affiliation">PAPRelay is an independent project. It is not affiliated with or endorsed by ResMed or Google. ResMed, AirSense and myAir are trademarks of ResMed. Android and Health Connect are trademarks of Google LLC.</string>
@@ -214,7 +221,7 @@
     <!-- Privacy screen, shown by Health Connect -->
     <string name="privacy_title">Privacy</string>
     <string name="privacy_heading_what">What PAPRelay does with your data</string>
-    <string name="privacy_what">PAPRelay reads therapy records from your machine over Bluetooth and stores them on this phone. It writes respiratory rate to Health Connect. It does this when you ask, and about once an hour in the background when the machine is in range.</string>
+    <string name="privacy_what">PAPRelay reads therapy records from your machine over Bluetooth and stores them on this phone. It writes respiratory rate to Health Connect. It does this when you ask, and from time to time in the background when the machine is in range.</string>
     <string name="privacy_heading_where">Where your data goes</string>
     <string name="privacy_where">Your data goes nowhere else. PAPRelay has no internet permission, no accounts, no analytics and no advertising. Data leaves the app only through Health Connect and through files you choose to save.</string>
     <string name="privacy_heading_read">What PAPRelay reads from Health Connect</string>

@@ -57,8 +57,12 @@ interface MachineConnector {
     suspend fun <T> withSession(block: suspend (MachineSession) -> T): T
 }
 
-/** Health Connect refused or failed. [notAllowed] when the cause is a missing permission. */
-class HealthSinkException(val notAllowed: Boolean, cause: Throwable? = null) : Exception("Health Connect did not accept the change", cause)
+/**
+ * Health Connect refused or failed. [notAllowed] when the cause is a missing permission;
+ * [rateLimited] when Health Connect has had enough calls for now and will take more later.
+ */
+class HealthSinkException(val notAllowed: Boolean, cause: Throwable? = null, val rateLimited: Boolean = false) :
+    Exception("Health Connect did not accept the change", cause)
 
 /** Where readings go. */
 interface HealthSink {
@@ -98,6 +102,8 @@ class SyncEngine(
     private val limitMs: Long = RUN_LIMIT_MS,
     /** True when the phone's clock is known to be wrong. Every time written is worked out from it. */
     private val phoneClockWrong: () -> Boolean = { false },
+    /** Turns a failure into a label for the saved report, with nothing private in it. */
+    private val describe: (Throwable) -> String? = { null },
 ) {
     private val running = Mutex()
 
@@ -121,6 +127,13 @@ class SyncEngine(
      */
     suspend fun <T> whileIdle(block: suspend () -> T): T = running.withLock { block() }
 
+    /**
+     * What stands in the way of a run before it has begun (Bluetooth off, a missing permission,
+     * no pairing, a wrong phone clock), or null. Asks nothing of the machine.
+     */
+    suspend fun blockedBy(): SyncOutcome? =
+        connector.notReady() ?: sink.notReady() ?: if (phoneClockWrong()) SyncOutcome.PHONE_CLOCK_WRONG else null
+
     private class Stop(val outcome: SyncOutcome) : Exception()
 
     private class Progress(var state: SyncState) {
@@ -137,10 +150,9 @@ class SyncEngine(
             return SyncReport(nowMs(), SyncOutcome.INTERNAL, 0, 0)
         }
         val progress = Progress(startedState)
+        var failure: Throwable? = null
         val outcome = try {
-            connector.notReady()?.let { throw Stop(it) }
-            sink.notReady()?.let { throw Stop(it) }
-            if (phoneClockWrong()) throw Stop(SyncOutcome.PHONE_CLOCK_WRONG)
+            blockedBy()?.let { throw Stop(it) }
             // A link that stalls without breaking must not hold the machine, or this run, for ever.
             // Whatever was finished before the limit stays finished; the next run takes up the rest.
             val finished = withTimeoutOrNull(limitMs) { connector.withSession { session -> run(session, progress) } }
@@ -158,16 +170,26 @@ class SyncEngine(
         } catch (e: As11AuthException.SessionProofRejected) {
             SyncOutcome.PAIRING_REJECTED
         } catch (e: As11Exception) {
+            failure = e
             SyncOutcome.CONNECTION_LOST
         } catch (e: HealthSinkException) {
-            if (e.notAllowed) SyncOutcome.HEALTH_CONNECT_NOT_ALLOWED else SyncOutcome.HEALTH_CONNECT_FAILED
+            failure = e.cause ?: e
+            when {
+                e.notAllowed -> SyncOutcome.HEALTH_CONNECT_NOT_ALLOWED
+                // Not a fault: Health Connect takes so many calls in a while, and the next run carries on.
+                e.rateLimited -> SyncOutcome.PARTIAL
+                else -> SyncOutcome.HEALTH_CONNECT_FAILED
+            }
         } catch (e: SpoolDecodeException) {
+            failure = e
             SyncOutcome.DATA_NOT_UNDERSTOOD
         } catch (e: Exception) {
+            failure = e
             SyncOutcome.INTERNAL
         }
         val now = nowMs()
-        val report = SyncReport(now, outcome, progress.sessions, progress.written)
+        val code = failure?.let { runCatching { describe(it) }.getOrNull() }?.take(SyncReport.MAX_CODE)
+        val report = SyncReport(now, outcome, progress.sessions, progress.written, code)
         val finished = progress.state.with(
             lastReport = report,
             lastCompleteAtMs = if (outcome == SyncOutcome.COMPLETE) now else progress.state.lastCompleteAtMs,

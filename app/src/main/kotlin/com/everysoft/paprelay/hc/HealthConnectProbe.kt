@@ -48,6 +48,15 @@ class HealthConnectProbe(private val context: Context) {
     suspend fun hasPermission(): Boolean =
         writePermission in HealthConnectClient.getOrCreate(context).permissionController.getGrantedPermissions()
 
+    /** The same, for the screen: false if Health Connect is not there, fails or does not answer soon. */
+    suspend fun allowedNow(): Boolean = try {
+        available && withTimeoutOrNull(RETRY_LIMIT_MS) { hasPermission() } == true
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        false
+    }
+
     /**
      * Writes the test value and removes it.
      *
@@ -128,8 +137,12 @@ class HealthConnectProbe(private val context: Context) {
                     true
                 } catch (e: CancellationException) {
                     throw e
-                } catch (e: Exception) {
+                } catch (e: IllegalArgumentException) {
+                    // Health Connect's "invalid argument": it will not have the request at all.
                     false
+                } catch (e: Exception) {
+                    // Anything else (a busy moment, too many calls) says nothing about the question.
+                    null
                 }
             }
         }

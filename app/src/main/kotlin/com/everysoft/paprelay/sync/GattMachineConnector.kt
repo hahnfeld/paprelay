@@ -100,7 +100,10 @@ class GattMachineConnector(
         /** A machine in the next room answers in a second or two. Longer than this and it is not there. */
         const val CONNECT_MS = 15_000L
 
-        /** A machine that is switched on announces itself several times a second. */
-        const val LISTEN_MS = 6_000L
+        /**
+         * A machine that is switched on announces itself several times a second, but a phone
+         * with its screen off listens only for a moment every few seconds.
+         */
+        const val LISTEN_MS = 12_000L
     }
 }

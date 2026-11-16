@@ -21,6 +21,14 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
+        // The commit, so that a report says exactly which build wrote it.
+        buildConfigField("String", "GIT_COMMIT", "\"" + (commit.orNull?.trim()?.ifEmpty { null } ?: "unknown") + "\"")
+    }
+
+    androidResources {
+        // The app's own text is English only for now. Without this the libraries' translations
+        // are packed in, and the phone is told the app speaks eighty languages.
+        localeFilters += "en"
     }
 
     // The release key lives outside the repository, and is named to the build only through the
@@ -29,12 +37,15 @@ android {
     val releaseKeystore = providers.environmentVariable("PAPRELAY_KEYSTORE")
     signingConfigs {
         if (releaseKeystore.isPresent) {
+            val password = providers.environmentVariable("PAPRELAY_KEYSTORE_PASSWORD").orNull
+                ?: throw GradleException("PAPRELAY_KEYSTORE is set, so PAPRELAY_KEYSTORE_PASSWORD must be set too")
             create("release") {
-                storeFile = file(releaseKeystore.get())
+                // Relative to where the build is started, not to this module.
+                storeFile = rootProject.file(releaseKeystore.get())
                 storeType = "PKCS12"
-                storePassword = providers.environmentVariable("PAPRELAY_KEYSTORE_PASSWORD").get()
+                storePassword = password
                 keyAlias = providers.environmentVariable("PAPRELAY_KEY_ALIAS").getOrElse("paprelay")
-                keyPassword = providers.environmentVariable("PAPRELAY_KEYSTORE_PASSWORD").get()
+                keyPassword = password
             }
         }
     }
@@ -52,8 +63,7 @@ android {
             // different app to it than the released one. It checks the connections and writes nothing.
             buildConfigField("boolean", "SYNC_ENABLED", "false")
             applicationIdSuffix = ".debug"
-            // The commit, so that a report says which build wrote it.
-            versionNameSuffix = "-debug+" + (commit.orNull?.trim()?.ifEmpty { null } ?: "unknown")
+            versionNameSuffix = "-debug"
         }
     }
 

@@ -47,6 +47,11 @@
             </intent-filter>
         </activity>
 
+        <!-- Told by the system, and by nothing else, when the paired machine is heard in range. -->
+        <receiver
+            android:name=".ble.PresenceReceiver"
+            android:exported="false" />
+
         <!-- The privacy text. Reached only through the alias below, which the system guards. -->
         <activity
             android:name=".ui.PrivacyActivity"

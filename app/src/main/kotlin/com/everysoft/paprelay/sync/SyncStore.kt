@@ -86,7 +86,16 @@ class SyncReport(
     /** Sessions looked at, and readings written or rewritten, in this attempt. */
     val sessions: Int,
     val readingsWritten: Int,
-)
+    /**
+     * For an attempt that failed: a label of what went wrong, for the saved report. Made the same
+     * way as the device check's, so it holds no health value, serial number or address.
+     */
+    val code: String? = null,
+) {
+    companion object {
+        const val MAX_CODE = 600
+    }
+}
 
 /**
  * The machine's clock as last measured: how far it was from true time, and what it read then.
@@ -229,6 +238,7 @@ class SyncStore(private val file: File) {
                         put("outcome", report.outcome.name)
                         put("sessions", report.sessions)
                         put("readingsWritten", report.readingsWritten)
+                        report.code?.let { put("code", it) }
                     },
                 )
             }
@@ -280,6 +290,7 @@ class SyncStore(private val file: File) {
                         outcome = SyncOutcome.valueOf(report.getValue("outcome").jsonPrimitive.content),
                         sessions = report.getValue("sessions").jsonPrimitive.long.toInt(),
                         readingsWritten = report.getValue("readingsWritten").jsonPrimitive.long.toInt(),
+                        code = (report["code"] as? JsonPrimitive)?.content?.take(SyncReport.MAX_CODE),
                     )
                 },
                 lastCompleteAtMs = (json["lastCompleteAtMs"] as? JsonPrimitive)?.long,
