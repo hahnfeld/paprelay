@@ -14,6 +14,9 @@ import kotlin.test.assertTrue
 
 class SummaryDecoderTest {
     private val noon = 1_794_000_000_000L
+    private val confirmed = Firmware.reportedByMachine("SW04600.19.8.8.0.dced143ae")
+
+    private fun summaries(payload: ByteArray) = SummaryDecoder.decode(payload, confirmed)
     private val day = 86_400_000L
 
     /** A night with therapy, laid out as the machine sends one; [extra] appends fields. */
@@ -52,7 +55,7 @@ class SummaryDecoderTest {
     }
 
     private fun one(payload: ByteArray): SummaryRecord {
-        val log = SummaryDecoder.decode(payload)
+        val log = summaries(payload)
         assertTrue(log.complete, "failures: ${log.failures.map { it.reason }}")
         return log.decoded.single()
     }
@@ -61,7 +64,7 @@ class SummaryDecoderTest {
 
     /** One record that must be refused, with nothing passed off as a night. */
     private fun refused(why: String, build: Proto.() -> Unit) {
-        val log = SummaryDecoder.decode(proto(build))
+        val log = summaries(proto(build))
         assertTrue(log.decoded.isEmpty(), "$why: decoded")
         assertEquals(1, log.failures.size, why)
     }
@@ -112,7 +115,7 @@ class SummaryDecoderTest {
 
     @Test
     fun `a day without therapy has a duration of zero and nothing else`() {
-        val log = SummaryDecoder.decode(proto { unusedDay(noon); night(start = noon + day); unusedDay(noon + 2 * day) })
+        val log = summaries(proto { unusedDay(noon); night(start = noon + day); unusedDay(noon + 2 * day) })
         assertTrue(log.complete)
         val (before, used, after) = log.decoded
         assertEquals(0, before.durationMinutes)
@@ -122,7 +125,7 @@ class SummaryDecoderTest {
         assertEquals(0, before.unknownFields)
         assertEquals(305, used.durationMinutes)
         assertEquals(MachineTime(noon + 2 * day), after.periodStart)
-        assertTrue(SummaryDecoder.decode(ByteArray(0)).entries.isEmpty())
+        assertTrue(summaries(ByteArray(0)).entries.isEmpty())
     }
 
     @Test
@@ -203,6 +206,20 @@ class SummaryDecoderTest {
     }
 
     @Test
+    fun `on software the layout was not confirmed on, nothing is served as confirmed`() {
+        val log = SummaryDecoder.decode(proto { night() }, Firmware.reportedByMachine("SW04600.20.1.0.0.abc"))
+        assertTrue(!log.layoutConfirmed)
+        val record = log.decoded.single()
+        assertTrue(!record.layoutConfirmed)
+        assertTrue(record.metrics.isEmpty())
+        // Everything read is still there, marked for what it is.
+        assertEquals(BigDecimal("8"), record.unconfirmedMetrics.getValue(SummaryMetric.INSPIRATORY_PRESSURE).getValue(Percentile.P50).exact())
+        assertEquals(305, record.durationMinutes)
+        assertTrue(night().layoutConfirmed)
+        assertTrue(summaries(proto { night() }).layoutConfirmed)
+    }
+
+    @Test
     fun `a session list that does not match its count is reported, not refused`() {
         val extra = night { message(6) { message(1) { varint(1, noon + 5_000); varint(2, 1) } } }
         assertEquals(3, extra.sessions.size)
@@ -219,7 +236,7 @@ class SummaryDecoderTest {
 
     @Test
     fun `one night that is not understood keeps its place and leaves the others standing`() {
-        val log = SummaryDecoder.decode(
+        val log = summaries(
             proto {
                 night(start = noon)
                 night(start = noon + day) { varint(7, 200) } // the index twice
@@ -274,21 +291,21 @@ class SummaryDecoderTest {
         refused("a record stamp from 1970", bare { varint(40, 1000) })
         refused("a session count beyond belief", bare { varint(39, 501) })
         // The limits themselves are accepted.
-        assertEquals(1, SummaryDecoder.decode(proto(bare { varint(7, 36_000); varint(5, 1440); zigzag(4, -1080) })).decoded.size)
-        assertEquals(1, SummaryDecoder.decode(proto(bare { message(6) { message(1) { varint(1, noon); varint(2, 1440) } } })).decoded.size)
-        assertEquals(1, SummaryDecoder.decode(proto(bare { message(6) { message(1) { varint(1, noon + day) } } })).decoded.size)
+        assertEquals(1, summaries(proto(bare { varint(7, 36_000); varint(5, 1440); zigzag(4, -1080) })).decoded.size)
+        assertEquals(1, summaries(proto(bare { message(6) { message(1) { varint(1, noon); varint(2, 1440) } } })).decoded.size)
+        assertEquals(1, summaries(proto(bare { message(6) { message(1) { varint(1, noon + day) } } })).decoded.size)
         // A day an hour short or long, as a clock change might make it.
-        assertEquals(1, SummaryDecoder.decode(proto { message(2) { varint(2, noon); varint(3, noon + day - 3_600_000) } }).decoded.size)
-        assertEquals(1, SummaryDecoder.decode(proto { message(2) { varint(2, noon); varint(3, noon + day + 3_600_000) } }).decoded.size)
+        assertEquals(1, summaries(proto { message(2) { varint(2, noon); varint(3, noon + day - 3_600_000) } }).decoded.size)
+        assertEquals(1, summaries(proto { message(2) { varint(2, noon); varint(3, noon + day + 3_600_000) } }).decoded.size)
     }
 
     @Test
     fun `a download that is not this log at all is refused whole`() {
         val whole = proto { night() }
-        assertFailsWith<SpoolDecodeException> { SummaryDecoder.decode(whole.copyOf(whole.size - 3)) }
-        assertFailsWith<SpoolDecodeException> { SummaryDecoder.decode(proto { message(5) { varint(2, noon); varint(3, noon + day) } }) }
-        assertFailsWith<SpoolDecodeException> { SummaryDecoder.decode(whole + proto { varint(3, 1) }) }
-        assertFailsWith<SpoolDecodeException> { SummaryDecoder.decode(proto { varint(2, 1) }) }
+        assertFailsWith<SpoolDecodeException> { summaries(whole.copyOf(whole.size - 3)) }
+        assertFailsWith<SpoolDecodeException> { summaries(proto { message(5) { varint(2, noon); varint(3, noon + day) } }) }
+        assertFailsWith<SpoolDecodeException> { summaries(whole + proto { varint(3, 1) }) }
+        assertFailsWith<SpoolDecodeException> { summaries(proto { varint(2, 1) }) }
     }
 
     @Test

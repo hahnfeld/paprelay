@@ -4,6 +4,7 @@ package com.everysoft.paprelay.as11.plan
 
 import com.everysoft.paprelay.as11.decode.MinuteRecord
 import com.everysoft.paprelay.as11.decode.MinuteSignal
+import com.everysoft.paprelay.as11.decode.SignalReadings
 import com.everysoft.paprelay.core.PapUnit
 import com.everysoft.paprelay.core.sync.RateReading
 import com.everysoft.paprelay.core.sync.SessionReadings
@@ -27,14 +28,20 @@ public sealed interface SessionPlan {
     /** The readings of the session, with what was left out. */
     public class Planned internal constructor(public val readings: SessionReadings, public val omitted: Omitted) : SessionPlan
 
-    /** The session could not be planned at all; nothing of it is to be written. */
-    public class Unplanned internal constructor(public val reason: Reason) : SessionPlan
+    /**
+     * The session could not be planned; nothing of it is to be written.
+     *
+     * @property minutesUnknown true when the machine did record the signal and it could not be
+     *   trusted, so that the session's minutes are unknown and synchronisation must not
+     *   move its place past this session. False when the machine simply recorded no such signal.
+     */
+    public class Unplanned internal constructor(public val reason: Reason, public val minutesUnknown: Boolean) : SessionPlan
 
     public enum class Reason {
-        /** The record has no respiratory-rate signal, or the signal held values that cannot be right. */
+        /** The record has no respiratory-rate signal that can be used. */
         NO_USABLE_RATE,
 
-        /** A leak limit is set, and the record has no usable leak signal to apply it with. */
+        /** A leak limit is set, and the record has no leak signal that can be used to apply it. */
         NO_USABLE_LEAK,
     }
 }
@@ -63,12 +70,19 @@ public object RespiratoryRatePlan {
      */
     public fun session(record: MinuteRecord, machineTag: String, leakLimitLitresPerMinute: Int?): SessionPlan {
         require(leakLimitLitresPerMinute == null || leakLimitLitresPerMinute >= 0) { "a leak limit is not negative" }
-        val rates = record.quantities(MinuteSignal.RESPIRATORY_RATE)
-            ?: return SessionPlan.Unplanned(SessionPlan.Reason.NO_USABLE_RATE)
+        val rates = when (val found = record.readings(MinuteSignal.RESPIRATORY_RATE)) {
+            is SignalReadings.Values -> found.values
+            SignalReadings.NotRecorded -> return SessionPlan.Unplanned(SessionPlan.Reason.NO_USABLE_RATE, minutesUnknown = false)
+            SignalReadings.Withheld, SignalReadings.Misread -> return SessionPlan.Unplanned(SessionPlan.Reason.NO_USABLE_RATE, minutesUnknown = true)
+        }
         val leaks = if (leakLimitLitresPerMinute == null) {
             null
         } else {
-            record.quantities(MinuteSignal.LEAK) ?: return SessionPlan.Unplanned(SessionPlan.Reason.NO_USABLE_LEAK)
+            when (val found = record.readings(MinuteSignal.LEAK)) {
+                is SignalReadings.Values -> found.values
+                // With a limit set and nothing to apply it with, the rates cannot be vouched for.
+                else -> return SessionPlan.Unplanned(SessionPlan.Reason.NO_USABLE_LEAK, minutesUnknown = true)
+            }
         }
         val limit = leakLimitLitresPerMinute?.let(::BigDecimal)
         val hundred = BigDecimal(100)
@@ -79,13 +93,18 @@ public object RespiratoryRatePlan {
         var wild = 0
         for (index in rates.indices) {
             val rate = rates[index]
+            if (rate == null) {
+                zero++
+                continue
+            }
             check(rate.unit == PapUnit.BREATHS_PER_MINUTE)
             // Exact: the stored value is in quarters, so hundredths are whole.
             val hundredths = rate.exact().multiply(hundred).intValueExact()
+            val leak = leaks?.get(index)
             when {
-                hundredths == 0 -> zero++
                 hundredths !in 1..RateReading.MAX_HUNDREDTHS -> wild++
-                leaks != null && litresPerMinute(leaks[index]) > limit -> leaky++
+                // Leak is the one signal in which zero is a reading, so it is never missing here.
+                leak != null && litresPerMinute(leak) > limit -> leaky++
                 else -> readings += RateReading(record.minuteEnd(index), hundredths)
             }
         }

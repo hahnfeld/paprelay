@@ -75,7 +75,14 @@ class QuantityTest {
     fun `machine time becomes real time only through a measured offset`() {
         val stamp = MachineTime(1_794_556_805_988)
         // The machine's clock was 361.6 s fast, so true time is earlier.
-        assertEquals(java.time.Instant.ofEpochMilli(1_794_556_444_388), stamp.toInstant(clockOffsetMs = -361_600))
+        val offset = ClockOffset.measured(machineNow = MachineTime(1_794_787_873_218), trueNowMs = 1_794_787_511_618)
+        assertEquals(-361_600, offset.millis)
+        assertEquals(java.time.Instant.ofEpochMilli(1_794_556_444_388), stamp.toInstant(offset))
+        // Stored and read back, it is the same correction.
+        assertEquals(offset, ClockOffset.restored(offset.millis))
+        // A machine whose clock is slow is corrected forwards.
+        assertEquals(java.time.Instant.ofEpochMilli(stamp.epochMs + 5_000), stamp.toInstant(ClockOffset.measured(MachineTime(1_000_000), 1_005_000)))
+        assertEquals("ClockOffset", offset.toString())
         assertEquals(MachineTime(1_794_556_865_988), stamp + 60_000)
         assertEquals(MachineTime(1_794_556_795_988), stamp - 10_000)
         assertEquals(60_000, (stamp + 60_000).since(stamp))
@@ -88,7 +95,8 @@ class QuantityTest {
         // Overflow cannot pass silently.
         assertFailsWith<ArithmeticException> { MachineTime(Long.MIN_VALUE) - 1 }
         assertFailsWith<ArithmeticException> { MachineTime(Long.MAX_VALUE).since(MachineTime(-1)) }
-        assertFailsWith<ArithmeticException> { MachineTime(Long.MAX_VALUE).toInstant(1) }
+        assertFailsWith<ArithmeticException> { MachineTime(Long.MAX_VALUE).toInstant(ClockOffset.restored(1)) }
+        assertFailsWith<ArithmeticException> { ClockOffset.measured(MachineTime(Long.MIN_VALUE), 1) }
         assertFailsWith<ArithmeticException> { MachineTime(Long.MAX_VALUE) + 1 }
     }
 

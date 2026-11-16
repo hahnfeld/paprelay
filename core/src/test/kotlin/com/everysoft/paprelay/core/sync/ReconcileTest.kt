@@ -2,6 +2,7 @@
 // PAPRelay — Copyright (C) 2026 PAPRelay contributors.
 package com.everysoft.paprelay.core.sync
 
+import com.everysoft.paprelay.core.ClockOffset
 import com.everysoft.paprelay.core.MachineTime
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -14,7 +15,8 @@ import kotlin.test.assertTrue
 class ReconcileTest {
     private val first = MachineTime(1_794_556_805_988)
     private val tag = "m-4f2a9c"
-    private val offset = -361_600L
+    private val offset = ClockOffset.restored(-361_600L)
+    private val drifted = ClockOffset.restored(-360_700L)
     private val now = 1_800_000_000_000L
 
     /** A session with a reading in each of the given minutes; the rate is the minute number plus twelve. */
@@ -25,15 +27,17 @@ class ReconcileTest {
 
     @Test
     fun `a session not written before is written whole, with the offset measured now`() {
-        val change = Reconcile.session(session(0, 1, 2), ledger = null, measuredClockOffsetMs = offset, nowMs = now)
+        val change = Reconcile.session(session(0, 1, 2), ledger = null, measuredOffset = offset, nowMs = now)
         assertEquals(listOf(id(0), id(1), id(2)), change.writes.map { it.recordId })
         assertEquals(listOf(12.0, 12.25, 12.5), change.writes.map { it.breathsPerMinute })
         assertEquals(listOf(first, first + 60_000, first + 120_000), change.writes.map { it.minuteEnd })
-        assertTrue(change.writes.all { it.clockOffsetMs == offset && it.version == now })
+        // The machine's clock was fast, so the real moment is earlier than its stamp.
+        assertEquals(java.time.Instant.ofEpochMilli(first.epochMs - 361_600), change.writes[0].time)
+        assertTrue(change.writes.all { it.clockOffset == offset && it.version == now })
         assertTrue(change.deleteRecordIds.isEmpty())
         val entry = change.ledgerAfter!!
         assertEquals(listOf(0, 1, 2), entry.minutes)
-        assertEquals(offset, entry.clockOffsetMs)
+        assertEquals(offset, entry.clockOffset)
         assertEquals(now, entry.version)
         assertEquals("$tag/${first.epochMs}", entry.key)
     }
@@ -42,7 +46,7 @@ class ReconcileTest {
     fun `the same download again changes nothing`() {
         val written = Reconcile.session(session(0, 1, 2), null, offset, now).ledgerAfter!!
         // Later, with a clock offset that has drifted a little, and a later clock.
-        val again = Reconcile.session(session(0, 1, 2), written, offset + 900, now + 86_400_000)
+        val again = Reconcile.session(session(0, 1, 2), written, drifted, now + 86_400_000)
         assertTrue(again.nothingToDo)
         assertSame(written, again.ledgerAfter)
     }
@@ -50,15 +54,15 @@ class ReconcileTest {
     @Test
     fun `a session that has grown is rewritten whole, at the offset it was first written with`() {
         val written = Reconcile.session(session(0, 1), null, offset, now).ledgerAfter!!
-        val change = Reconcile.session(session(0, 1, 2, 3), written, offset + 900, now + 3_600_000)
+        val change = Reconcile.session(session(0, 1, 2, 3), written, drifted, now + 3_600_000)
         assertEquals(listOf(id(0), id(1), id(2), id(3)), change.writes.map { it.recordId })
         // The first two minutes do not move by 0.9 s because the clock was measured again.
-        assertTrue(change.writes.all { it.clockOffsetMs == offset })
+        assertTrue(change.writes.all { it.clockOffset == offset })
         assertTrue(change.writes.all { it.version == now + 3_600_000 })
         assertTrue(change.deleteRecordIds.isEmpty())
         val after = change.ledgerAfter!!
         assertEquals(listOf(0, 1, 2, 3), after.minutes)
-        assertEquals(offset, after.clockOffsetMs)
+        assertEquals(offset, after.clockOffset)
     }
 
     @Test

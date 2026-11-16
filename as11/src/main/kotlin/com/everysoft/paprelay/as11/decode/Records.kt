@@ -60,7 +60,16 @@ public sealed interface RecordResult<out T> {
  * The bytes themselves are not kept here; whoever downloaded them keeps them, so
  * that a later version can decode what this one could not.
  */
-public class DecodedLog<T> internal constructor(entries: List<RecordResult<T>>) {
+public class DecodedLog<T> internal constructor(
+    entries: List<RecordResult<T>>,
+    /**
+     * Whether the machine's software is the one this log's layout was confirmed on
+     * ([Firmware.layoutsConfirmed]). When false, what was decoded follows the published
+     * description of the format and has not been checked against a real machine; it is
+     * fit to be kept and shown as such, not to be written into someone's health record.
+     */
+    public val layoutConfirmed: Boolean,
+) {
     public val entries: List<RecordResult<T>> = Collections.unmodifiableList(ArrayList(entries))
 
     /** The entries that were understood, in order. **Possibly not all of them**: see [complete]. */
@@ -68,6 +77,14 @@ public class DecodedLog<T> internal constructor(entries: List<RecordResult<T>>) 
 
     /** Every record of the log, or null if any entry failed. */
     public fun allOrNull(): List<T>? = if (complete) decoded else null
+
+    /**
+     * The records up to, but not including, the first entry that failed. The machine stores
+     * its logs in time order, so these are the ones a caller can act on and then move its
+     * place past, knowing nothing earlier is missing.
+     */
+    public fun beforeFirstFailure(): List<T> =
+        Collections.unmodifiableList(entries.takeWhile { it is RecordResult.Decoded }.map { (it as RecordResult.Decoded<T>).value })
 
     public val failures: List<RecordResult.Failed> = Collections.unmodifiableList(this.entries.filterIsInstance<RecordResult.Failed>())
 
@@ -102,7 +119,7 @@ internal class ResultSink<T> {
         }
     }
 
-    fun finish(): DecodedLog<T> = DecodedLog(entries)
+    fun finish(layoutConfirmed: Boolean): DecodedLog<T> = DecodedLog(entries, layoutConfirmed)
 }
 
 /**

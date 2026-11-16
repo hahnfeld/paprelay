@@ -16,9 +16,11 @@ import com.everysoft.paprelay.core.MachineTime
  *  - The record holds two time stamps, and in every event seen they were the
  *    same instant. A record in which they differ is refused, because what the
  *    difference would mean is not known.
- *  - For an apnoea that instant is when it **ended**: the machine reports it
- *    once it is over, with its length in [durationMs]. The SD card carries the
- *    same instant and the same length.
+ *  - For an obstructive or central apnoea (eight and one were seen) that
+ *    instant is when it **ended**: the machine reports an apnoea once it is
+ *    over, with its length in [durationMs]. The SD card carries the same
+ *    instant and the same length, and its own format documents that instant
+ *    as the end.
  *  - A hypopnoea carries no duration; its stamp matched the SD card's, and
  *    whether that is its start or its end cannot be told.
  *  - Usage events (mask on, therapy stop and so on) are moments.
@@ -47,6 +49,7 @@ public object EventDecoder {
     /** How many wrapper layers may sit between an envelope entry and an event. One has been seen. */
     private const val MAX_WRAPPERS = 2
     private const val MAX_CODE = 1_000_000
+    /** Generous: it guards against a mis-scaled value, and says nothing about how long an event can last. */
     private const val MAX_DURATION_MS = 24L * 60 * 60 * 1000
 
     /** The kinds whose stamp is known to be their end, so that an onset can be worked out. */
@@ -54,22 +57,30 @@ public object EventDecoder {
 
     /**
      * @param payload one verified download of `UsageEvents-TherapyStatusEvents`.
+     * @param firmware the software of the machine the download came from.
      * @throws SpoolDecodeException if the download as a whole is not this log.
      */
-    public fun usage(payload: ByteArray): DecodedLog<EventRecord<UsageEvent>> =
-        decode(payload, SpoolEnvelope.USAGE_EVENTS, "usage events", UsageEvent::fromCode)
+    public fun usage(payload: ByteArray, firmware: Firmware): DecodedLog<EventRecord<UsageEvent>> =
+        decode(payload, firmware, SpoolEnvelope.USAGE_EVENTS, "usage events", UsageEvent::fromCode)
 
     /**
      * @param payload one verified download of `TherapyEvents-RespiratoryEvents`.
+     * @param firmware the software of the machine the download came from.
      * @throws SpoolDecodeException if the download as a whole is not this log.
      */
-    public fun respiratory(payload: ByteArray): DecodedLog<EventRecord<RespiratoryEvent>> =
-        decode(payload, SpoolEnvelope.RESPIRATORY_EVENTS, "breathing events", RespiratoryEvent::fromCode)
+    public fun respiratory(payload: ByteArray, firmware: Firmware): DecodedLog<EventRecord<RespiratoryEvent>> =
+        decode(payload, firmware, SpoolEnvelope.RESPIRATORY_EVENTS, "breathing events", RespiratoryEvent::fromCode)
 
-    private fun <K : Any> decode(payload: ByteArray, envelopeField: Int, what: String, kindOf: (Int) -> K?): DecodedLog<EventRecord<K>> {
+    private fun <K : Any> decode(
+        payload: ByteArray,
+        firmware: Firmware,
+        envelopeField: Int,
+        what: String,
+        kindOf: (Int) -> K?,
+    ): DecodedLog<EventRecord<K>> {
         val sink = ResultSink<EventRecord<K>>()
         for (body in unwrap(payload, envelopeField, what)) collect(body, MAX_WRAPPERS, what, kindOf, sink)
-        return sink.finish()
+        return sink.finish(firmware.layoutsConfirmed)
     }
 
     /**

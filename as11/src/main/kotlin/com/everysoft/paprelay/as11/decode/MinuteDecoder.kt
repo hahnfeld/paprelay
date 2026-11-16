@@ -43,9 +43,9 @@ public class MinuteRecord internal constructor(
      */
     public val withheldSignals: Set<MinuteSignal>,
     /**
-     * Signals that were decoded but hold a value that cannot be a measurement: below zero,
-     * or above anything the machine can report. They are not served. What such a value
-     * means (a marker for a minute without data, perhaps) is not known.
+     * Signals that were decoded but hold, among the samples that certainly exist, a value
+     * that cannot be a measurement: below zero, or above anything the machine can report.
+     * They are not served. What such a value means is not known.
      */
     public val misreadSignals: Set<MinuteSignal>,
     /** Fields of the record this version does not understand. */
@@ -54,39 +54,47 @@ public class MinuteRecord internal constructor(
     /** The signals whose values can be read. */
     public val signals: Set<MinuteSignal> = Collections.unmodifiableSet(LinkedHashSet(series.keys))
 
+    /** The time stamp of the last sample that certainly exists. */
+    public val lastMinuteEnd: MachineTime get() = firstMinuteEnd + (sampleCount - 1).coerceAtLeast(0) * intervalMs
+
     /**
-     * The physical values of [signal], or null if the record does not serve that signal.
-     * A stored zero is passed on as zero; whether the machine uses it for "no breath
-     * detected" is not known, and is for the caller to weigh.
+     * What the record says about [signal]. The four answers call for different handling, so
+     * they are not folded into one "nothing":
+     *
+     *  - [SignalReadings.Values]: the physical values, one per minute.
+     *  - [SignalReadings.NotRecorded]: the machine stored no such signal in this record.
+     *    Nothing is missing.
+     *  - [SignalReadings.Withheld] and [SignalReadings.Misread]: the signal is there and
+     *    could not be trusted. Its minutes are **unknown**, and whoever is working through
+     *    the log in order must not move its place past this record on the strength of it.
      *
      * @param length how many samples to return: [sampleCount] unless the caller has settled
      *   the record's true length, which lies between [sampleCount] and `sampleCount + uncertainTail`.
      * @param allowUnconfirmed must be true to read a signal whose factor has not been
      *   confirmed against the SD card ([MinuteSignal.factorConfirmed]); such values may be wrong.
-     * @throws IllegalArgumentException if [length] is not possible for this record.
+     * @throws IllegalArgumentException if [length] is not possible for this record, or reaches
+     *   into a tail whose values cannot be measurements (which shows the tail to be padding).
      * @throws IllegalStateException if the signal's factor is unconfirmed and [allowUnconfirmed] is false.
      */
-    public fun quantities(signal: MinuteSignal, length: Int = sampleCount, allowUnconfirmed: Boolean = false): List<Quantity>? {
+    public fun readings(signal: MinuteSignal, length: Int = sampleCount, allowUnconfirmed: Boolean = false): SignalReadings {
         checkLength(length)
-        val values = series[signal] ?: return null
+        if (signal in withheldSignals) return SignalReadings.Withheld
+        if (signal in misreadSignals) return SignalReadings.Misread
+        val values = series[signal] ?: return SignalReadings.NotRecorded
         check(signal.factorConfirmed || allowUnconfirmed) { "the factor for $signal has not been confirmed" }
-        return List(length) { signal.scale.of(values[it].toLong(), signal.unit) }
-    }
-
-    /**
-     * One value of [quantities].
-     *
-     * @throws IndexOutOfBoundsException if [index] is not within [length].
-     */
-    public fun quantity(signal: MinuteSignal, index: Int, length: Int = sampleCount, allowUnconfirmed: Boolean = false): Quantity? {
-        checkIndex(index, length)
-        return quantities(signal, length, allowUnconfirmed)?.get(index)
+        require((sampleCount until length).all { values[it] in 0..signal.maxStored }) { "that length takes in values that cannot be measurements" }
+        return SignalReadings.Values(
+            List(length) { index ->
+                val stored = values[index]
+                if (stored == 0 && signal.zeroIsUnknown) null else signal.scale.of(stored.toLong(), signal.unit)
+            },
+        )
     }
 
     /**
      * The integers the machine stored for [signal], for export, or null if the record does
      * not serve that signal. **These are not physical values**: a stored respiratory rate of
-     * 60 means 15 breaths a minute. Use [quantities] for anything that is shown or passed on.
+     * 60 means 15 breaths a minute. Use [readings] for anything that is shown or passed on.
      *
      * @throws IllegalArgumentException if [length] is not possible for this record.
      */
@@ -98,26 +106,47 @@ public class MinuteRecord internal constructor(
     /**
      * When the minute that sample [index] describes ended: the sample's own time stamp.
      *
+     * @throws IllegalArgumentException if [length] is not possible for this record.
      * @throws IndexOutOfBoundsException if [index] is not within [length].
      */
     public fun minuteEnd(index: Int, length: Int = sampleCount): MachineTime {
-        checkIndex(index, length)
+        checkLength(length)
+        if (index !in 0 until length) throw IndexOutOfBoundsException("no such sample")
         return firstMinuteEnd + index * intervalMs
     }
 
-    /** When the minute that sample [index] describes began. For the first sample this is mask-on. */
+    /**
+     * When the minute that sample [index] describes began. For the first sample this is mask-on.
+     *
+     * @throws IllegalArgumentException if [length] is not possible for this record.
+     * @throws IndexOutOfBoundsException if [index] is not within [length].
+     */
     public fun minuteStart(index: Int, length: Int = sampleCount): MachineTime = minuteEnd(index, length) - intervalMs
 
-    private fun checkIndex(index: Int, length: Int) {
-        checkLength(length)
-        if (index !in 0 until length) throw IndexOutOfBoundsException("sample $index of $length")
+    private fun checkLength(length: Int) {
+        // No numbers in the message: how long someone wore a mask is not for a log.
+        require(length in sampleCount..sampleCount + uncertainTail) { "that length is not possible for this record" }
+    }
+}
+
+/** What a [MinuteRecord] says about one signal. See [MinuteRecord.readings]. */
+public sealed interface SignalReadings {
+    /**
+     * The values, one per minute. Null where the machine stored a zero for a signal in which
+     * zero is not a measurement ([MinuteSignal.zeroIsUnknown]): that minute has no known value.
+     */
+    public class Values internal constructor(values: List<Quantity?>) : SignalReadings {
+        public val values: List<Quantity?> = Collections.unmodifiableList(values)
     }
 
-    private fun checkLength(length: Int) {
-        require(length in sampleCount..sampleCount + uncertainTail) {
-            "a length of $length is not possible for this record ($sampleCount to ${sampleCount + uncertainTail})"
-        }
-    }
+    /** The record holds no such signal. */
+    public data object NotRecorded : SignalReadings
+
+    /** The signal is there but has not been confirmed on a real machine, so it was not decoded. */
+    public data object Withheld : SignalReadings
+
+    /** The signal was decoded and holds values that cannot be measurements. */
+    public data object Misread : SignalReadings
 }
 
 /** Decodes the `TherapyOneMinutePeriodic` log. */
@@ -137,19 +166,31 @@ public object MinuteDecoder {
 
     /**
      * @param payload one verified download of the per-minute log.
-     * @param applicationIdentifier the `ApplicationIdentifier` of the machine the download came from.
+     * @param firmware the software of the machine the download came from.
      * @throws SpoolDecodeException if the download as a whole is not this log, or comes from
-     *   firmware on which this log's layout has not been confirmed ([ConfirmedFirmware]).
+     *   software on which this log's layout has not been confirmed ([Firmware.layoutsConfirmed]).
      */
-    public fun decode(payload: ByteArray, applicationIdentifier: String): DecodedLog<MinuteRecord> {
-        if (!ConfirmedFirmware.covers(applicationIdentifier)) {
-            throw SpoolDecodeException("per-minute log: this machine's firmware has not been confirmed, so its data is not decoded")
+    public fun decode(payload: ByteArray, firmware: Firmware): DecodedLog<MinuteRecord> {
+        if (!firmware.layoutsConfirmed) {
+            throw SpoolDecodeException("per-minute log: this machine's software has not been confirmed, so its data is not decoded")
         }
         val sink = ResultSink<MinuteRecord>()
         var disagreement: String? = null
+        var previous: MinuteRecord? = null
         unwrap(payload, SpoolEnvelope.MINUTE_LOG, "per-minute log").forEachIndexed { index, body ->
+            val what = "per-minute record $index"
             try {
-                sink.attempt { record(body, "per-minute record $index") }
+                sink.attempt {
+                    val decoded = record(body, what)
+                    // The machine stores sessions in time order and they cannot overlap. One that
+                    // does not start after the one before it would collide with it minute for minute.
+                    val before = previous
+                    if (before != null && decoded.firstMinuteEnd <= before.lastMinuteEnd) {
+                        throw SpoolDecodeException("$what: not after the record before it")
+                    }
+                    previous = decoded
+                    decoded
+                }
             } catch (e: LengthDisagreement) {
                 sink.fail(e.message!!)
                 disagreement = disagreement ?: e.message
@@ -158,7 +199,7 @@ public object MinuteDecoder {
         // Signals that disagree about a record's length mean a modulus is wrong, and a wrong
         // modulus can pass in a short record. So one such record condemns the whole download.
         disagreement?.let { sink.failAll("per-minute log: not trusted, because $it") }
-        return sink.finish()
+        return sink.finish(layoutConfirmed = true)
     }
 
     private class Series(val start: MachineTime, val block: SampleBlock)
@@ -192,7 +233,7 @@ public object MinuteDecoder {
         if (found.isEmpty()) throw SpoolDecodeException("$what: no signals that can be decoded")
         // One minute, written as 1, is all that has been seen. The format allows other intervals,
         // and a misread interval would misplace every sample after the first.
-        if (interval != ONE_MINUTE) throw SpoolDecodeException("$what: unexpected sample interval (${interval ?: "none"})")
+        if (interval != ONE_MINUTE) throw SpoolDecodeException("$what: unexpected sample interval")
 
         val start = found.values.first().start
         if (found.values.any { it.start != start }) throw SpoolDecodeException("$what: the signals start at different times")
@@ -206,7 +247,9 @@ public object MinuteDecoder {
         // A series still counts towards the record's length when its values cannot be right:
         // where it ends does not depend on what it holds.
         val misread = found.filter { (signal, series) ->
-            (0 until atMost).any { series.block.samples[it] !in 0..signal.maxStored }
+            // Only among the samples that certainly exist: a doubtful tail is padding run on,
+            // and may wander anywhere without saying anything about the real ones.
+            (0 until atLeast).any { series.block.samples[it] !in 0..signal.maxStored }
         }.keys
         return MinuteRecord(
             firstMinuteEnd = start,
@@ -241,7 +284,7 @@ public object MinuteDecoder {
         }
         // Only one kind of series has ever been seen. Any other, a missing marker included
         // (which reads as kind zero), may mean the samples are not what is assumed here.
-        if (status != EXPECTED_STATUS) throw SpoolDecodeException("$what: unknown kind of series (${status ?: "none"})")
+        if (status != EXPECTED_STATUS) throw SpoolDecodeException("$what: unknown kind of series")
         val bytes = block ?: missing(what, "the sample block")
         val modulus = signal.modulus
         val decoded = if (modulus != null) {

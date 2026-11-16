@@ -12,6 +12,11 @@ import kotlin.test.assertTrue
 
 class EventDecoderTest {
     private val t = 1_794_000_000_000L
+    private val confirmed = Firmware.reportedByMachine("SW04600.19.8.8.0.dced143ae")
+
+    private fun usage(payload: ByteArray) = EventDecoder.usage(payload, confirmed)
+
+    private fun respiratory(payload: ByteArray) = EventDecoder.respiratory(payload, confirmed)
 
     private fun Proto.event(code: Long, start: Long, end: Long = start, duration: Long? = null) {
         varint(1, code)
@@ -26,7 +31,7 @@ class EventDecoderTest {
     @Test
     fun `a usage log as the machine sends it`() {
         val maskOn = t + 5_543
-        val log = EventDecoder.usage(
+        val log = usage(
             asCaptured(6) {
                 message(1) { event(7, t) }
                 message(1) { event(3, maskOn) }
@@ -47,7 +52,7 @@ class EventDecoderTest {
 
     @Test
     fun `a breathing event is stamped when it ended, and its onset is that less its duration`() {
-        val log = EventDecoder.respiratory(
+        val log = respiratory(
             asCaptured(4) {
                 message(1) { event(4, t, duration = 10_000) }
                 message(1) { event(3, t + 60_000, duration = 12_000) }
@@ -69,22 +74,22 @@ class EventDecoderTest {
 
     @Test
     fun `the same number means different things in the two logs`() {
-        val usage = EventDecoder.usage(asCaptured(6) { message(1) { event(3, t) } }).decoded.single()
-        val breathing = EventDecoder.respiratory(asCaptured(4) { message(1) { event(3, t) } }).decoded.single()
+        val usage = usage(asCaptured(6) { message(1) { event(3, t) } }).decoded.single()
+        val breathing = respiratory(asCaptured(4) { message(1) { event(3, t) } }).decoded.single()
         assertEquals(UsageEvent.MASK_ON, usage.kind)
         assertEquals(RespiratoryEvent.CENTRAL_APNEA, breathing.kind)
         // And a download is only ever read as the log it is.
-        assertFailsWith<SpoolDecodeException> { EventDecoder.usage(asCaptured(4) { message(1) { event(3, t) } }) }
-        assertFailsWith<SpoolDecodeException> { EventDecoder.respiratory(asCaptured(6) { message(1) { event(3, t) } }) }
+        assertFailsWith<SpoolDecodeException> { usage(asCaptured(4) { message(1) { event(3, t) } }) }
+        assertFailsWith<SpoolDecodeException> { respiratory(asCaptured(6) { message(1) { event(3, t) } }) }
     }
 
     @Test
     fun `events are found under zero, one or two wrappers, and no deeper`() {
         val direct = proto { message(6) { event(3, t) } }
         val twice = proto { message(6) { message(2) { message(1) { event(3, t) } }; message(2) { message(1) { event(2, t + 5) } } } }
-        assertEquals(listOf(3), EventDecoder.usage(direct).decoded.map { it.code })
-        assertEquals(listOf(3, 2), EventDecoder.usage(twice).decoded.map { it.code })
-        val thrice = EventDecoder.usage(proto { message(6) { message(2) { message(1) { message(1) { event(3, t) } } } } })
+        assertEquals(listOf(3), usage(direct).decoded.map { it.code })
+        assertEquals(listOf(3, 2), usage(twice).decoded.map { it.code })
+        val thrice = usage(proto { message(6) { message(2) { message(1) { message(1) { event(3, t) } } } } })
         assertTrue(thrice.decoded.isEmpty())
         assertEquals(1, thrice.failures.size)
         // What failed there held records, so more than one may be missing.
@@ -93,20 +98,20 @@ class EventDecoderTest {
 
     @Test
     fun `an empty log, or an empty wrapper, holds no events`() {
-        assertTrue(EventDecoder.usage(ByteArray(0)).entries.isEmpty())
-        val empty = EventDecoder.usage(asCaptured(6) {})
+        assertTrue(usage(ByteArray(0)).entries.isEmpty())
+        val empty = usage(asCaptured(6) {})
         assertTrue(empty.entries.isEmpty() && empty.complete)
     }
 
     @Test
     fun `a kind of event this version does not know is kept by number`() {
-        val event = EventDecoder.usage(asCaptured(6) { message(1) { event(42, t); varint(9, 3); bytes(17, "note".toByteArray()) } }).decoded.single()
+        val event = usage(asCaptured(6) { message(1) { event(42, t); varint(9, 3); bytes(17, "note".toByteArray()) } }).decoded.single()
         assertEquals(42, event.code)
         assertNull(event.kind)
         assertEquals(2, event.unknownFields)
         // The gaps in the numbering are not filled in.
-        assertNull(EventDecoder.usage(asCaptured(6) { message(1) { event(9, t) } }).decoded.single().kind)
-        assertNull(EventDecoder.respiratory(asCaptured(4) { message(1) { event(7, t) } }).decoded.single().kind)
+        assertNull(usage(asCaptured(6) { message(1) { event(9, t) } }).decoded.single().kind)
+        assertNull(respiratory(asCaptured(4) { message(1) { event(7, t) } }).decoded.single().kind)
     }
 
     @Test
@@ -127,7 +132,7 @@ class EventDecoderTest {
 
     @Test
     fun `one event that is not understood is reported in its place and leaves the others standing`() {
-        val log = EventDecoder.usage(
+        val log = usage(
             asCaptured(6) {
                 message(1) { event(3, t) }
                 message(1) { varint(1, 3); varint(2, t) } // no second stamp
@@ -146,7 +151,7 @@ class EventDecoderTest {
 
     /** One event that must be refused for the stated reason, between two that must survive it. */
     private fun refusedEvent(reason: String, build: Proto.() -> Unit) {
-        val log = EventDecoder.usage(asCaptured(6) { message(1) { event(7, t) }; message(1, build); message(1) { event(8, t + 1) } })
+        val log = usage(asCaptured(6) { message(1) { event(7, t) }; message(1, build); message(1) { event(8, t + 1) } })
         assertEquals(listOf(7, 8), log.decoded.map { it.code }, reason)
         val failure = log.failures.single()
         assertEquals(1, failure.ordinal, reason)
@@ -182,24 +187,38 @@ class EventDecoderTest {
         refusedEvent("neither an event") { }
         refusedEvent("neither an event") { varint(9, 1) }
         // The limits themselves are accepted.
-        assertEquals(1, EventDecoder.usage(asCaptured(6) { message(1) { event(3, 1_420_070_400_000) } }).decoded.size)
-        assertEquals(1, EventDecoder.usage(asCaptured(6) { message(1) { event(3, t, duration = 86_400_000) } }).decoded.size)
+        assertEquals(1, usage(asCaptured(6) { message(1) { event(3, 1_420_070_400_000) } }).decoded.size)
+        assertEquals(1, usage(asCaptured(6) { message(1) { event(3, t, duration = 86_400_000) } }).decoded.size)
     }
 
     @Test
     fun `an onset is worked out only for the kinds whose stamp is known to be their end`() {
-        fun onsetOf(code: Long) = EventDecoder.respiratory(asCaptured(4) { message(1) { event(code, t, duration = 10_000) } }).decoded.single().onset
+        fun onsetOf(code: Long) = respiratory(asCaptured(4) { message(1) { event(code, t, duration = 10_000) } }).decoded.single().onset
         assertEquals(MachineTime(t - 10_000), onsetOf(3))
         assertEquals(MachineTime(t - 10_000), onsetOf(4))
         // Never seen with a duration, so nothing is assumed about them, nor about kinds not known at all.
         for (code in listOf(2L, 5L, 6L, 8L, 9L, 42L)) assertNull(onsetOf(code), "code $code")
         // And a usage event is a moment, whatever number it carries.
-        assertNull(EventDecoder.usage(asCaptured(6) { message(1) { event(3, t, duration = 10_000) } }).decoded.single().onset)
+        assertNull(usage(asCaptured(6) { message(1) { event(3, t, duration = 10_000) } }).decoded.single().onset)
+    }
+
+    @Test
+    fun `a log says whether its layout was confirmed for the machine's software, and what can be acted on`() {
+        val payload = asCaptured(6) { message(1) { event(3, t) }; message(1) { event(2, t + 1) }; message(1) { varint(1, 3) }; message(1) { event(7, t + 2) } }
+        assertTrue(usage(payload).layoutConfirmed)
+        val other = EventDecoder.usage(payload, Firmware.reportedByMachine("SW04600.20.0.0.0.abc"))
+        assertTrue(!other.layoutConfirmed)
+        // Decoded all the same, for keeping and showing as unconfirmed.
+        assertEquals(listOf(3, 2, 7), other.decoded.map { it.code })
+        // Only what comes before the first failure can be acted on with nothing earlier missing.
+        assertEquals(listOf(3, 2), usage(payload).beforeFirstFailure().map { it.code })
+        assertNull(usage(payload).allOrNull())
+        assertEquals(2, usage(asCaptured(6) { message(1) { event(3, t) }; message(1) { event(2, t + 1) } }).allOrNull()!!.size)
     }
 
     @Test
     fun `a stray value among the records costs only itself`() {
-        val log = EventDecoder.usage(proto { message(6) { message(1) { message(1) { event(3, t) }; fixed32(2, 7); message(1) { event(2, t + 1) } } } })
+        val log = usage(proto { message(6) { message(1) { message(1) { event(3, t) }; fixed32(2, 7); message(1) { event(2, t + 1) } } } })
         assertEquals(listOf(3, 2), log.decoded.map { it.code })
         assertEquals(1, log.failures.single().ordinal)
     }
@@ -207,8 +226,8 @@ class EventDecoderTest {
     @Test
     fun `a download that is not this log at all is refused whole`() {
         val whole = asCaptured(6) { message(1) { event(3, t) } }
-        assertFailsWith<SpoolDecodeException> { EventDecoder.usage(whole.copyOf(whole.size - 1)) }
-        assertFailsWith<SpoolDecodeException> { EventDecoder.usage(whole + proto { varint(6, 1) }) }
-        assertFailsWith<SpoolDecodeException> { EventDecoder.usage(whole + proto { message(5) { event(3, t) } }) }
+        assertFailsWith<SpoolDecodeException> { usage(whole.copyOf(whole.size - 1)) }
+        assertFailsWith<SpoolDecodeException> { usage(whole + proto { varint(6, 1) }) }
+        assertFailsWith<SpoolDecodeException> { usage(whole + proto { message(5) { event(3, t) } }) }
     }
 }

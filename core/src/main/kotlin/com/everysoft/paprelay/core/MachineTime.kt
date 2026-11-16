@@ -13,15 +13,35 @@ import java.time.Instant
  * therefore not a real-world time, and this type keeps the two apart: the only
  * way to an [Instant] is through a measured clock offset.
  */
+/**
+ * How far the machine's clock is from true time: what must be added to a
+ * [MachineTime] to get the real moment. Negative when the machine's clock is fast.
+ *
+ * It can only be made from the two clocks read together, or read back from
+ * where one made that way was stored, so that the sign cannot be got wrong by
+ * hand: on the first machine examined a wrong sign would have put every
+ * reading twelve minutes out.
+ */
+@JvmInline
+public value class ClockOffset private constructor(public val millis: Long) {
+    override fun toString(): String = "ClockOffset"
+
+    public companion object {
+        /**
+         * @param machineNow what the machine's clock said.
+         * @param trueNowMs the true time at that same moment, in milliseconds since the epoch.
+         */
+        public fun measured(machineNow: MachineTime, trueNowMs: Long): ClockOffset = ClockOffset(Math.subtractExact(trueNowMs, machineNow.epochMs))
+
+        /** An offset read back from storage, where [millis] of one that was measured had been kept. */
+        public fun restored(millis: Long): ClockOffset = ClockOffset(millis)
+    }
+}
+
 @JvmInline
 public value class MachineTime(public val epochMs: Long) : Comparable<MachineTime> {
-    /**
-     * The real-world moment, given how far the machine's clock was from true time.
-     *
-     * @param clockOffsetMs true time minus machine time, in milliseconds: negative
-     *   when the machine's clock is fast.
-     */
-    public fun toInstant(clockOffsetMs: Long): Instant = Instant.ofEpochMilli(Math.addExact(epochMs, clockOffsetMs))
+    /** The real-world moment, given how far the machine's clock was from true time. */
+    public fun toInstant(offset: ClockOffset): Instant = Instant.ofEpochMilli(Math.addExact(epochMs, offset.millis))
 
     // The arithmetic below throws ArithmeticException on overflow, which no real time can cause.
 

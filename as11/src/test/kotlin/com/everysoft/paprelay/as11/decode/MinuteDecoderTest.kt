@@ -10,6 +10,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -17,8 +18,16 @@ class MinuteDecoderTest {
     private val t = 1_794_000_000_000L
 
     private companion object {
-        /** The firmware of the machine the layouts were confirmed on. */
-        const val FIRMWARE = "SW04600.19.8.8.0.dced143ae"
+        /** The software of the machine the layouts were confirmed on. */
+        val FIRMWARE = Firmware.reportedByMachine("SW04600.19.8.8.0.dced143ae")
+    }
+
+    private fun MinuteRecord.quantities(signal: MinuteSignal, length: Int = sampleCount, allowUnconfirmed: Boolean = false): List<com.everysoft.paprelay.core.Quantity?>? =
+        (readings(signal, length, allowUnconfirmed) as? SignalReadings.Values)?.values
+
+    private fun MinuteRecord.quantity(signal: MinuteSignal, index: Int, length: Int = sampleCount, allowUnconfirmed: Boolean = false): com.everysoft.paprelay.core.Quantity? {
+        minuteEnd(index, length) // the same bounds
+        return quantities(signal, length, allowUnconfirmed)?.get(index)
     }
 
     private fun Proto.signal(signal: MinuteSignal, samples: IntArray, start: Long = t, padWith: Int = 1, status: Long? = 1, modulus: Int? = signal.modulus) {
@@ -100,7 +109,7 @@ class MinuteDecoderTest {
         assertEquals(PapUnit.LITRES_PER_MINUTE, leakAt5.unit)
         assertEquals(BigDecimal("17.5"), record.quantity(MinuteSignal.RESPIRATORY_RATE, 7)!!.exact())
         assertEquals(BigDecimal("10.4"), record.quantity(MinuteSignal.INSPIRATORY_PRESSURE, 7)!!.exact())
-        assertEquals(rate.map { BigDecimal(it).divide(BigDecimal(4)).stripTrailingZeros() }, record.quantities(MinuteSignal.RESPIRATORY_RATE)!!.map { it.exact().stripTrailingZeros() })
+        assertEquals(rate.map { BigDecimal(it).divide(BigDecimal(4)).stripTrailingZeros() }, record.quantities(MinuteSignal.RESPIRATORY_RATE)!!.map { it!!.exact().stripTrailingZeros() })
         assertNull(record.quantity(MinuteSignal.MINUTE_VENTILATION, 0))
         assertNull(record.quantities(MinuteSignal.MINUTE_VENTILATION))
         assertFailsWith<IndexOutOfBoundsException> { record.quantity(MinuteSignal.LEAK, 12) }
@@ -142,6 +151,9 @@ class MinuteDecoderTest {
             setOf(MinuteSignal.SPO2, MinuteSignal.HEART_RATE, MinuteSignal.ALVEOLAR_MINUTE_VENTILATION, MinuteSignal.MEAN_INSPIRATORY_TIME),
             MinuteSignal.entries.filterNot { it.layoutConfirmed }.toSet(),
         )
+        assertEquals(SignalReadings.Withheld, record.readings(MinuteSignal.ALVEOLAR_MINUTE_VENTILATION))
+        assertEquals(SignalReadings.Withheld, record.readings(MinuteSignal.ALVEOLAR_MINUTE_VENTILATION, allowUnconfirmed = true))
+        assertEquals(SignalReadings.NotRecorded, record.readings(MinuteSignal.RESPIRATORY_RATE))
         // A withheld signal of another length altogether does not cost the record either.
         val odd = one(proto { message(5) { signal(MinuteSignal.LEAK, leak); signal(MinuteSignal.SPO2, IntArray(5) { 96 }); varint(15, 1) } })
         assertEquals(12, odd.sampleCount)
@@ -265,8 +277,11 @@ class MinuteDecoderTest {
         val record = one(proto { record(mapOf(MinuteSignal.LEAK to leak, MinuteSignal.RESPIRATORY_RATE to impossible, MinuteSignal.INSPIRATORY_PRESSURE to tooHigh)) })
         assertEquals(setOf(MinuteSignal.RESPIRATORY_RATE, MinuteSignal.INSPIRATORY_PRESSURE), record.misreadSignals)
         assertEquals(setOf(MinuteSignal.LEAK), record.signals)
-        assertNull(record.quantities(MinuteSignal.RESPIRATORY_RATE))
         assertNull(record.storedSamples(MinuteSignal.INSPIRATORY_PRESSURE))
+        // Each of the four answers is told apart: here, misread is not "not recorded".
+        assertEquals(SignalReadings.Misread, record.readings(MinuteSignal.RESPIRATORY_RATE))
+        assertEquals(SignalReadings.NotRecorded, record.readings(MinuteSignal.MINUTE_VENTILATION))
+        assertIs<SignalReadings.Values>(record.readings(MinuteSignal.LEAK))
         // The rest of the record stands, at the length all three series agree on.
         assertEquals(12, record.sampleCount)
         assertContentEquals(leak, record.storedSamples(MinuteSignal.LEAK))
@@ -277,12 +292,56 @@ class MinuteDecoderTest {
     }
 
     @Test
+    fun `a stored zero is no value at all, except for leak`() {
+        val record = one(proto { record(mapOf(MinuteSignal.LEAK to intArrayOf(0, 0, 3, 4), MinuteSignal.RESPIRATORY_RATE to intArrayOf(0, 56, 0, 60))) })
+        // Nobody breathes zero times a minute; what the machine means by it is not known.
+        assertEquals(listOf(null, "14", null, "15"), record.quantities(MinuteSignal.RESPIRATORY_RATE)!!.map { it?.exact()?.toPlainString() })
+        // A leak of zero is an ordinary, and welcome, reading.
+        assertEquals(listOf("0", "0", "3.6", "4.8"), record.quantities(MinuteSignal.LEAK)!!.map { it?.exact()?.toPlainString() })
+        assertTrue(record.misreadSignals.isEmpty())
+        assertEquals(listOf(MinuteSignal.LEAK), MinuteSignal.entries.filterNot { it.zeroIsUnknown })
+    }
+
+    @Test
+    fun `records must follow one another in time`() {
+        val hour = 3_600_000L
+        fun log(vararg starts: Long) = MinuteDecoder.decode(proto { for (start in starts) record(mapOf(MinuteSignal.LEAK to leak), start = start) }, FIRMWARE)
+        assertTrue(log(t, t + hour, t + 2 * hour).complete)
+        // Out of order, the same session twice, and one that begins inside the one before it.
+        assertEquals(listOf(1), log(t + hour, t, t + 2 * hour).failures.map { it.ordinal })
+        assertEquals(listOf(1), log(t, t, t + hour).failures.map { it.ordinal })
+        assertEquals(listOf(1), log(t, t + 11 * 60_000L).failures.map { it.ordinal }) // twelve samples: the last ends at t + 11 min
+        assertTrue(log(t, t + 12 * 60_000L).complete)
+        // The record after a refused one is measured against the last one accepted.
+        assertEquals(listOf(1, 2), log(t + hour, t, t + hour).failures.map { it.ordinal })
+    }
+
+    @Test
+    fun `a doubtful tail neither condemns a signal nor can be read when it cannot be real`() {
+        // A steep, steady climb, zero padded: the padding carries the climb on past anything measurable.
+        val climbing = IntArray(11) { 40 + it * 30 } // ends at 340, within 360; the next step would be 370
+        val record = one(proto { message(5) { signal(MinuteSignal.RESPIRATORY_RATE, climbing, padWith = 0); varint(15, 1) } })
+        assertTrue(record.uncertainTail > 0, "this needs a tail to mean anything")
+        // The certain samples are fine, so the signal is served.
+        assertTrue(record.misreadSignals.isEmpty())
+        assertEquals(record.sampleCount, record.quantities(MinuteSignal.RESPIRATORY_RATE)!!.size)
+        // Naming a length that takes in impossible values is refused: they show the tail to be padding.
+        val most = record.sampleCount + record.uncertainTail
+        if (record.storedSamples(MinuteSignal.RESPIRATORY_RATE, most)!!.any { it > 360 }) {
+            assertFailsWith<IllegalArgumentException> { record.readings(MinuteSignal.RESPIRATORY_RATE, most) }
+        }
+    }
+
+    @Test
     fun `data from firmware that has not been confirmed is not decoded`() {
         val payload = proto { record(mapOf(MinuteSignal.LEAK to leak)) }
-        assertEquals(1, MinuteDecoder.decode(payload, "SW04600.19.8.8.0.0123456789").decoded.size)
+        assertEquals(1, MinuteDecoder.decode(payload, Firmware.reportedByMachine("SW04600.19.8.8.0.0123456789")).decoded.size)
         for (other in listOf("SW04600.19.8.9.0.dced143ae", "SW04600.19.8.8.01.x", "SW04601.19.8.8.0.x", "", "19.8.8.0")) {
-            assertFailsWith<SpoolDecodeException>(other) { MinuteDecoder.decode(payload, other) }
+            val firmware = Firmware.reportedByMachine(other)
+            assertTrue(!firmware.layoutsConfirmed, other)
+            assertFailsWith<SpoolDecodeException>(other) { MinuteDecoder.decode(payload, firmware) }
         }
+        assertTrue(FIRMWARE.layoutsConfirmed)
     }
 
     @Test

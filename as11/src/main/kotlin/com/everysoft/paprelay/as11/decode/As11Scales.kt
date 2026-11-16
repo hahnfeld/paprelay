@@ -93,18 +93,31 @@ public enum class SummaryMetric(
 }
 
 /**
- * The firmware on which the layouts, moduli and factors in this file were
- * checked against a real machine and its SD card. Data from any other firmware
- * may be laid out differently, and the per-minute log in particular can decode
- * to wrong but plausible values when a modulus differs, so [MinuteDecoder]
- * refuses data from firmware not listed here.
+ * The software a machine reports itself to be running, as the thing that
+ * decides whether its data can be decoded with confidence.
+ *
+ * The layouts, moduli and factors in this file were checked against one real
+ * machine and its SD card: an AirSense 11 AutoSet on software 19.8.8.0. Data
+ * from other software may be laid out differently, and the per-minute log in
+ * particular can decode to wrong but plausible values when a modulus differs.
+ * That another build of 19.8.8.0, or another model running it, shares these
+ * layouts is an assumption, not something that has been seen.
  */
-public object ConfirmedFirmware {
-    /** `ApplicationIdentifier` prefixes: AirSense 11, software 19.8.8.0. */
-    private val prefixes = listOf("SW04600.19.8.8.0.")
+public class Firmware private constructor(public val applicationIdentifier: String) {
+    /** Whether this software is the one the layouts were confirmed on. */
+    public val layoutsConfirmed: Boolean get() = CONFIRMED_PREFIXES.any { applicationIdentifier.startsWith(it) }
 
-    /** @param applicationIdentifier the machine's `ApplicationIdentifier`, as it reports it. */
-    public fun covers(applicationIdentifier: String): Boolean = prefixes.any { applicationIdentifier.startsWith(it) }
+    public companion object {
+        /** `ApplicationIdentifier` prefixes: AirSense 11, software 19.8.8.0. */
+        private val CONFIRMED_PREFIXES = listOf("SW04600.19.8.8.0.")
+
+        /**
+         * @param applicationIdentifier the `ApplicationIdentifier` the machine gave **in the
+         *   connection the data came from**. Never a remembered or assumed value: a machine's
+         *   software can be updated between one connection and the next.
+         */
+        public fun reportedByMachine(applicationIdentifier: String): Firmware = Firmware(applicationIdentifier)
+    }
 }
 
 /**
@@ -124,6 +137,11 @@ public object ConfirmedFirmware {
  *   the confirmed signals this is the top of the range the SD card declares
  *   for the same signal; anything above it, or below zero, means the series
  *   was misread or holds a marker this version does not know.
+ * @property zeroIsUnknown true where a stored zero is not a measurement the
+ *   signal can have (nobody breathes zero times a minute), so that what the
+ *   machine means by it is not known. No zero occurred in the capture. Such
+ *   a minute is reported as having no value. Leak is the one signal where
+ *   zero is an ordinary reading.
  *
  * Evidence, from one AirSense 11 AutoSet on firmware 19.8.8.0 (2026-11-16):
  * three sessions of 123, 202 and 101 minutes, signals 1 to 7 present. With
@@ -142,8 +160,9 @@ public enum class MinuteSignal(
     public val layoutConfirmed: Boolean,
     public val factorConfirmed: Boolean,
     public val maxStored: Int = Short.MAX_VALUE.toInt(),
+    public val zeroIsUnknown: Boolean = true,
 ) {
-    LEAK(1, 4, Scale(6, 5), PapUnit.LITRES_PER_MINUTE, true, true, maxStored = 100), // 120 L/min
+    LEAK(1, 4, Scale(6, 5), PapUnit.LITRES_PER_MINUTE, true, true, maxStored = 100, zeroIsUnknown = false), // 120 L/min
     INSPIRATORY_PRESSURE(2, 4, Scale(1, 5), PapUnit.CM_H2O, true, true, maxStored = 250), // 50 cmH2O
     EXPIRATORY_PRESSURE(3, 2, Scale(1, 5), PapUnit.CM_H2O, true, true, maxStored = 250),
     RESPIRATORY_RATE(4, 8, Scale(1, 4), PapUnit.BREATHS_PER_MINUTE, true, true, maxStored = 360), // 90 breaths/min
@@ -179,9 +198,11 @@ public enum class UsageEvent(public val code: Int) {
 /**
  * Codes in the `TherapyEvents-RespiratoryEvents` log. The numbering has gaps.
  *
- * An entry is written when the event **ends** and is stamped with that moment;
- * see [EventRecord]. Seen in a real capture: hypopnoea, central and obstructive
- * apnoea. The other codes are as the reference gives them.
+ * Seen in a real capture: eight obstructive apnoeas, one central apnoea and two
+ * hypopnoeas. An apnoea is written when it ends and stamped with that moment;
+ * for a hypopnoea, which has no stored length, whether the stamp is its start
+ * or its end cannot be told. See [EventRecord]. The other codes are as the
+ * reference gives them and have not been seen.
  */
 public enum class RespiratoryEvent(public val code: Int) {
     NO_EVENT(1),

@@ -29,7 +29,7 @@ class RespiratoryRatePlanTest {
     }
 
     private fun record(vararg series: Pair<MinuteSignal, IntArray>, padWith: Int = 1): MinuteRecord =
-        MinuteDecoder.decode(proto { message(5) { for ((signal, samples) in series) signal(signal, samples, padWith); varint(15, 1) } }, "SW04600.19.8.8.0.x").decoded.single()
+        MinuteDecoder.decode(proto { message(5) { for ((signal, samples) in series) signal(signal, samples, padWith); varint(15, 1) } }, com.everysoft.paprelay.as11.decode.Firmware.reportedByMachine("SW04600.19.8.8.0.x")).decoded.single()
 
     //                       minute:   0   1   2   3   4   5    6   7
     private val rate = intArrayOf(43, 66, 52, 0, 54, 56, 360, 58) // quarters of a breath a minute
@@ -62,17 +62,25 @@ class RespiratoryRatePlanTest {
         val rateOnly = record(MinuteSignal.RESPIRATORY_RATE to rate)
         assertEquals(7, assertIs<SessionPlan.Planned>(RespiratoryRatePlan.session(rateOnly, tag, null)).readings.readings.size)
         // With a limit set and nothing to apply it with, nothing is written: not "everything".
-        assertEquals(SessionPlan.Reason.NO_USABLE_LEAK, assertIs<SessionPlan.Unplanned>(RespiratoryRatePlan.session(rateOnly, tag, 24)).reason)
+        val noLeak = assertIs<SessionPlan.Unplanned>(RespiratoryRatePlan.session(rateOnly, tag, 24))
+        assertEquals(SessionPlan.Reason.NO_USABLE_LEAK, noLeak.reason)
+        assertTrue(noLeak.minutesUnknown)
         assertFailsWith<IllegalArgumentException> { RespiratoryRatePlan.session(both, tag, -1) }
     }
 
     @Test
     fun `a session with no rate that can be trusted is not planned at all`() {
         val leakOnly = record(MinuteSignal.LEAK to leak)
-        assertEquals(SessionPlan.Reason.NO_USABLE_RATE, assertIs<SessionPlan.Unplanned>(RespiratoryRatePlan.session(leakOnly, tag, 24)).reason)
+        val noRate = assertIs<SessionPlan.Unplanned>(RespiratoryRatePlan.session(leakOnly, tag, 24))
+        assertEquals(SessionPlan.Reason.NO_USABLE_RATE, noRate.reason)
+        // The machine recorded no rate at all: nothing is missing, and there is nothing to wait for.
+        assertTrue(!noRate.minutesUnknown)
         // A rate series holding an impossible value is set aside by the decoder, whole.
         val wild = record(MinuteSignal.LEAK to leak, MinuteSignal.RESPIRATORY_RATE to rate.copyOf().also { it[2] = 361 })
-        assertEquals(SessionPlan.Reason.NO_USABLE_RATE, assertIs<SessionPlan.Unplanned>(RespiratoryRatePlan.session(wild, tag, 24)).reason)
+        val misread = assertIs<SessionPlan.Unplanned>(RespiratoryRatePlan.session(wild, tag, 24))
+        assertEquals(SessionPlan.Reason.NO_USABLE_RATE, misread.reason)
+        // Here the minutes exist and could not be read: they are unknown, not absent.
+        assertTrue(misread.minutesUnknown)
         // And the same for a leak series, when the leak rule is on.
         val wildLeak = record(MinuteSignal.LEAK to leak.copyOf().also { it[2] = -1 }, MinuteSignal.RESPIRATORY_RATE to rate)
         assertEquals(SessionPlan.Reason.NO_USABLE_LEAK, assertIs<SessionPlan.Unplanned>(RespiratoryRatePlan.session(wildLeak, tag, 24)).reason)

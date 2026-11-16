@@ -5,7 +5,7 @@ package com.everysoft.paprelay.as11.decode
 import java.io.ByteArrayOutputStream
 
 /** Writes protobuf by hand, independently of the reader under test. */
-internal class Proto {
+public class Proto {
     private val out = ByteArrayOutputStream()
 
     private fun raw(value: Long) {
@@ -17,36 +17,36 @@ internal class Proto {
         out.write(v.toInt())
     }
 
-    fun varint(field: Int, value: Long): Proto = apply {
+    public fun varint(field: Int, value: Long): Proto = apply {
         raw((field.toLong() shl 3) or 0)
         raw(value)
     }
 
-    fun zigzag(field: Int, value: Long): Proto = varint(field, (value shl 1) xor (value shr 63))
+    public fun zigzag(field: Int, value: Long): Proto = varint(field, (value shl 1) xor (value shr 63))
 
-    fun bytes(field: Int, value: ByteArray): Proto = apply {
+    public fun bytes(field: Int, value: ByteArray): Proto = apply {
         raw((field.toLong() shl 3) or 2)
         raw(value.size.toLong())
         out.write(value)
     }
 
-    fun message(field: Int, build: Proto.() -> Unit): Proto = bytes(field, Proto().apply(build).toByteArray())
+    public fun message(field: Int, build: Proto.() -> Unit): Proto = bytes(field, Proto().apply(build).toByteArray())
 
-    fun fixed32(field: Int, value: Int): Proto = apply {
+    public fun fixed32(field: Int, value: Int): Proto = apply {
         raw((field.toLong() shl 3) or 5)
         repeat(4) { out.write(value ushr (8 * it)) }
     }
 
-    fun toByteArray(): ByteArray = out.toByteArray()
+    public fun toByteArray(): ByteArray = out.toByteArray()
 }
 
-internal fun proto(build: Proto.() -> Unit): ByteArray = Proto().apply(build).toByteArray()
+public fun proto(build: Proto.() -> Unit): ByteArray = Proto().apply(build).toByteArray()
 
 /**
  * Compresses a series the way the machine does; written separately from the
  * decoder. [padWith] fills the spare bits of the last byte.
  */
-internal fun riceBlock(samples: IntArray, modulus: Int, padWith: Int = 1): ByteArray {
+public fun riceBlock(samples: IntArray, modulus: Int, padWith: Int = 1): ByteArray {
     require(samples.size >= 2)
     val bits = ArrayList<Int>()
     val k = Integer.numberOfTrailingZeros(modulus)
@@ -67,5 +67,5 @@ internal fun riceBlock(samples: IntArray, modulus: Int, padWith: Int = 1): ByteA
     return out
 }
 
-internal fun int16Block(samples: IntArray): ByteArray =
+public fun int16Block(samples: IntArray): ByteArray =
     ByteArray(samples.size * 2) { i -> (samples[i / 2] shr (8 * (i % 2))).toByte() }
