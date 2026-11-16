@@ -114,6 +114,34 @@ class SampleSeriesTest {
     }
 
     @Test
+    fun `a block that ends in a run of ones shows its padding, and everything before it is real`() {
+        // Seeds 10 and 12 at modulus 4, then d=0 four times (twelve bits) and four ones of padding.
+        val block = SampleSeries.decode(byteArrayOf(10, 0, 12, 0, 0x00, 0x0F), modulus = 4)
+        assertContentEquals(intArrayOf(10, 12, 14, 16, 18, 20), block.samples)
+        // Two of those codes begin in the last seven bits. By position alone they would be in
+        // doubt; the padding after them settles it.
+        assertEquals(6, block.certain)
+        // The same codes with zeros in the padding's place: more zero codes, and no way to tell.
+        val zeros = SampleSeries.decode(byteArrayOf(10, 0, 12, 0, 0x00, 0x00), modulus = 4)
+        assertEquals(7, zeros.samples.size)
+        assertEquals(5, zeros.certain)
+        // Ending exactly on a code shows no padding either way, so position still decides.
+        val exact = SampleSeries.decode(byteArrayOf(10, 0, 12, 0, 0x00, 0x00, 0x00), modulus = 4)
+        assertEquals(2 + 8, exact.samples.size)
+        assertEquals(2 + 6, exact.certain)
+        // Any series, padded as the machine pads: nothing is in doubt unless it ends on a byte boundary.
+        val random = Random(7)
+        repeat(300) {
+            val modulus = intArrayOf(2, 4, 8)[random.nextInt(3)]
+            var value = random.nextInt(100)
+            val samples = IntArray(3 + random.nextInt(50)) { value += random.nextInt(7) - 3; value }
+            val decoded = SampleSeries.decode(encode(samples, modulus, padWith = 1), modulus)
+            assertContentEquals(samples, decoded.samples)
+            assertTrue(decoded.certain <= samples.size)
+        }
+    }
+
+    @Test
     fun `what is left unread is counted exactly`() {
         // Sixteen one-bit codes at modulus 1.
         val zeros = byteArrayOf(0, 0, 0, 0, 0x00, 0x00)

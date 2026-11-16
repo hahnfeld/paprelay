@@ -9,9 +9,11 @@ package com.everysoft.paprelay.as11.decode
  * A decoded series, with what is known about where it really ends.
  *
  * The stream carries no sample count and ends on a byte boundary, so up to
- * seven of its last bits are padding. Padding of zeros decodes as extra samples
- * that continue the last slope, and nothing in the block can tell those from
- * real ones. The true length is therefore somewhere from [certain] to
+ * seven of its last bits are padding. The machine has been seen to pad with
+ * ones (firmware 19.8.8.0: every one of 21 captured blocks either ended in a
+ * run of ones or ended exactly on a code), and such padding is recognised.
+ * Padding of zeros would decode as extra samples that continue the last
+ * slope, and nothing in the block could tell those from real ones. The true length is therefore somewhere from [certain] to
  * `samples.size`, and only the caller can settle it, from what else it knows:
  * the other signals in the same record, an uncompressed signal's length, or the
  * time until the next record. A caller that cannot settle it must not store
@@ -21,8 +23,11 @@ public class SampleBlock internal constructor(
     /** Everything the bits can express, padding included. */
     public val samples: IntArray,
     /**
-     * How many leading samples are definitely real: those whose code began
-     * before the last seven bits of the block. Equal to `samples.size` when
+     * How many leading samples are definitely real. When the block ends in an
+     * unfinished run of ones, that run is the padding and every sample is
+     * real. Otherwise only those whose code began before the last seven bits
+     * are counted: a block that ends exactly on a code cannot show whether its
+     * last codes were data or zero padding. Equal to `samples.size` when
      * nothing is in doubt.
      */
     public val certain: Int,
@@ -126,6 +131,10 @@ public object SampleSeries {
                 // The bits ran out part-way through a code. At the very end that is padding;
                 // any earlier and the block has been cut short.
                 if (!mayBePadding) throw SpoolDecodeException("sample block ends in the middle of a sample")
+                // An unfinished run of ones is the padding itself, in plain sight: the machine
+                // fills its last byte with ones, which can never complete a code. Everything
+                // before such a run was written on purpose.
+                if (!terminated && bit > codeStart) certain = count
                 exhausted = true
                 break
             }

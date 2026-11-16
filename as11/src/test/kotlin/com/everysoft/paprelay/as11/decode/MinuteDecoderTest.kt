@@ -74,15 +74,16 @@ class MinuteDecoderTest {
 
     @Test
     fun `every signal's field, modulus, factor and unit match the published table`() {
-        // rpc_spools.md, "TherapyOneMinutePeriodic records", and the reference decoder's moduli.
+        // rpc_spools.md, "TherapyOneMinutePeriodic records", and the reference decoder's moduli,
+        // except respiratory rate (8) and minute ventilation (4), which a real capture corrected.
         assertEquals(
             listOf(
                 "LEAK 1 m4 6/5 LITRES_PER_MINUTE",
                 "INSPIRATORY_PRESSURE 2 m4 1/5 CM_H2O",
                 "EXPIRATORY_PRESSURE 3 m2 1/5 CM_H2O",
-                "RESPIRATORY_RATE 4 m4 1/4 BREATHS_PER_MINUTE",
+                "RESPIRATORY_RATE 4 m8 1/4 BREATHS_PER_MINUTE",
                 "INSPIRATORY_DURATION 5 m4 1/25 SECONDS",
-                "MINUTE_VENTILATION 6 m8 2/5 LITRES_PER_MINUTE",
+                "MINUTE_VENTILATION 6 m4 2/5 LITRES_PER_MINUTE",
                 "IE_RATIO 7 m4 4/1 PERCENT",
                 "SPO2 8 mnull 1/1 PERCENT",
                 "HEART_RATE 9 mnull 1/1 BEATS_PER_MINUTE",
@@ -173,6 +174,43 @@ class MinuteDecoderTest {
     }
 
     @Test
+    fun `padding of ones, as the machine writes it, leaves no doubt about the length`() {
+        val random = Random(20261116)
+        var sawPadding = 0
+        repeat(200) {
+            val n = 3 + random.nextInt(60)
+            val series = MinuteSignal.entries.filter { it.modulus != null }.associateWith {
+                var value = 40 + random.nextInt(20)
+                IntArray(n) { value += random.nextInt(5) - 2; value }
+            }
+            val record = MinuteDecoder.decode(
+                proto { message(5) { for ((signal, samples) in series) signal(signal, samples, padWith = 1) } },
+            ).records.single()
+            // Nine signals: at least one does not end on a byte boundary, shows its padding, and settles the rest.
+            assertEquals(n, record.sampleCount)
+            assertEquals(0, record.uncertainTail)
+            for ((signal, samples) in series) assertContentEquals(samples, record.storedSamples(signal))
+            sawPadding++
+        }
+        assertEquals(200, sawPadding)
+    }
+
+    @Test
+    fun `a wrong modulus is caught by the other signals`() {
+        // This is how the reference's respiratory-rate modulus was found to be wrong: decoded
+        // with the wrong one, a series comes out a different length from its neighbours.
+        val wrong = proto {
+            message(5) {
+                signal(MinuteSignal.LEAK, leak)
+                message(MinuteSignal.RESPIRATORY_RATE.field) { varint(1, 1); varint(2, t); bytes(3, riceBlock(rate, 4)) }
+            }
+        }
+        val log = MinuteDecoder.decode(wrong)
+        assertTrue(log.records.isEmpty())
+        assertEquals(1, log.failures.size)
+    }
+
+    @Test
     fun `several records decode independently`() {
         val records = MinuteDecoder.decode(
             proto {
@@ -203,7 +241,7 @@ class MinuteDecoderTest {
                     signal(MinuteSignal.LEAK, leak)
                     message(12) { varint(1, 1) }
                     varint(16, 3)
-                    message(MinuteSignal.RESPIRATORY_RATE.field) { varint(1, 1); varint(2, t); bytes(3, riceBlock(rate, 4)); varint(7, 9) }
+                    message(MinuteSignal.RESPIRATORY_RATE.field) { varint(1, 1); varint(2, t); bytes(3, riceBlock(rate, 8)); varint(7, 9) }
                 }
             },
         ).records.single()

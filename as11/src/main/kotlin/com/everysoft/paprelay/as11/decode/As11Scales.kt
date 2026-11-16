@@ -88,6 +88,25 @@ public enum class SummaryMetric(
  *
  * @property modulus the Rice modulus of the compressed series, or null where
  *   the machine stores plain int16 samples (the oximeter signals).
+ *
+ * Two moduli differ from the reference decoder, which has respiratory rate at
+ * 4 and minute ventilation at 8. A capture from an AirSense 11 AutoSet
+ * (firmware 19.8.8.0, 2026-11-16) decodes only the other way round: with 8 and
+ * 4 every signal of every record has the same length, that length is the
+ * session's length in minutes, and the values agree with the machine's own
+ * nightly percentiles; with the reference's values the two series run to the
+ * wrong length and to impossible values. Signals 1 to 7 are confirmed by that
+ * capture. The oximeter signals, alveolar ventilation (18) and mean inspiratory
+ * time (21) were not present in it and are as the reference gives them; a
+ * wrong modulus there cannot pass unnoticed, because the signals of a record
+ * must agree on their length.
+ *
+ * Factors: leak, both pressures, respiratory rate and minute ventilation agree
+ * with the machine's nightly percentiles for the same nights (leak exactly; the
+ * others within one step of their resolution). [INSPIRATORY_DURATION] and
+ * [IE_RATIO] have nothing to be compared with in that capture, and the first
+ * gives values near half a second, which is short for a breath in: treat both
+ * as unconfirmed until they are checked against the SD card.
  */
 public enum class MinuteSignal(
     public val field: Int,
@@ -98,9 +117,9 @@ public enum class MinuteSignal(
     LEAK(1, 4, Scale(6, 5), PapUnit.LITRES_PER_MINUTE),
     INSPIRATORY_PRESSURE(2, 4, Scale(1, 5), PapUnit.CM_H2O),
     EXPIRATORY_PRESSURE(3, 2, Scale(1, 5), PapUnit.CM_H2O),
-    RESPIRATORY_RATE(4, 4, Scale(1, 4), PapUnit.BREATHS_PER_MINUTE),
+    RESPIRATORY_RATE(4, 8, Scale(1, 4), PapUnit.BREATHS_PER_MINUTE),
     INSPIRATORY_DURATION(5, 4, Scale(1, 25), PapUnit.SECONDS),
-    MINUTE_VENTILATION(6, 8, Scale(2, 5), PapUnit.LITRES_PER_MINUTE),
+    MINUTE_VENTILATION(6, 4, Scale(2, 5), PapUnit.LITRES_PER_MINUTE),
     IE_RATIO(7, 4, Scale(4, 1), PapUnit.PERCENT),
     SPO2(8, null, Scale.ONE, PapUnit.PERCENT),
     HEART_RATE(9, null, Scale.ONE, PapUnit.BEATS_PER_MINUTE),
