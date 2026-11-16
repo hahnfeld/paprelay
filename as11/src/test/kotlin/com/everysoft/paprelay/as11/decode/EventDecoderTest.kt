@@ -84,16 +84,20 @@ class EventDecoderTest {
     }
 
     @Test
-    fun `events are found under zero, one or two wrappers, and no deeper`() {
-        val direct = proto { message(6) { event(3, t) } }
-        val twice = proto { message(6) { message(2) { message(1) { event(3, t) } }; message(2) { message(1) { event(2, t + 5) } } } }
-        assertEquals(listOf(3), usage(direct).decoded.map { it.code })
-        assertEquals(listOf(3, 2), usage(twice).decoded.map { it.code })
-        val thrice = usage(proto { message(6) { message(2) { message(1) { message(1) { event(3, t) } } } } })
-        assertTrue(thrice.decoded.isEmpty())
-        assertEquals(1, thrice.failures.size)
+    fun `only the nesting the machine uses is read as events`() {
+        // Events directly in the entry, or a layer deeper than seen, are not waved through.
+        val direct = usage(proto { message(6) { event(3, t) } })
+        assertTrue(direct.decoded.isEmpty() && !direct.complete)
+        val deeper = usage(proto { message(6) { message(2) { message(1) { message(1) { event(3, t) } } } } })
+        assertTrue(deeper.decoded.isEmpty())
         // What failed there held records, so more than one may be missing.
-        assertTrue(thrice.failures.single().severalRecords)
+        assertTrue(deeper.failures.single().severalRecords)
+        // Several lists in one entry, and several entries, are the same nesting.
+        val lists = usage(proto { message(6) { message(1) { message(1) { event(3, t) } }; message(1) { message(1) { event(2, t + 5) } } } })
+        assertEquals(listOf(3, 2), lists.decoded.map { it.code })
+        val entries = usage(proto { message(6) { message(1) { message(1) { event(3, t) } } }; message(6) { message(1) { message(1) { event(2, t + 5) } } } })
+        assertEquals(listOf(3, 2), entries.decoded.map { it.code })
+        assertTrue(entries.complete)
     }
 
     @Test
@@ -150,13 +154,13 @@ class EventDecoderTest {
     }
 
     /** One event that must be refused for the stated reason, between two that must survive it. */
-    private fun refusedEvent(reason: String, build: Proto.() -> Unit) {
+    private fun refusedEvent(reason: String, several: Boolean = false, build: Proto.() -> Unit) {
         val log = usage(asCaptured(6) { message(1) { event(7, t) }; message(1, build); message(1) { event(8, t + 1) } })
         assertEquals(listOf(7, 8), log.decoded.map { it.code }, reason)
         val failure = log.failures.single()
         assertEquals(1, failure.ordinal, reason)
         assertTrue(reason in failure.reason, "expected \"$reason\" in \"${failure.reason}\"")
-        assertTrue(!failure.severalRecords, reason)
+        assertEquals(several, failure.severalRecords, reason)
     }
 
     @Test
@@ -175,17 +179,25 @@ class EventDecoderTest {
         refusedEvent("field 2 appears twice") { event(3, t); varint(2, t) }
         refusedEvent("field 3 appears twice") { event(3, t); varint(3, t) }
         refusedEvent("field 4 appears twice") { event(3, t, duration = 5); varint(4, 5) }
-        refusedEvent("unexpected wire type") { event(3, t); bytes(4, byteArrayOf(1)) }
-        refusedEvent("unexpected wire type") { varint(1, 3); varint(2, t); bytes(3, byteArrayOf(1)) }
-        refusedEvent("contains events") { event(3, t); message(5) { event(2, t) } }
-        refusedEvent("contains events") { event(3, t); message(5) { message(1) { event(2, t) } } }
-        refusedEvent("contains events") { event(3, t); message(5) { message(1) { message(1) { event(2, t) } } } }
+        // A record that fails with nested content in it may have held more than one event.
+        refusedEvent("unexpected wire type", several = true) { event(3, t); bytes(4, byteArrayOf(1)) }
+        refusedEvent("unexpected wire type", several = true) { varint(1, 3); varint(2, t); bytes(3, byteArrayOf(1)) }
+        refusedEvent("contains events", several = true) { event(3, t); message(5) { event(2, t) } }
+        refusedEvent("contains events", several = true) { event(3, t); message(5) { message(1) { event(2, t) } } }
+        refusedEvent("contains events", several = true) { event(3, t); message(5) { message(1) { message(1) { message(1) { message(1) { event(2, t) } } } } } }
+        // A list that carries a value of its own beside its events is not read as one event.
+        refusedEvent("unexpected wire type", several = true) { varint(1, 3); message(1) { event(2, t) }; message(1) { event(4, t) } }
+        refusedEvent("contains events", several = true) { varint(1, 3); varint(2, t); varint(3, t); message(7) { event(2, t) }; message(7) { event(4, t) } }
+        // The range of fields that make a record an event: 1 to 4, no more.
+        refusedEvent("neither an event") { varint(5, 3) }
+        refusedEvent("code is missing") { varint(4, 5_000) }
         // Two stamps that differ have never been seen, and what the difference would mean is not known.
         refusedEvent("two time stamps differ") { event(3, t, t + 5_000, duration = 5_000) }
         refusedEvent("two time stamps differ") { event(3, t + 5_000, t, duration = 5_000) }
         // An empty record where an event belongs is a missing event, not nothing.
         refusedEvent("neither an event") { }
         refusedEvent("neither an event") { varint(9, 1) }
+        refusedEvent("neither an event", several = true) { message(1) { event(3, t) } }
         // The limits themselves are accepted.
         assertEquals(1, usage(asCaptured(6) { message(1) { event(3, 1_420_070_400_000) } }).decoded.size)
         assertEquals(1, usage(asCaptured(6) { message(1) { event(3, t, duration = 86_400_000) } }).decoded.size)
@@ -220,7 +232,7 @@ class EventDecoderTest {
     fun `a stray value among the records costs only itself`() {
         val log = usage(proto { message(6) { message(1) { message(1) { event(3, t) }; fixed32(2, 7); message(1) { event(2, t + 1) } } } })
         assertEquals(listOf(3, 2), log.decoded.map { it.code })
-        assertEquals(1, log.failures.single().ordinal)
+        assertEquals(1, log.failures.size)
     }
 
     @Test

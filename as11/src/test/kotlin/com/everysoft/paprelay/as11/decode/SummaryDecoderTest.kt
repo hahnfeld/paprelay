@@ -71,7 +71,7 @@ class SummaryDecoderTest {
 
     private fun refusedNight(why: String, extra: Proto.() -> Unit) = refused(why) { night(extra = extra) }
 
-    private fun bare(build: Proto.() -> Unit): Proto.() -> Unit = { message(2) { varint(2, noon); varint(3, noon + day); build() } }
+    private fun bare(build: Proto.() -> Unit): Proto.() -> Unit = { message(2) { varint(1, 1); varint(2, noon); varint(3, noon + day); build() } }
 
     @Test
     fun `a night decodes to the machine's own figures`() {
@@ -190,6 +190,8 @@ class SummaryDecoderTest {
         // One impossible zero is enough, even beside values that look fine.
         assertEquals(setOf(SummaryMetric.SPO2), night { message(28) { varint(2, 0); varint(3, 9_600); varint(4, 9_900) } }.misreadMetrics)
         // An index that cannot be right is set aside in the same way.
+        // The cap itself is a value; one more is not.
+        assertTrue(one(proto(bare { varint(7, 36_000) })).misreadIndices.isEmpty())
         val wild = one(proto(bare { varint(5, 60); varint(7, 36_001); varint(8, 150) }))
         assertEquals(setOf(SummaryIndex.AHI), wild.misreadIndices)
         assertNull(wild.indices[SummaryIndex.AHI])
@@ -267,12 +269,15 @@ class SummaryDecoderTest {
     fun `a record that contradicts the layout is refused, not guessed at`() {
         refused("no period start") { message(2) { varint(1, 1); varint(3, noon + day) } }
         refused("no period end") { message(2) { varint(1, 1); varint(2, noon) } }
-        refused("a period that runs backwards") { message(2) { varint(2, noon + day); varint(3, noon) } }
-        refused("a period of a millisecond") { message(2) { varint(2, noon); varint(3, noon + 1) } }
-        refused("a period of thirty days") { message(2) { varint(2, noon); varint(3, noon + 30 * day) } }
-        refused("a period under twenty-three hours") { message(2) { varint(2, noon); varint(3, noon + day - 3_600_001) } }
-        refused("a period over twenty-five hours") { message(2) { varint(2, noon); varint(3, noon + day + 3_600_001) } }
-        refused("times in seconds") { message(2) { varint(2, noon / 1000); varint(3, (noon + day) / 1000) } }
+        refused("a period that runs backwards") { message(2) { varint(1, 1); varint(2, noon + day); varint(3, noon) } }
+        refused("a period of a millisecond") { message(2) { varint(1, 1); varint(2, noon); varint(3, noon + 1) } }
+        refused("a period of thirty days") { message(2) { varint(1, 1); varint(2, noon); varint(3, noon + 30 * day) } }
+        refused("a period under twenty-three hours") { message(2) { varint(1, 1); varint(2, noon); varint(3, noon + day - 3_600_001) } }
+        refused("a period over twenty-five hours") { message(2) { varint(1, 1); varint(2, noon); varint(3, noon + day + 3_600_001) } }
+        refused("a period of an odd length") { message(2) { varint(1, 1); varint(2, noon); varint(3, noon + day - 1_800_000) } }
+        refused("no record marker") { message(2) { varint(2, noon); varint(3, noon + day) } }
+        refused("another kind of record") { message(2) { varint(1, 7); varint(2, noon); varint(3, noon + day) } }
+        refused("times in seconds") { message(2) { varint(1, 1); varint(2, noon / 1000); varint(3, (noon + day) / 1000) } }
         refusedNight("an index twice") { varint(7, 200) }
         refusedNight("a metric twice") { message(15) { varint(2, 900) } }
         refused("a percentile twice", bare { message(15) { varint(2, 1); varint(2, 2) } })
@@ -295,15 +300,15 @@ class SummaryDecoderTest {
         assertEquals(1, summaries(proto(bare { message(6) { message(1) { varint(1, noon); varint(2, 1440) } } })).decoded.size)
         assertEquals(1, summaries(proto(bare { message(6) { message(1) { varint(1, noon + day) } } })).decoded.size)
         // A day an hour short or long, as a clock change might make it.
-        assertEquals(1, summaries(proto { message(2) { varint(2, noon); varint(3, noon + day - 3_600_000) } }).decoded.size)
-        assertEquals(1, summaries(proto { message(2) { varint(2, noon); varint(3, noon + day + 3_600_000) } }).decoded.size)
+        assertEquals(1, summaries(proto { message(2) { varint(1, 1); varint(2, noon); varint(3, noon + day - 3_600_000) } }).decoded.size)
+        assertEquals(1, summaries(proto { message(2) { varint(1, 1); varint(2, noon); varint(3, noon + day + 3_600_000) } }).decoded.size)
     }
 
     @Test
     fun `a download that is not this log at all is refused whole`() {
         val whole = proto { night() }
         assertFailsWith<SpoolDecodeException> { summaries(whole.copyOf(whole.size - 3)) }
-        assertFailsWith<SpoolDecodeException> { summaries(proto { message(5) { varint(2, noon); varint(3, noon + day) } }) }
+        assertFailsWith<SpoolDecodeException> { summaries(proto { message(5) { varint(1, 1); varint(2, noon); varint(3, noon + day) } }) }
         assertFailsWith<SpoolDecodeException> { summaries(whole + proto { varint(3, 1) }) }
         assertFailsWith<SpoolDecodeException> { summaries(proto { varint(2, 1) }) }
     }

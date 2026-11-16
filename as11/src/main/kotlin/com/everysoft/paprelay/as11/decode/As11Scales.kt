@@ -105,11 +105,11 @@ public enum class SummaryMetric(
  */
 public class Firmware private constructor(public val applicationIdentifier: String) {
     /** Whether this software is the one the layouts were confirmed on. */
-    public val layoutsConfirmed: Boolean get() = CONFIRMED_PREFIXES.any { applicationIdentifier.startsWith(it) }
+    public val layoutsConfirmed: Boolean get() = CONFIRMED.any { it.matches(applicationIdentifier) }
 
     public companion object {
-        /** `ApplicationIdentifier` prefixes: AirSense 11, software 19.8.8.0. */
-        private val CONFIRMED_PREFIXES = listOf("SW04600.19.8.8.0.")
+        /** `ApplicationIdentifier` forms: AirSense 11, software 19.8.8.0, any build. Nothing looser. */
+        private val CONFIRMED = listOf(Regex("SW04600\\.19\\.8\\.8\\.0\\.[0-9a-f]{1,40}"))
 
         /**
          * @param applicationIdentifier the `ApplicationIdentifier` the machine gave **in the

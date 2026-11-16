@@ -86,8 +86,9 @@ public class Quantity(public val raw: Long, public val scale: Scale, public val 
      */
     public fun valueIn(target: PapUnit): Double = when {
         target == unit -> value
-        larger(unit) == target -> (raw * scale.numerator * 60).toDouble() / scale.denominator
-        larger(target) == unit -> (raw * scale.numerator).toDouble() / (scale.denominator * 60L)
+        // Through exact decimals: sixty times the largest stored value is more than a double holds exactly.
+        larger(unit) == target -> inLarger().toDouble()
+        larger(target) == unit -> exact().divide(BigDecimal(60), java.math.MathContext.DECIMAL128).toDouble()
         else -> throw IllegalArgumentException("$unit cannot be expressed in $target")
     }
 

@@ -29,7 +29,7 @@ class RespiratoryRatePlanTest {
     }
 
     private fun record(vararg series: Pair<MinuteSignal, IntArray>, padWith: Int = 1): MinuteRecord =
-        MinuteDecoder.decode(proto { message(5) { for ((signal, samples) in series) signal(signal, samples, padWith); varint(15, 1) } }, com.everysoft.paprelay.as11.decode.Firmware.reportedByMachine("SW04600.19.8.8.0.x")).decoded.single()
+        MinuteDecoder.decode(proto { message(5) { for ((signal, samples) in series) signal(signal, samples, padWith); varint(15, 1) } }, com.everysoft.paprelay.as11.decode.Firmware.reportedByMachine("SW04600.19.8.8.0.abc123")).decoded.single()
 
     //                       minute:   0   1   2   3   4   5    6   7
     private val rate = intArrayOf(43, 66, 52, 0, 54, 56, 360, 58) // quarters of a breath a minute

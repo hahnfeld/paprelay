@@ -38,6 +38,16 @@ class QuantityTest {
     fun `equal measurements are equal, and a unit is part of the measurement`() {
         assertEquals(Scale(1, 100).of(5, PapUnit.CM_H2O), Scale(1, 100).of(5, PapUnit.CM_H2O))
         assertEquals(false, Scale(1, 100).of(5, PapUnit.CM_H2O) == Scale(1, 100).of(5, PapUnit.PERCENT))
+        // Nor is it the same record with another stored value, or another scale.
+        assertEquals(false, Scale(1, 100).of(5, PapUnit.CM_H2O) == Scale(1, 100).of(6, PapUnit.CM_H2O))
+        assertEquals(false, Scale(1, 100).of(50, PapUnit.CM_H2O) == Scale(1, 10).of(50, PapUnit.CM_H2O))
+        assertEquals(Scale(1, 100).of(5, PapUnit.CM_H2O).hashCode(), Scale(1, 100).of(5, PapUnit.CM_H2O).hashCode())
+        assertEquals(1, setOf(Scale(1, 100).of(5, PapUnit.CM_H2O), Scale(1, 100).of(5, PapUnit.CM_H2O)).size)
+        // The largest stored value converts exactly, though sixty times it is more than a double holds.
+        val big = Scale(4074, 3125).of(1_099_510_919_547, PapUnit.LITRES_PER_SECOND)
+        assertEquals(java.math.BigDecimal(1_099_510_919_547 * 4074).multiply(java.math.BigDecimal(60)).divide(java.math.BigDecimal(3125)).toDouble(), big.valueIn(PapUnit.LITRES_PER_MINUTE))
+        assertFailsWith<IllegalArgumentException> { Scale(Scale.MAX_NUMERATOR + 1, 1) }
+        Scale(Scale.MAX_NUMERATOR, 1)
     }
 
     @Test

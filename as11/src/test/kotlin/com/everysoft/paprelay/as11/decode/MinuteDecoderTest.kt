@@ -292,6 +292,45 @@ class MinuteDecoderTest {
     }
 
     @Test
+    fun `a series that will not decode condemns the whole download, as a wrong modulus would`() {
+        // A long session whose respiratory rate was written with another modulus usually fails to
+        // decode at all, and a short one beside it can pass with wrong values. So neither is served.
+        val random = Random(11)
+        var condemned = 0
+        repeat(40) {
+            val long = randomSeries(random, 150)
+            val short = randomSeries(random, 4)
+            val log = MinuteDecoder.decode(
+                proto {
+                    message(5) { for ((signal, samples) in long) signal(signal, samples, modulus = if (signal == MinuteSignal.RESPIRATORY_RATE) 4 else signal.modulus); varint(15, 1) }
+                    message(5) { for ((signal, samples) in short) signal(signal, samples, start = t + 12 * 3_600_000L, modulus = if (signal == MinuteSignal.RESPIRATORY_RATE) 4 else signal.modulus); varint(15, 1) }
+                },
+                FIRMWARE,
+            )
+            assertTrue(log.decoded.isEmpty(), "served ${log.decoded.size} record(s)")
+            assertEquals(2, log.failures.size)
+            condemned++
+        }
+        assertEquals(40, condemned)
+    }
+
+    @Test
+    fun `the ceilings are the ranges the machine itself declares`() {
+        assertEquals(
+            listOf("LEAK=100", "INSPIRATORY_PRESSURE=250", "EXPIRATORY_PRESSURE=250", "RESPIRATORY_RATE=360", "INSPIRATORY_DURATION=32767", "MINUTE_VENTILATION=75", "IE_RATIO=32767"),
+            MinuteSignal.entries.filter { it.layoutConfirmed }.map { "${it.name}=${it.maxStored}" },
+        )
+        // Each one bites: a value one above it sets the signal aside, the value itself does not.
+        for (signal in MinuteSignal.entries.filter { it.layoutConfirmed && it.maxStored < 32767 }) {
+            val top = signal.maxStored
+            val within = one(proto { record(mapOf(signal to intArrayOf(top - 1, top, top - 1, top - 2))) })
+            assertTrue(within.misreadSignals.isEmpty(), "$signal at its ceiling")
+            val above = one(proto { record(mapOf(signal to intArrayOf(top - 1, top + 1, top - 1, top - 2))) })
+            assertEquals(setOf(signal), above.misreadSignals, "$signal above its ceiling")
+        }
+    }
+
+    @Test
     fun `a stored zero is no value at all, except for leak`() {
         val record = one(proto { record(mapOf(MinuteSignal.LEAK to intArrayOf(0, 0, 3, 4), MinuteSignal.RESPIRATORY_RATE to intArrayOf(0, 56, 0, 60))) })
         // Nobody breathes zero times a minute; what the machine means by it is not known.
@@ -336,7 +375,12 @@ class MinuteDecoderTest {
     fun `data from firmware that has not been confirmed is not decoded`() {
         val payload = proto { record(mapOf(MinuteSignal.LEAK to leak)) }
         assertEquals(1, MinuteDecoder.decode(payload, Firmware.reportedByMachine("SW04600.19.8.8.0.0123456789")).decoded.size)
-        for (other in listOf("SW04600.19.8.9.0.dced143ae", "SW04600.19.8.8.01.x", "SW04601.19.8.8.0.x", "", "19.8.8.0")) {
+        val others = listOf(
+            "SW04600.19.8.9.0.dced143ae", "SW04600.19.8.8.01.x", "SW04601.19.8.8.0.x", "", "19.8.8.0",
+            // The right prefix is not enough, nor the right text somewhere inside, nor another case.
+            "SW04600.19.8.8.0.", "SW04600.19.8.8.0.1.abc", "SW04600.19.8.8.0.abc\nSW04600.20.0.0.0.abc", "xSW04600.19.8.8.0.abc", "sw04600.19.8.8.0.abc",
+        )
+        for (other in others) {
             val firmware = Firmware.reportedByMachine(other)
             assertTrue(!firmware.layoutsConfirmed, other)
             assertFailsWith<SpoolDecodeException>(other) { MinuteDecoder.decode(payload, firmware) }

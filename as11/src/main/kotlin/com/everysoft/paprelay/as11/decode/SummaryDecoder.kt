@@ -109,6 +109,7 @@ public object SummaryDecoder {
     private const val RECORD_TIMESTAMP = 40
 
     private const val HOUR_MS = 3_600_000L
+    private const val RECORD_MARKER = 1L
     private const val MINUTES_PER_DAY = 1440
     private const val MAX_ZONE_OFFSET = 18 * 60
     private const val MAX_SESSIONS = 500
@@ -176,9 +177,11 @@ public object SummaryDecoder {
 
         val start = timestamp(integers[PERIOD_START] ?: missing(what, "the period start"), what)
         val end = timestamp(integers[PERIOD_END] ?: missing(what, "the period end"), what)
-        // Twenty-four hours in everything seen. An hour either way is allowed for, since no
+        // Twenty-four hours in everything seen. Exactly an hour either way is allowed for, since no
         // capture yet spans a clock change and what the machine does then is not known.
-        if (end.since(start) !in 23 * HOUR_MS..25 * HOUR_MS) throw SpoolDecodeException("$what: the period is not one day long")
+        if (end.since(start) !in setOf(23 * HOUR_MS, 24 * HOUR_MS, 25 * HOUR_MS)) throw SpoolDecodeException("$what: the period is not one day long")
+        // Every record seen opens with this marker. One without it is some other kind of record.
+        if (integers[MARKER] != RECORD_MARKER) throw SpoolDecodeException("$what: not marked as a summary record")
 
         val sessions = ArrayList<SummarySession>()
         for (sessionBody in sessionBodies) unknown += sessions(sessionBody, what, start, end, sessions)

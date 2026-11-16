@@ -46,8 +46,8 @@ public class EventRecord<K : Any> internal constructor(
 
 /** Decodes the event logs. */
 public object EventDecoder {
-    /** How many wrapper layers may sit between an envelope entry and an event. One has been seen. */
-    private const val MAX_WRAPPERS = 2
+    /** How deep to look for events hidden inside an event. Beyond this, it is taken to hide some. */
+    private const val MAX_NESTING = 16
     private const val MAX_CODE = 1_000_000
     /** Generous: it guards against a mis-scaled value, and says nothing about how long an event can last. */
     private const val MAX_DURATION_MS = 24L * 60 * 60 * 1000
@@ -79,37 +79,51 @@ public object EventDecoder {
         kindOf: (Int) -> K?,
     ): DecodedLog<EventRecord<K>> {
         val sink = ResultSink<EventRecord<K>>()
-        for (body in unwrap(payload, envelopeField, what)) collect(body, MAX_WRAPPERS, what, kindOf, sink)
+        // The one nesting ever seen: an envelope entry holds lists, and a list holds events.
+        // Whatever goes wrong is recorded where it happened and the walk goes on: the machine
+        // puts every event of a download inside one entry, so stopping at the first oddity
+        // would lose everything after it.
+        for (entry in unwrap(payload, envelopeField, what)) {
+            for (list in children(entry, what, sink)) {
+                for (record in children(list, what, sink)) {
+                    val fields = try {
+                        ProtoReader.read(record)
+                    } catch (e: SpoolDecodeException) {
+                        sink.fail(e.message ?: "not understood")
+                        continue
+                    }
+                    // A record with nested content that fails may be a list of a shape not seen
+                    // before, in which case more than one event is missing.
+                    val nested = fields.any { it.bytes != null }
+                    if (!isEvent(fields)) {
+                        sink.fail("$what: neither an event nor anything known", severalRecords = nested)
+                        continue
+                    }
+                    try {
+                        sink.add(event(fields, what, kindOf))
+                    } catch (e: SpoolDecodeException) {
+                        sink.fail(e.message ?: "not understood", severalRecords = nested)
+                    }
+                }
+            }
+        }
         return sink.finish(firmware.layoutsConfirmed)
     }
 
-    /**
-     * Walks one message. Whatever goes wrong is recorded where it happened and the walk goes
-     * on: the machine puts every event of a download inside one entry, so stopping at the
-     * first oddity would lose everything after it.
-     */
-    private fun <K : Any> collect(body: ByteArray, wrappersLeft: Int, what: String, kindOf: (Int) -> K?, into: ResultSink<EventRecord<K>>) {
+    /** The nested messages of a container. Anything in it that is not one is recorded as a failure. */
+    private fun children(container: ByteArray, what: String, into: ResultSink<*>): List<ByteArray> {
         val fields = try {
-            ProtoReader.read(body)
+            ProtoReader.read(container)
         } catch (e: SpoolDecodeException) {
-            into.fail(e.message ?: "not understood", severalRecords = wrappersLeft > 0)
-            return
+            into.fail(e.message ?: "not understood", severalRecords = true)
+            return emptyList()
         }
-        if (isEvent(fields)) {
-            into.attempt { event(fields, what, kindOf) }
-            return
-        }
-        if (wrappersLeft == 0) {
-            // As deep as events have ever been found. What sits here should be one, and is not:
-            // an empty record, or a layer of nesting not seen before.
-            into.fail("$what: neither an event nor anything known", severalRecords = fields.any { it.bytes != null })
-            return
-        }
-        // Not an event, so it must be a wrapper: nothing but nested messages.
+        val messages = ArrayList<ByteArray>()
         for (field in fields) {
             val inner = field.bytes
-            if (inner == null) into.fail("$what: a stray value among the records") else collect(inner, wrappersLeft - 1, what, kindOf, into)
+            if (inner == null) into.fail("$what: a stray value among the records", severalRecords = true) else messages += inner
         }
+        return messages
     }
 
     /**
@@ -136,7 +150,7 @@ public object EventDecoder {
                     // A record that looks like an event but carries events inside is a wrapper
                     // of a shape not seen before. Reading it as one event would drop the rest.
                     val inner = field.bytes
-                    if (inner != null && holdsEvent(inner, MAX_WRAPPERS)) throw SpoolDecodeException("$what: an event that contains events")
+                    if (inner != null && holdsEvent(inner, MAX_NESTING)) throw SpoolDecodeException("$what: an event that contains events")
                     unknown++
                 }
             }
@@ -166,6 +180,9 @@ public object EventDecoder {
             return false // text or some other payload, not a message
         }
         if ((1..3).all { number -> fields.any { it.number == number && it.wireType == ProtoReader.VARINT } }) return true
-        return depth > 0 && fields.any { field -> field.bytes?.let { holdsEvent(it, depth - 1) } == true }
+        val nested = fields.mapNotNull { it.bytes }
+        // Too deep to follow: assume the worst, so that nothing can hide by nesting.
+        if (depth == 0) return nested.isNotEmpty()
+        return nested.any { holdsEvent(it, depth - 1) }
     }
 }

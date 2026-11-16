@@ -161,7 +161,10 @@ public object MinuteDecoder {
 
     private val signalByField = MinuteSignal.entries.associateBy { it.field }
 
-    /** The signals of a record contradict each other, which casts doubt on how every record of the download was read. */
+    /**
+     * A record's series could not be decoded, or contradict each other. Either is what a wrong
+     * modulus looks like, and that casts doubt on how every record of the download was read.
+     */
     private class LengthDisagreement(message: String) : Exception(message)
 
     /**
@@ -196,8 +199,11 @@ public object MinuteDecoder {
                 disagreement = disagreement ?: e.message
             }
         }
-        // Signals that disagree about a record's length mean a modulus is wrong, and a wrong
-        // modulus can pass in a short record. So one such record condemns the whole download.
+        // A series that will not decode, or signals that disagree about a record's length, mean a
+        // modulus is wrong, and a wrong modulus can pass in a short record. So one such record
+        // condemns the whole download. (A signal that decodes but holds an impossible value is
+        // different: on confirmed software that is a marker this version does not know, and it
+        // costs only that signal.)
         disagreement?.let { sink.failAll("per-minute log: not trusted, because $it") }
         return sink.finish(layoutConfirmed = true)
     }
@@ -288,7 +294,11 @@ public object MinuteDecoder {
         val bytes = block ?: missing(what, "the sample block")
         val modulus = signal.modulus
         val decoded = if (modulus != null) {
-            SampleSeries.decode(bytes, modulus)
+            try {
+                SampleSeries.decode(bytes, modulus)
+            } catch (e: SpoolDecodeException) {
+                throw LengthDisagreement("$what: ${e.message}")
+            }
         } else {
             if (bytes.size % 2 != 0) throw SpoolDecodeException("$what: an uncompressed series has an odd length")
             val raw = SampleSeries.decodeRaw(bytes)
