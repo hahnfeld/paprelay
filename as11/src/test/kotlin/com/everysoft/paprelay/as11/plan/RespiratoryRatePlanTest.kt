@@ -46,9 +46,9 @@ class RespiratoryRatePlanTest {
         assertEquals(MachineTime(t + 5 * 60_000L), plan.readings.readings[3].minuteEnd)
         assertEquals(1, plan.omitted.zeroRate)
         assertEquals(2, plan.omitted.highLeak)
-        assertEquals(0, plan.omitted.outOfRange)
+        assertEquals(0, plan.omitted.uncertain)
         // Every minute is accounted for.
-        assertEquals(rate.size, plan.readings.readings.size + plan.omitted.zeroRate + plan.omitted.highLeak + plan.omitted.outOfRange)
+        assertEquals(rate.size, plan.readings.readings.size + plan.omitted.zeroRate + plan.omitted.highLeak + plan.omitted.uncertain)
         assertEquals("rr-$tag-$t", com.everysoft.paprelay.core.sync.SessionReadings.recordId(tag, plan.readings.firstMinuteEnd, 0))
     }
 
@@ -96,6 +96,9 @@ class RespiratoryRatePlanTest {
         val plan = assertIs<SessionPlan.Planned>(RespiratoryRatePlan.session(doubtful, tag, null))
         assertEquals(doubtful.sampleCount, plan.readings.readings.size)
         assertTrue(plan.readings.readings.size <= 11)
+        // They are counted, so that nothing is left out without a trace.
+        assertEquals(doubtful.uncertainTail, plan.omitted.uncertain)
+        assertTrue(plan.readings.readings.size + plan.omitted.uncertain >= 11)
     }
 
     @Test

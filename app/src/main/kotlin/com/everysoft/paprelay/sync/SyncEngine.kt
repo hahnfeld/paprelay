@@ -18,12 +18,14 @@ import com.everysoft.paprelay.ble.BluetoothOffException
 import com.everysoft.paprelay.ble.NoAnswerException
 import com.everysoft.paprelay.core.ClockOffset
 import com.everysoft.paprelay.core.MachineTime
+import com.everysoft.paprelay.core.sync.LedgerEntry
 import com.everysoft.paprelay.core.sync.Reconcile
 import com.everysoft.paprelay.core.sync.SessionChange
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.security.spec.KeySpec
+import java.time.ZoneId
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.PBEKeySpec
 import kotlin.math.abs
@@ -60,8 +62,8 @@ interface HealthSink {
     suspend fun notReady(): SyncOutcome?
 
     /**
-     * Carries out one session's change: its deletions, then its writes. Returns only when
-     * Health Connect has confirmed both.
+     * Carries out one session's change in Health Connect: its deletions, then its writes.
+     * Returns only when Health Connect has confirmed both. (The ledger is the caller's affair.)
      *
      * @throws HealthSinkException if any part was not confirmed. Some of it may have been done;
      *   the change is then simply applied again later.
@@ -74,10 +76,11 @@ interface HealthSink {
  * per-minute log from where the last one left off, and bring Health Connect into step,
  * session by session.
  *
- * Every session is its own small transaction: its change is applied, and only then is the
- * ledger updated and stored. Wherever a run is cut off (the phone leaves the room, the app
- * is killed), what was finished stays finished and the rest is taken up next time. Nothing
- * here retries: a failed run ends, says why, and the next one starts afresh.
+ * Every session is its own small transaction: the intent is stored, the change is applied,
+ * and the result is stored. Wherever a run is cut off (the phone leaves the room, the app
+ * is killed), what was finished stays finished, what was begun is marked as such and worked
+ * out again, and the rest is taken up next time. Nothing here retries: a failed run ends,
+ * says why, and the next one starts afresh.
  */
 class SyncEngine(
     private val connector: MachineConnector,
@@ -86,6 +89,7 @@ class SyncEngine(
     private val nowMs: () -> Long,
     /** Called with each downloaded round, so that the bytes can be kept for a later version to decode. */
     private val keepRaw: suspend (SpoolName, SpoolRound) -> Unit = { _, _ -> },
+    private val zone: () -> ZoneId = ZoneId::systemDefault,
 ) {
     private val running = Mutex()
 
@@ -165,14 +169,25 @@ class SyncEngine(
         }
 
         val (machineNow, offset) = measureClock(session)
-        val from = progress.state.resumeFromMs?.let { it - OVERLAP_MS } ?: (machineNow.epochMs - FIRST_WINDOW_MS)
-        // Never before the year 2000: the client refuses an earlier start, and no machine holds one.
-        var address: SpoolAddress = SpoolAddress.FromMachineTime(maxOf(EARLIEST_START_MS, from))
+        // A clock that has been set since the last run puts the nights recorded in between out
+        // of reach: there is no telling which of them carry the old time and which the new.
+        // Nothing is written until the user has said how to treat them.
+        progress.state.clock?.let { before ->
+            val days = abs(machineNow.epochMs - before.machineMs) / DAY_MS
+            if (abs(offset.millis - before.offsetMs) > CLOCK_STEP_MS + days * DRIFT_PER_DAY_MS) throw Stop(SyncOutcome.CLOCK_CHANGED)
+        }
+        progress.state = progress.state.with(clock = ClockBaseline(offset.millis, machineNow.epochMs))
+        store.write(progress.state)
+
+        val force = progress.state.rewriteRequested
+        val from = maxOf(EARLIEST_START_MS, progress.state.resumeFromMs?.let { it - OVERLAP_MS } ?: (machineNow.epochMs - FIRST_WINDOW_MS))
+        var address: SpoolAddress = SpoolAddress.FromMachineTime(from)
         var rounds = 0
-        // The start of the newest session dealt with: where the next run begins, so that a
-        // session still in progress now is read again once it has grown.
-        var reached: Long? = null
-        download@ while (true) {
+        // The start of the newest session read, and of the last one read before anything went wrong.
+        var newest: Long? = null
+        var lastBeforeTrouble: Long? = null
+        var troubled = false
+        while (true) {
             if (++rounds > MAX_ROUNDS) {
                 progress.partial = true
                 break
@@ -183,42 +198,62 @@ class SyncEngine(
             for (entry in log.entries) {
                 val record = when (entry) {
                     is RecordResult.Decoded -> entry.value
-                    // Not understood: its minutes are unknown, and nothing after it is touched
-                    // until it can be read, so that the place reached never passes a gap.
+                    // Not understood: its minutes are unknown. The sessions after it are still
+                    // written (one unreadable night must not hold up every night that follows),
+                    // but the place to resume from stays before it, so that it is read again.
                     is RecordResult.Failed -> {
                         progress.partial = true
-                        break@download
+                        troubled = true
+                        continue
                     }
                 }
                 when (val plan = RespiratoryRatePlan.session(record, tag, progress.state.leakLimitLitresPerMinute)) {
                     is SessionPlan.Unplanned -> if (plan.minutesUnknown) {
                         progress.partial = true
-                        break@download
+                        troubled = true
                     }
                     is SessionPlan.Planned -> {
                         val key = plan.readings.key
-                        val change = Reconcile.session(plan.readings, progress.state.ledger[key], offset, nowMs())
-                        if (!change.nothingToDo) {
+                        val now = nowMs()
+                        val change = Reconcile.session(plan.readings, progress.state.ledger[key], offset, zone(), now, force)
+                        if (change != null) {
+                            // A reading that has not happened yet means the clock correction is wrong.
+                            if (change.writes.any { it.time.toEpochMilli() > now + FUTURE_ALLOWANCE_MS }) throw Stop(SyncOutcome.CLOCK_UNRELIABLE)
+                            // The intent first: from here on the ledger covers whatever is about to exist.
+                            storeEntry(progress, key, change.intent)
                             sink.apply(change)
-                            val ledger = LinkedHashMap(progress.state.ledger)
-                            val after = change.ledgerAfter
-                            if (after == null) ledger.remove(key) else ledger[key] = after
-                            progress.state = progress.state.with(ledger = ledger)
-                            // Stored before the next session is begun: this one is now finished for good.
-                            store.write(progress.state)
+                            // Confirmed, and stored before the next session is begun: this one is finished for good.
+                            storeEntry(progress, key, change.confirmed)
                             progress.written += change.writes.size
                         }
                     }
                 }
                 progress.sessions++
-                reached = record.firstMinuteEnd.epochMs
+                newest = record.firstMinuteEnd.epochMs
+                if (!troubled) lastBeforeTrouble = newest
             }
             address = SpoolAddress.Continuation(round.next ?: break)
         }
-        reached?.let {
-            progress.state = progress.state.with(resumeFromMs = maxOf(it, progress.state.resumeFromMs ?: Long.MIN_VALUE))
-            store.write(progress.state)
+        // Where the next run begins: at the newest session (it may still be in progress and grow),
+        // or before the first thing that went wrong. A hold that has lasted too long gives way,
+        // or one night that can never be read would have every run re-read months of history.
+        val held = if (troubled) lastBeforeTrouble ?: from else null
+        val resume = when {
+            held != null && machineNow.epochMs - held <= HOLD_LIMIT_MS -> held
+            else -> newest
         }
+        progress.state = progress.state.with(
+            resumeFromMs = resume ?: progress.state.resumeFromMs,
+            rewriteRequested = force && progress.partial,
+        )
+        store.write(progress.state)
+    }
+
+    private fun storeEntry(progress: Progress, key: String, entry: LedgerEntry?) {
+        val ledger = LinkedHashMap(progress.state.ledger)
+        if (entry == null) ledger.remove(key) else ledger[key] = entry
+        progress.state = progress.state.with(ledger = ledger)
+        store.write(progress.state)
     }
 
     /**
@@ -243,6 +278,17 @@ class SyncEngine(
         /** Each later one starts this much before the newest session already dealt with. */
         const val OVERLAP_MS = 24L * 60 * 60 * 1000
         const val MAX_ROUNDS = 2_000
+
+        /** A change in the measured offset beyond this, plus ordinary drift, means the clock was set. */
+        const val CLOCK_STEP_MS = 30_000L
+        const val DRIFT_PER_DAY_MS = 3_000L
+        const val DAY_MS = 24L * 60 * 60 * 1000
+
+        /** How long the place to resume from waits behind a night that cannot be read. */
+        const val HOLD_LIMIT_MS = 30 * DAY_MS
+
+        /** A corrected time may be this far ahead of the phone's clock before it is refused. */
+        const val FUTURE_ALLOWANCE_MS = 60_000L
         const val EARLIEST_START_MS = 946_684_800_000L
         const val CLOCK_READINGS = 3
         const val CLOCK_AGREEMENT_MS = 2_000L

@@ -45,7 +45,7 @@ public class SessionReadings(
     public val readings: List<RateReading> = readings.toList()
 
     init {
-        require(TAG.matches(machineTag)) { "a machine tag is 4 to 32 letters, digits or dashes" }
+        require(isValidTag(machineTag)) { "a machine tag is 4 to 32 letters, digits or dashes" }
         var previous: MachineTime? = null
         for (reading in this.readings) {
             val offset = reading.minuteEnd.since(firstMinuteEnd)
@@ -64,9 +64,12 @@ public class SessionReadings(
     /**
      * A fingerprint of exactly what is to be held: which minutes, and each value. Two runs
      * over the same download give the same fingerprint; any change to any reading changes it.
+     * It also covers [RULES_VERSION], so that a correction to how readings are derived
+     * reaches the nights already written.
      */
     public fun fingerprint(): String {
         val digest = MessageDigest.getInstance("SHA-256")
+        digest.update("rules=$RULES_VERSION;".toByteArray(Charsets.US_ASCII))
         for (reading in readings) {
             val minute = reading.minuteEnd.since(firstMinuteEnd) / MINUTE_MS
             digest.update("$minute=${reading.hundredthsPerMinute};".toByteArray(Charsets.US_ASCII))
@@ -76,7 +79,16 @@ public class SessionReadings(
 
     public companion object {
         public const val MINUTE_MS: Long = 60_000L
+
+        /**
+         * Raised whenever the way a reading is derived from the machine's data changes (a decoding
+         * correction, a different rule for what is passed on), so that sessions already written
+         * are recognised as out of step and written again.
+         */
+        public const val RULES_VERSION: Int = 1
         private val TAG = Regex("[A-Za-z0-9-]{4,32}")
+
+        public fun isValidTag(tag: String): Boolean = TAG.matches(tag)
 
         /**
          * The Health Connect client record id of the reading for one minute of a session. Built

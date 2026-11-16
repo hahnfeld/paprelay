@@ -34,7 +34,7 @@ class SyncEngineTest {
 
     /** The phone's clock, and how far ahead of it the machine's runs. */
     private var phoneNow = 1_800_000_000_000L
-    private val machineAhead = 361_600L
+    private var machineAhead = 361_600L
     private val machineNow get() = phoneNow + machineAhead
 
     /** A session on the machine: its first minute's stamp, and a rate and leak for each minute. */
@@ -157,16 +157,16 @@ class SyncEngineTest {
 
     private val tag = SyncEngine.machineTag(serial)
 
-    /** What Health Connect should hold for these nights with no leak above the limit: every minute, at its corrected time. */
-    private fun expected(nights: List<Night>): Map<String, Pair<Double, Instant>> = nights.flatMap { night ->
-        night.rates.indices.filter { night.leaks[it] * 1.2 <= 24 }.map { minute ->
+    /** What Health Connect should hold for these nights: every minute (within the leak limit, if one is set), at its corrected time. */
+    private fun expected(nights: List<Night>, leakLimit: Int? = null): Map<String, Pair<Double, Instant>> = nights.flatMap { night ->
+        night.rates.indices.filter { leakLimit == null || night.leaks[it] * 1.2 <= leakLimit }.map { minute ->
             val stamp = night.firstMinuteEnd + minute * 60_000L
             "rr-$tag-$stamp" to (night.rates[minute] / 4.0 to Instant.ofEpochMilli(stamp - machineAhead))
         }
     }.toMap()
 
-    private fun assertHolds(nights: List<Night>) {
-        val want = expected(nights)
+    private fun assertHolds(nights: List<Night>, leakLimit: Int? = null) {
+        val want = expected(nights, leakLimit)
         assertEquals(want.keys, health.records.keys)
         for ((id, value) in want) {
             assertEquals(value.first, health.records.getValue(id).rate, id)
@@ -175,7 +175,7 @@ class SyncEngineTest {
     }
 
     private val first get() = Night(machineNow - 50 * hour, rates(123))
-    private val second get() = Night(machineNow - 20 * hour, rates(202, base = 48))
+    private val second get() = Night(machineNow - 20 * hour, rates(203, base = 48))
 
     @Test
     fun `the first synchronisation writes every minute, at its corrected time, and the second writes nothing`() = runTest {
@@ -184,7 +184,7 @@ class SyncEngineTest {
         val report = engine.sync()!!
         assertEquals(SyncOutcome.COMPLETE, report.outcome)
         assertEquals(2, report.sessions)
-        assertEquals(325, report.readingsWritten)
+        assertEquals(326, report.readingsWritten)
         assertHolds(nights)
         // It asked for as far back as the machine might hold.
         assertEquals(listOf(machineNow + 20 - SyncEngine.FIRST_WINDOW_MS), machine.starts)
@@ -235,14 +235,15 @@ class SyncEngineTest {
         val report = engine.sync()!!
         assertEquals(SyncOutcome.HEALTH_CONNECT_FAILED, report.outcome)
         assertEquals(1, report.sessions)
-        assertEquals(1, store.read().ledger.size)
+        // The first session is confirmed; the second is recorded as begun and not confirmed.
+        assertEquals(listOf(false, true), store.read().ledger.values.sortedBy { it.firstMinuteEnd }.map { it.pendingMinutes != null })
         assertNull(store.read().lastCompleteAtMs)
         assertHolds(nights.take(1))
 
         health.failOnApply = null
         val next = engine.sync()!!
         assertEquals(SyncOutcome.COMPLETE, next.outcome)
-        assertEquals(202 + 101, next.readingsWritten)
+        assertEquals(203 + 101, next.readingsWritten)
         assertHolds(nights)
     }
 
@@ -253,7 +254,10 @@ class SyncEngineTest {
         health.failAfterWrites = 50
         assertEquals(SyncOutcome.HEALTH_CONNECT_FAILED, engine.sync()!!.outcome)
         assertEquals(50, health.records.size)
-        assertTrue(store.read().ledger.isEmpty())
+        // Nothing is confirmed, but the ledger knows a write was begun and how far it may have got.
+        val begun = store.read().ledger.values.single()
+        assertTrue(begun.minutes.isEmpty())
+        assertEquals(123, begun.pendingMinutes!!.size)
 
         health.failAfterWrites = null
         phoneNow += 1_000
@@ -279,38 +283,158 @@ class SyncEngineTest {
     }
 
     @Test
-    fun `a record that cannot be read stops the run there, and nothing after it is written`() = runTest {
-        val broken = Night(machineNow - 20 * hour, rates(202), kind = 2)
+    fun `a night that cannot be read does not hold up the nights after it, and is read again next time`() = runTest {
+        val earlier = first
+        val broken = Night(machineNow - 20 * hour, rates(203), kind = 2)
         val after = Night(machineNow - 3 * hour, rates(101))
-        machine.nights = listOf(first, broken, after)
+        machine.nights = listOf(earlier, broken, after)
         val report = engine.sync()!!
         assertEquals(SyncOutcome.PARTIAL, report.outcome)
-        assertEquals(1, report.sessions)
-        assertHolds(listOf(first))
-        // The place reached does not pass the gap: the next run reads from before it again.
-        assertEquals(first.firstMinuteEnd, store.read().resumeFromMs)
+        assertEquals(2, report.sessions)
+        assertHolds(listOf(earlier, after))
+        // The place to resume from stays before the gap, so the next run reads it again.
+        assertEquals(earlier.firstMinuteEnd, store.read().resumeFromMs)
         assertNull(store.read().lastCompleteAtMs)
+
+        // A later version of the machine's record (or of this app) that can be read fills the gap.
+        val mended = Night(broken.firstMinuteEnd, broken.rates)
+        machine.nights = listOf(earlier, mended, after)
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertHolds(listOf(earlier, mended, after))
+        assertEquals(after.firstMinuteEnd, store.read().resumeFromMs)
     }
 
     @Test
-    fun `minutes above the leak limit are left out, and changing the limit brings Health Connect into step`() = runTest {
+    fun `a night that stays unreadable for a month stops holding the place back`() = runTest {
+        val day = 24 * hour
+        val old = Night(machineNow - 40 * day, rates(60))
+        val broken = Night(machineNow - 39 * day, rates(61), kind = 2)
+        val recent = Night(machineNow - 2 * hour, rates(62))
+        machine.nights = listOf(old, broken, recent)
+        assertEquals(SyncOutcome.PARTIAL, engine.sync()!!.outcome)
+        assertHolds(listOf(old, recent))
+        // Not at the old night: every later run would otherwise re-read forty days for nothing.
+        assertEquals(recent.firstMinuteEnd, store.read().resumeFromMs)
+    }
+
+    @Test
+    fun `the leak rule is off unless switched on, and changing it brings every night into step`() = runTest {
         // Minutes 10 to 19 leak 36 L/min.
         val leaky = Night(machineNow - 5 * hour, rates(60), leaks = IntArray(60) { if (it in 10..19) 30 else 2 })
-        machine.nights = listOf(leaky)
+        val older = Night(machineNow - 20 * 24 * hour, rates(45), leaks = IntArray(45) { if (it < 5) 40 else 1 })
+        machine.nights = listOf(older, leaky)
         engine.sync()
-        assertEquals(50, health.records.size)
-        assertHolds(listOf(leaky))
+        // By default every minute the machine recorded is passed on.
+        assertHolds(listOf(older, leaky))
+        assertEquals(105, health.records.size)
 
-        // With the limit off, the ten come back; with it on again, they go.
-        store.write(store.read().with(leakLimitLitresPerMinute = null))
+        // Switched on, the leaky minutes go: from the old night too, not only the recent one.
+        store.write(store.read().withLeakLimit(24))
         phoneNow += 1_000
-        assertEquals(60, engine.sync()!!.readingsWritten)
-        assertEquals(60, health.records.size)
-        store.write(store.read().with(leakLimitLitresPerMinute = 24))
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertHolds(listOf(older, leaky), leakLimit = 24)
+        assertEquals(90, health.records.size)
+
+        // Switched off again, they come back.
+        store.write(store.read().withLeakLimit(null))
         phoneNow += 1_000
         engine.sync()
-        assertEquals(50, health.records.size)
-        assertHolds(listOf(leaky))
+        assertHolds(listOf(older, leaky))
+    }
+
+    @Test
+    fun `a change is recorded as begun before Health Connect is touched, so nothing is orphaned whatever happens next`() = runTest {
+        val leaky = Night(machineNow - 5 * hour, rates(60), leaks = IntArray(60) { if (it in 10..19) 30 else 2 })
+        machine.nights = listOf(leaky)
+        // The first write gets half-way and fails. The ledger already says what may be there.
+        health.failAfterWrites = 30
+        assertEquals(SyncOutcome.HEALTH_CONNECT_FAILED, engine.sync()!!.outcome)
+        val begun = store.read().ledger.values.single()
+        assertEquals((0 until 60).toList(), begun.pendingMinutes)
+        assertTrue(begun.minutes.isEmpty())
+        assertEquals(30, health.records.size)
+
+        // Before the next run the leak rule is switched on. The twenty minutes already written that
+        // are no longer wanted include ten the failed run did write; they must go.
+        health.failAfterWrites = null
+        store.write(store.read().withLeakLimit(24))
+        phoneNow += 1_000
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertHolds(listOf(leaky), leakLimit = 24)
+        assertNull(store.read().ledger.values.single().pendingMinutes)
+    }
+
+    @Test
+    fun `when the machine's clock has been set, nothing is written until the user has decided`() = runTest {
+        val earlier = first
+        machine.nights = listOf(earlier)
+        engine.sync()
+        assertEquals(123, health.records.size)
+
+        // The machine's clock is corrected by six minutes; a new night is recorded afterwards.
+        val before = machineAhead
+        machineAhead = 0
+        phoneNow += 24 * hour
+        val later = Night(machineNow - 3 * hour, rates(90))
+        machine.nights = listOf(earlier, later)
+        assertEquals(SyncOutcome.CLOCK_CHANGED, engine.sync()!!.outcome)
+        assertEquals(123, health.records.size)
+        // It keeps saying so; it does not quietly settle on the new clock.
+        phoneNow += hour
+        assertEquals(SyncOutcome.CLOCK_CHANGED, engine.sync()!!.outcome)
+
+        // The user accepts the machine's clock as it now is. The new night is written with the new
+        // correction; the old one stays exactly where it was.
+        store.write(store.read().with(clock = null))
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertEquals(123 + 90, health.records.size)
+        assertEquals(Instant.ofEpochMilli(later.firstMinuteEnd), health.records.getValue("rr-$tag-${later.firstMinuteEnd}").time)
+        assertEquals(Instant.ofEpochMilli(earlier.firstMinuteEnd - before), health.records.getValue("rr-$tag-${earlier.firstMinuteEnd}").time)
+    }
+
+    @Test
+    fun `ordinary drift between runs is not mistaken for a clock that was set`() = runTest {
+        machine.nights = listOf(first)
+        engine.sync()
+        // Ten days on, the machine has gained another twenty seconds.
+        phoneNow += 10 * 24 * hour
+        machineAhead += 20_000
+        machine.nights = listOf(Night(machineNow - 3 * hour, rates(90)))
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertEquals(123 + 90, health.records.size)
+    }
+
+    @Test
+    fun `a reading that would lie in the future is refused`() = runTest {
+        // A session stamped two hours ahead of the machine's own clock cannot be placed.
+        machine.nights = listOf(Night(machineNow + 2 * hour, rates(30)))
+        assertEquals(SyncOutcome.CLOCK_UNRELIABLE, engine.sync()!!.outcome)
+        assertTrue(health.records.isEmpty())
+        assertTrue(store.read().ledger.isEmpty())
+    }
+
+    @Test
+    fun `asked to write everything again, it does so once, and Health Connect ends up whole`() = runTest {
+        val nights = listOf(first, second)
+        machine.nights = nights
+        engine.sync()
+        // (The nights are fixed above: the clock moves on below, and they must not move with it.)
+        // Health Connect's data is cleared behind the app's back; the ledger knows nothing of it.
+        health.records.clear()
+        phoneNow += hour
+        assertEquals(0, engine.sync()!!.readingsWritten)
+        assertTrue(health.records.isEmpty())
+
+        store.write(store.read().with(rewriteRequested = true).fromTheStart())
+        phoneNow += hour
+        val report = engine.sync()!!
+        assertEquals(SyncOutcome.COMPLETE, report.outcome)
+        assertEquals(123 + 203, report.readingsWritten)
+        assertHolds(nights)
+        assertTrue(!store.read().rewriteRequested)
+        phoneNow += hour
+        assertEquals(0, engine.sync()!!.readingsWritten)
     }
 
     @Test

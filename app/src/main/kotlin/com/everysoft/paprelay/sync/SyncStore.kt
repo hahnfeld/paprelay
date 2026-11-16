@@ -15,7 +15,6 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
-import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import java.io.File
 import java.io.IOException
@@ -52,6 +51,15 @@ enum class SyncOutcome {
     /** The machine's clock could not be read consistently, so no time can be trusted. */
     CLOCK_UNRELIABLE,
 
+    /**
+     * The machine's clock has been changed since the last synchronisation. Nights recorded
+     * in between cannot be placed in time until the user says how to treat them.
+     */
+    CLOCK_CHANGED,
+
+    /** No machine has been paired. */
+    NOT_PAIRED,
+
     /** The connection failed part-way. */
     CONNECTION_LOST,
 
@@ -75,13 +83,23 @@ class SyncReport(
 )
 
 /**
+ * The machine's clock as last measured: how far it was from true time, and what it read then.
+ * The next measurement is compared with it to notice a clock that has been set in between.
+ */
+class ClockBaseline(val offsetMs: Long, val machineMs: Long)
+
+/**
  * Everything the app remembers between synchronisations, apart from the pairing.
  *
  * @property machineTag the stable, non-identifying name the records of this machine are filed under.
- * @property ledger what Health Connect is known to hold, by session.
+ * @property ledger what Health Connect may hold, by session.
  * @property resumeFromMs a machine time before which every session is known to have been dealt
  *   with, or null if nothing has been yet.
- * @property leakLimitLitresPerMinute the leak above which a minute is left out; null for no limit.
+ * @property leakLimitLitresPerMinute the leak above which a minute is left out; null (the
+ *   default) for no limit.
+ * @property clock the machine's clock at the last synchronisation that measured it.
+ * @property rewriteRequested true when every session is to be written again whatever the
+ *   ledger says, until one synchronisation has completed.
  */
 class SyncState(
     val machineTag: String?,
@@ -90,6 +108,8 @@ class SyncState(
     val lastReport: SyncReport?,
     val lastCompleteAtMs: Long?,
     val leakLimitLitresPerMinute: Int?,
+    val clock: ClockBaseline?,
+    val rewriteRequested: Boolean,
 ) {
     fun with(
         machineTag: String? = this.machineTag,
@@ -98,11 +118,21 @@ class SyncState(
         lastReport: SyncReport? = this.lastReport,
         lastCompleteAtMs: Long? = this.lastCompleteAtMs,
         leakLimitLitresPerMinute: Int? = this.leakLimitLitresPerMinute,
-    ) = SyncState(machineTag, ledger, resumeFromMs, lastReport, lastCompleteAtMs, leakLimitLitresPerMinute)
+        clock: ClockBaseline? = this.clock,
+        rewriteRequested: Boolean = this.rewriteRequested,
+    ) = SyncState(machineTag, ledger, resumeFromMs, lastReport, lastCompleteAtMs, leakLimitLitresPerMinute, clock, rewriteRequested)
+
+    /**
+     * With another leak rule. Every night is then looked at again, not only the recent ones,
+     * so that the whole record follows one rule.
+     */
+    fun withLeakLimit(litresPerMinute: Int?): SyncState = with(leakLimitLitresPerMinute = litresPerMinute).fromTheStart()
+
+    /** With every session to be read again from as far back as the machine holds. */
+    fun fromTheStart(): SyncState = SyncState(machineTag, ledger, null, lastReport, lastCompleteAtMs, leakLimitLitresPerMinute, clock, rewriteRequested)
 
     companion object {
-        const val DEFAULT_LEAK_LIMIT = 24
-        val EMPTY = SyncState(null, emptyMap(), null, null, null, DEFAULT_LEAK_LIMIT)
+        val EMPTY = SyncState(null, emptyMap(), null, null, null, null, null, false)
     }
 }
 
@@ -151,15 +181,24 @@ class SyncStore(private val file: File) {
     }
 
     internal companion object {
-        private const val FORMAT = 1L
+        private const val FORMAT = 2L
 
         fun encode(state: SyncState): JsonObject = buildJsonObject {
             put("format", FORMAT)
             state.machineTag?.let { put("machineTag", it) }
             state.resumeFromMs?.let { put("resumeFromMs", it) }
             state.lastCompleteAtMs?.let { put("lastCompleteAtMs", it) }
-            // An explicit "none" so that an absent field can mean "the default", for files written before the setting existed.
-            put("leakLimit", state.leakLimitLitresPerMinute?.toLong() ?: -1L)
+            state.leakLimitLitresPerMinute?.let { put("leakLimit", it) }
+            state.clock?.let { clock ->
+                put(
+                    "clock",
+                    buildJsonObject {
+                        put("offsetMs", clock.offsetMs)
+                        put("machineMs", clock.machineMs)
+                    },
+                )
+            }
+            if (state.rewriteRequested) put("rewriteRequested", true)
             state.lastReport?.let { report ->
                 put(
                     "lastReport",
@@ -182,7 +221,9 @@ class SyncStore(private val file: File) {
                                 put("minutes", ranges(entry.minutes))
                                 put("fingerprint", entry.fingerprint)
                                 put("offsetMs", entry.clockOffset.millis)
+                                put("zone", entry.zone.id)
                                 put("version", entry.version)
+                                entry.pendingMinutes?.let { put("pending", ranges(it)) }
                             },
                         )
                     }
@@ -200,12 +241,13 @@ class SyncStore(private val file: File) {
                     minutes = minutes(entry.getValue("minutes").jsonPrimitive.content),
                     fingerprint = entry.getValue("fingerprint").jsonPrimitive.content,
                     clockOffset = ClockOffset.restored(entry.getValue("offsetMs").jsonPrimitive.long),
+                    zone = java.time.ZoneId.of(entry.getValue("zone").jsonPrimitive.content),
                     version = entry.getValue("version").jsonPrimitive.long,
+                    pendingMinutes = (entry["pending"] as? JsonPrimitive)?.content?.let(::minutes),
                 )
             }
             val ledger = LinkedHashMap<String, LedgerEntry>()
             for (entry in entries) require(ledger.put(entry.key, entry) == null) { "a session is listed twice" }
-            val leak = (json["leakLimit"] as? JsonPrimitive)?.longOrNull
             return SyncState(
                 machineTag = (json["machineTag"] as? JsonPrimitive)?.content,
                 ledger = ledger,
@@ -219,11 +261,12 @@ class SyncStore(private val file: File) {
                     )
                 },
                 lastCompleteAtMs = (json["lastCompleteAtMs"] as? JsonPrimitive)?.long,
-                leakLimitLitresPerMinute = when {
-                    leak == null -> SyncState.DEFAULT_LEAK_LIMIT
-                    leak < 0 -> null
-                    else -> leak.toInt()
+                leakLimitLitresPerMinute = (json["leakLimit"] as? JsonPrimitive)?.long?.let {
+                    require(it in 0..MAX_LEAK_LIMIT) { "not a leak limit" }
+                    it.toInt()
                 },
+                clock = (json["clock"] as? JsonObject)?.let { ClockBaseline(it.getValue("offsetMs").jsonPrimitive.long, it.getValue("machineMs").jsonPrimitive.long) },
+                rewriteRequested = (json["rewriteRequested"] as? JsonPrimitive)?.content == "true",
             )
         }
 
@@ -259,5 +302,6 @@ class SyncStore(private val file: File) {
 
         /** A week of minutes: far more than a session can hold, and a bound on what a damaged file can ask for. */
         private const val MAX_MINUTES = 7 * 24 * 60
+        private const val MAX_LEAK_LIMIT = 1_000L
     }
 }

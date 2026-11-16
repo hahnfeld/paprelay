@@ -19,8 +19,12 @@ public class Omitted(
     public val zeroRate: Int,
     /** The leak in that minute was above the limit, where the machine's own rate is unreliable. */
     public val highLeak: Int,
-    /** Above anything the machine can report. */
-    public val outOfRange: Int,
+    /**
+     * At the very end of the session: minutes that may exist, or may be padding in the
+     * machine's storage. They cannot be told apart, so they are not passed on. Rare: it
+     * needs every signal of the session to end exactly on a byte.
+     */
+    public val uncertain: Int,
 )
 
 /** What became of one session. */
@@ -49,24 +53,27 @@ public sealed interface SessionPlan {
 /**
  * Decides which per-minute respiratory rates go to Health Connect.
  *
- * This is the whole of PAPRelay's filtering, and it is fixed rules, not
- * judgement: a minute is passed on exactly as the machine recorded it, or left
- * out for one of the reasons in [Omitted]. Nothing is averaged, smoothed,
- * interpolated or corrected.
+ * This is the whole of PAPRelay's filtering, and it is fixed rules: a minute
+ * is passed on exactly as the machine recorded it, or left out for one of the
+ * reasons in [Omitted]. By default the only minutes left out are those with no
+ * rate to pass on (a stored zero) and those that cannot be shown to exist.
+ * Nothing is averaged, smoothed, interpolated or corrected.
  */
 public object RespiratoryRatePlan {
     /**
-     * The leak above which a minute's rate is left out, in litres per minute. Twenty-four is
-     * the figure commonly used for a large leak on these machines; it is a preset, and the
-     * rule can be switched off.
+     * The limit offered when the leak rule is switched on, in litres per minute: the figure
+     * commonly used for a large leak on these machines. The rule is **off** unless the user
+     * turns it on: leaving a minute out because of its leak is a judgement about the data,
+     * and PAPRelay's own default is to pass on what the machine recorded.
      */
-    public const val DEFAULT_LEAK_LIMIT_LITRES_PER_MINUTE: Int = 24
+    public const val SUGGESTED_LEAK_LIMIT_LITRES_PER_MINUTE: Int = 24
 
     /**
      * @param record one decoded session. Only the minutes that certainly exist are used.
      * @param machineTag a stable, non-identifying name for the machine.
      * @param leakLimitLitresPerMinute minutes with more leak than this are left out; null for no limit.
      * @throws IllegalArgumentException if [machineTag] is not a valid tag or the limit is negative.
+     * @throws IllegalStateException if the decoder served a value it should have set aside: a defect.
      */
     public fun session(record: MinuteRecord, machineTag: String, leakLimitLitresPerMinute: Int?): SessionPlan {
         require(leakLimitLitresPerMinute == null || leakLimitLitresPerMinute >= 0) { "a leak limit is not negative" }
@@ -90,7 +97,6 @@ public object RespiratoryRatePlan {
         val readings = ArrayList<RateReading>()
         var zero = 0
         var leaky = 0
-        var wild = 0
         for (index in rates.indices) {
             val rate = rates[index]
             if (rate == null) {
@@ -101,14 +107,13 @@ public object RespiratoryRatePlan {
             // Exact: the stored value is in quarters, so hundredths are whole.
             val hundredths = rate.exact().multiply(hundred).intValueExact()
             val leak = leaks?.get(index)
-            when {
-                hundredths !in 1..RateReading.MAX_HUNDREDTHS -> wild++
-                // Leak is the one signal in which zero is a reading, so it is never missing here.
-                leak != null && litresPerMinute(leak) > limit -> leaky++
-                else -> readings += RateReading(record.minuteEnd(index), hundredths)
-            }
+            // The decoder has already set aside any series holding a value beyond what the machine
+            // can report, so one here would be a defect in this program, not something in the data.
+            check(hundredths in 1..RateReading.MAX_HUNDREDTHS) { "a rate the decoder should not have served" }
+            // Leak is the one signal in which zero is a reading, so it is never missing here.
+            if (leak != null && litresPerMinute(leak) > limit) leaky++ else readings += RateReading(record.minuteEnd(index), hundredths)
         }
-        return SessionPlan.Planned(SessionReadings(machineTag, record.firstMinuteEnd, readings), Omitted(zero, leaky, wild))
+        return SessionPlan.Planned(SessionReadings(machineTag, record.firstMinuteEnd, readings), Omitted(zero, leaky, record.uncertainTail))
     }
 
     /** The per-minute log stores leak in litres per minute; anything else here is a defect, not data. */

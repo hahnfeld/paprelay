@@ -18,16 +18,18 @@ class SyncStoreTest {
     private val file = File(directory, "sync.json")
     private val store = SyncStore(file)
 
-    private fun entry(first: Long, minutes: List<Int>, version: Long = 5) =
-        LedgerEntry("m-4f2a9c", MachineTime(first), minutes, "f".repeat(64), ClockOffset.restored(-361_600), version)
+    private fun entry(first: Long, minutes: List<Int>, version: Long = 5, pending: List<Int>? = null) =
+        LedgerEntry("m-4f2a9c", MachineTime(first), minutes, "f".repeat(64), ClockOffset.restored(-361_600), java.time.ZoneId.of("America/Phoenix"), version, pending)
 
     private val full = SyncState(
         machineTag = "m-4f2a9c",
-        ledger = listOf(entry(2_000_000, (0..122).toList()), entry(1_000_000, listOf(0, 1, 2, 5, 6, 9), version = 7)).associateBy { it.key },
+        ledger = listOf(entry(2_000_000, (0..122).toList()), entry(1_000_000, listOf(0, 1, 2, 5, 6, 9), version = 7, pending = listOf(0, 1, 2, 3, 5, 6, 9))).associateBy { it.key },
         resumeFromMs = 1_500_000,
         lastReport = SyncReport(atMs = 99, outcome = SyncOutcome.PARTIAL, sessions = 3, readingsWritten = 325),
         lastCompleteAtMs = 77,
         leakLimitLitresPerMinute = 30,
+        clock = ClockBaseline(offsetMs = -361_600, machineMs = 1_794_787_873_218),
+        rewriteRequested = true,
     )
 
     @Test
@@ -38,6 +40,9 @@ class SyncStoreTest {
         assertEquals(1_500_000, read.resumeFromMs)
         assertEquals(77, read.lastCompleteAtMs)
         assertEquals(30, read.leakLimitLitresPerMinute)
+        assertEquals(-361_600, read.clock!!.offsetMs)
+        assertEquals(1_794_787_873_218, read.clock!!.machineMs)
+        assertTrue(read.rewriteRequested)
         assertEquals(SyncOutcome.PARTIAL, read.lastReport!!.outcome)
         assertEquals(listOf(99L, 3L, 325L), read.lastReport!!.let { listOf(it.atMs, it.sessions.toLong(), it.readingsWritten.toLong()) })
         assertEquals(full.ledger.keys, read.ledger.keys)
@@ -47,30 +52,42 @@ class SyncStoreTest {
             assertEquals(written.fingerprint, back.fingerprint)
             assertEquals(written.clockOffset, back.clockOffset)
             assertEquals(written.version, back.version)
+            assertEquals(written.zone, back.zone)
+            assertEquals(written.pendingMinutes, back.pendingMinutes)
             assertEquals(written.firstMinuteEnd, back.firstMinuteEnd)
         }
     }
 
     @Test
-    fun `nothing stored is an empty state, with the leak limit at its default`() {
+    fun `nothing stored is an empty state, with no leak rule`() {
         val read = store.read()
         assertNull(read.machineTag)
         assertTrue(read.ledger.isEmpty())
         assertNull(read.lastReport)
-        assertEquals(24, read.leakLimitLitresPerMinute)
+        // What the machine recorded is passed on unless the user says otherwise.
+        assertNull(read.leakLimitLitresPerMinute)
+        assertNull(read.clock)
+        assertTrue(!read.rewriteRequested)
     }
 
     @Test
-    fun `the leak limit can be switched off, and stays off`() {
-        store.write(full.with(leakLimitLitresPerMinute = null))
+    fun `changing the leak rule sends every night to be looked at again`() {
+        store.write(full.withLeakLimit(null))
         assertNull(store.read().leakLimitLitresPerMinute)
-        store.write(full.with(leakLimitLitresPerMinute = 0))
+        assertNull(store.read().resumeFromMs)
+        store.write(full.withLeakLimit(0))
         assertEquals(0, store.read().leakLimitLitresPerMinute)
+        // The ledger is kept: it is what lets records under the old rule be found and removed.
+        assertEquals(2, store.read().ledger.size)
+        // A change that is not one to the leak rule keeps the place reached.
+        store.write(full.with(rewriteRequested = false))
+        assertEquals(1_500_000, store.read().resumeFromMs)
+        assertTrue(!store.read().rewriteRequested)
     }
 
     @Test
     fun `a state that cannot be read is reported, not replaced by an empty one`() {
-        for (damaged in listOf("", "{", "[]", """{"format":2,"ledger":[]}""", """{"format":1,"ledger":[{"tag":"m-4f2a9c"}]}""", """{"ledger":[]}""")) {
+        for (damaged in listOf("", "{", "[]", """{"format":1,"ledger":[]}""", """{"format":2,"ledger":[{"tag":"m-4f2a9c"}]}""", """{"ledger":[]}""")) {
             file.writeText(damaged)
             assertFailsWith<SyncStateUnreadableException>(damaged) { store.read() }
             // Still there for a later version, or a person, to look at.
@@ -83,6 +100,12 @@ class SyncStoreTest {
         for (run in listOf("5-2", "a", "1-2-3", "-1", "0-99999999")) {
             file.writeText(SyncStore.encode(full).toString().replace("0-122", run))
             assertFailsWith<SyncStateUnreadableException>(run) { store.read() }
+        }
+        for ((from, to) in listOf("America/Phoenix" to "Nowhere/Atall", "\"leakLimit\":30" to "\"leakLimit\":-4", "f".repeat(64) to "not a fingerprint")) {
+            val text = SyncStore.encode(full).toString()
+            assertTrue(from in text, from)
+            file.writeText(text.replace(from, to))
+            assertFailsWith<SyncStateUnreadableException>(to) { store.read() }
         }
     }
 
