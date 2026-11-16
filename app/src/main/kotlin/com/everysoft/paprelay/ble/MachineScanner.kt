@@ -73,11 +73,12 @@ class MachineScanner(context: Context) {
         val finished = CompletableDeferred<Int>()
         val callback = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
-                val record = result.scanRecord ?: return
-                val raw = record.bytes ?: return
-                val advertisement = Advertisement.parse(raw)
-                val platformSawService = record.serviceUuids?.contains(SERVICE) == true
                 val wanted = stopAtAddress != null && result.device.address.equals(stopAtAddress, ignoreCase = true)
+                // The wanted device is reported even if it sends no payload at all.
+                val record = result.scanRecord
+                val raw = record?.bytes ?: if (wanted) ByteArray(0) else return
+                val advertisement = Advertisement.parse(raw)
+                val platformSawService = record?.serviceUuids?.contains(SERVICE) == true
                 if (!advertisement.looksLikeAirSense && !platformSawService && !wanted) return
                 val sighting = Sighting(
                     result.device,
@@ -85,7 +86,7 @@ class MachineScanner(context: Context) {
                     advertisement,
                     Advertisement.redactedHex(raw),
                     platformSawService,
-                    record.deviceName != null,
+                    record?.deviceName != null,
                     result.isConnectable,
                     result.isLegacy,
                 )
@@ -102,7 +103,13 @@ class MachineScanner(context: Context) {
             platformFilter -> listOf(ScanFilter.Builder().setServiceUuid(SERVICE).build())
             else -> null
         }
-        val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
+        // Not only the original kind of advertisement: a machine may use the extended kind,
+        // which the default settings would never deliver.
+        val settings = ScanSettings.Builder()
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .setLegacy(false)
+            .setPhy(ScanSettings.PHY_LE_ALL_SUPPORTED)
+            .build()
         scanner.startScan(filters, settings, callback)
         val outcome = try {
             withTimeoutOrNull(durationMs) { finished.await() }

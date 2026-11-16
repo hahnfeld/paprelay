@@ -89,7 +89,7 @@
     <string name="detail_one_found">1 machine was found (%1$s).</string>
     <string name="detail_many_found">More than one machine was found. The check uses the machine you chose.</string>
     <string name="detail_paired_found">The paired machine was found (%1$s).</string>
-    <string name="detail_paired_not_seen">The machine did not announce itself. PAPRelay connects to it directly.</string>
+    <string name="detail_paired_not_seen">The machine was not heard. PAPRelay will try to connect to it directly.</string>
     <!-- The next three are placed inside the sentences above, in brackets. -->
     <string name="signal_strong">strong signal</string>
     <string name="signal_good">good signal</string>

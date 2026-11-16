@@ -74,6 +74,13 @@ class AdvertisementTest {
         val address = field(0x1B, byteArrayOf(0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66))
         assertEquals("020106" + "081B" + "xx".repeat(7 + name.size), Advertisement.redactedHex(flags + address + name))
 
+        // A structure of a shown type but the wrong size is not what it claims to be, and is blanked too.
+        assertEquals("020106" + "0401" + "xxxxxx", Advertisement.redactedHex(flags + field(0x01, byteArrayOf(0x52, 0x65, 0x73))))
+        assertEquals("020106" + "040A" + "xxxxxx", Advertisement.redactedHex(flags + field(0x0A, byteArrayOf(0x52, 0x65, 0x73))))
+        assertEquals("020106" + "0403" + "xxxxxx", Advertisement.redactedHex(flags + field(0x03, byteArrayOf(0x52, 0x65, 0x73))))
+        assertEquals("020106" + "0B03" + "xx".repeat(10), Advertisement.redactedHex(flags + field(0x03, ByteArray(10) { 0x41 })))
+        assertEquals("020106" + "050356FD0A18", Advertisement.redactedHex(flags + field(0x03, byteArrayOf(0x56, 0xFD.toByte(), 0x0A, 0x18))))
+
         // And so is a structure that runs off the end.
         assertEquals("020106" + "0909" + "xx".repeat(3), Advertisement.redactedHex(flags + byteArrayOf(0x09, 0x09, 0x52, 0x65, 0x73)))
     }

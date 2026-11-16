@@ -105,8 +105,15 @@ public class Advertisement internal constructor(
                     blank(payload.size - at - 2)
                     break
                 }
-                if (type in SHOWN_TYPES) {
-                    for (i in 0 until length - 1) hex(payload[at + 2 + i])
+                // Shown only at the size the structure should have: an over-long one is not
+                // what its type says, and its extra bytes could be anything.
+                val content = length - 1
+                val asExpected = when (type) {
+                    TYPE_FLAGS, TYPE_TX_POWER -> content == 1
+                    else -> content % 2 == 0 && content <= MAX_SHOWN_UUID_BYTES
+                }
+                if (type in SHOWN_TYPES && asExpected) {
+                    for (i in 0 until content) hex(payload[at + 2 + i])
                 } else {
                     blank(length - 1)
                 }
@@ -116,7 +123,10 @@ public class Advertisement internal constructor(
         }
 
         /** Flags, incomplete and complete 16-bit service lists, transmit power. */
-        private val SHOWN_TYPES = setOf(0x01, TYPE_UUID16_INCOMPLETE, TYPE_UUID16_COMPLETE, 0x0A)
+        private const val TYPE_FLAGS = 0x01
+        private const val TYPE_TX_POWER = 0x0A
+        private const val MAX_SHOWN_UUID_BYTES = 8
+        private val SHOWN_TYPES = setOf(TYPE_FLAGS, TYPE_UUID16_INCOMPLETE, TYPE_UUID16_COMPLETE, TYPE_TX_POWER)
         private const val TYPE_LE_ADDRESS = 0x1B
         private const val HEX = "0123456789ABCDEF"
 
