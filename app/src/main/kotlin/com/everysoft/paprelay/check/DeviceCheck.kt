@@ -829,8 +829,15 @@ class DeviceCheck(
 
         const val MAX_CAUSE_DEPTH = 8
 
-        /** A stable label for the report; survives release builds. */
-        fun code(e: Throwable): String = when (e) {
+        /**
+         * A stable label for the report; survives release builds.
+         *
+         * @param messages false to leave out every message, keeping kinds, codes and places only.
+         *   Messages here are made printable and never hold a key or a full serial, but some quote
+         *   a short value from the machine or from Health Connect; a label kept on the phone
+         *   between runs does without them.
+         */
+        fun code(e: Throwable, messages: Boolean = true): String = when (e) {
             is CheckFailure -> "check"
             is Observation -> "observation"
             is As11Exception -> {
@@ -855,10 +862,12 @@ class DeviceCheck(
                     is As11DefectException -> "defect"
                 }
                 // A few messages quote a short value from the machine, so they are made printable.
-                "$kind [${e.recovery}] ${printable(e.message.orEmpty())}" + (e.cause?.let { " <- ${code(it)}" } ?: "")
+                "$kind [${e.recovery}]" + (if (messages) " ${printable(e.message.orEmpty())}" else "") + (e.cause?.let { " <- ${code(it, messages)}" } ?: "")
             }
             is HealthConnectUnresponsiveException -> "health-connect.unresponsive"
-            else -> healthConnectError(e)?.let { "health-connect code ${it.errorCode} ${printable(it.message.orEmpty(), limit = 200)}" } ?: run {
+            else -> healthConnectError(e)?.let {
+                "health-connect code ${it.errorCode}" + if (messages) " ${printable(it.message.orEmpty(), limit = 200)}" else ""
+            } ?: run {
                 // Platform class names are never shortened by the release build, so they are
                 // safe to print. Others would be meaningless; the frames below can be mapped back.
                 val name = e.javaClass.name
@@ -869,8 +878,8 @@ class DeviceCheck(
                 // that can be text from the machine.
                 val safe = e is IOException || e is SecurityException || e is java.security.GeneralSecurityException ||
                     e is java.security.ProviderException || e is android.security.KeyStoreException || e is android.os.RemoteException
-                val message = if (safe) ": ${printable(e.message.orEmpty(), limit = 200)}" else ""
-                "unexpected $type$message at $frames" + (e.cause?.takeIf { it !== e }?.let { " <- ${code(it)}" } ?: "")
+                val message = if (safe && messages) ": ${printable(e.message.orEmpty(), limit = 200)}" else ""
+                "unexpected $type$message at $frames" + (e.cause?.takeIf { it !== e }?.let { " <- ${code(it, messages)}" } ?: "")
             }
         }
 

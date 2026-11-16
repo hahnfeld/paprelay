@@ -46,7 +46,7 @@ public class LedgerEntry(
 
     init {
         require(SessionReadings.isValidTag(machineTag)) { "not a machine tag" }
-        require(version >= 1) { "versions start at one" }
+        require(version in 1..MAX_VERSION) { "not a record version" }
         require(fingerprint.isEmpty() || FINGERPRINT.matches(fingerprint)) { "not a fingerprint" }
         require(rising(this.minutes) && rising(this.pendingMinutes.orEmpty())) { "minutes must rise" }
         require(this.minutes.isEmpty() || fingerprint.isNotEmpty()) { "confirmed minutes without their fingerprint" }
@@ -63,6 +63,9 @@ public class LedgerEntry(
 
     private companion object {
         val FINGERPRINT = Regex("[0-9a-f]{64}")
+
+        /** Far beyond any clock, and far enough from the end of the numbers that adding one is always possible. */
+        const val MAX_VERSION = Long.MAX_VALUE / 2
 
         fun rising(minutes: List<Int>) = minutes.all { it >= 0 } && minutes.zipWithNext().all { (a, b) -> b > a }
     }

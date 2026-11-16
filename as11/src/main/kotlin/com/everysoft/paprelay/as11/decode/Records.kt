@@ -69,6 +69,13 @@ public class DecodedLog<T> internal constructor(
      * fit to be kept and shown as such, not to be written into someone's health record.
      */
     public val layoutConfirmed: Boolean,
+    /**
+     * True when an entry failed in the way a misread layout would make it fail (a series that
+     * will not decode, signals that disagree about a record's length). The same misreading
+     * can pass unnoticed in a short record, so the short records beside it are not to be
+     * believed on their own; a long record that decoded cleanly is.
+     */
+    public val doubted: Boolean = false,
 ) {
     public val entries: List<RecordResult<T>> = Collections.unmodifiableList(ArrayList(entries))
 
@@ -103,13 +110,6 @@ internal class ResultSink<T> {
         entries += RecordResult.Failed(entries.size, reason, severalRecords)
     }
 
-    /** Turns every entry into a failure: one of them has shown that none can be trusted. */
-    fun failAll(reason: String) {
-        val count = entries.size
-        entries.clear()
-        repeat(count) { fail(reason) }
-    }
-
     /** Runs [decode] for one entry; a decoding failure becomes that entry's result. */
     inline fun attempt(decode: () -> T) {
         try {
@@ -119,7 +119,7 @@ internal class ResultSink<T> {
         }
     }
 
-    fun finish(layoutConfirmed: Boolean): DecodedLog<T> = DecodedLog(entries, layoutConfirmed)
+    fun finish(layoutConfirmed: Boolean, doubted: Boolean = false): DecodedLog<T> = DecodedLog(entries, layoutConfirmed, doubted)
 }
 
 /**

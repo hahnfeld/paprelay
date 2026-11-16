@@ -230,19 +230,51 @@ class SyncEngine(
             val days = abs(machineNow.epochMs - before.machineMs) / DAY_MS
             if (abs(offset.millis - before.offsetMs) > CLOCK_STEP_MS + days * DRIFT_PER_DAY_MS) throw Stop(SyncOutcome.CLOCK_CHANGED)
         }
+        if (progress.state.softwareSeen != identity.applicationIdentifier) {
+            // Other software than last time. Sessions already on the machine were recorded by the
+            // old one; only what begins from now on can show how the new one writes.
+            progress.state = progress.state.with(
+                softwareSeen = identity.applicationIdentifier,
+                softwareSinceMs = if (progress.state.softwareSeen == null) null else machineNow.epochMs,
+            )
+        }
         progress.state = progress.state.with(clock = ClockBaseline(offset.millis, machineNow.epochMs))
         store.write(progress.state)
 
         val force = progress.state.rewriteRequested
         var vouched = progress.state.vouchedSoftware == identity.applicationIdentifier
+        val vouchFrom = progress.state.softwareSinceMs
         val from = maxOf(EARLIEST_START_MS, progress.state.resumeFromMs?.let { it - OVERLAP_MS } ?: (machineNow.epochMs - FIRST_WINDOW_MS))
         var address: SpoolAddress = SpoolAddress.FromMachineTime(from)
         var rounds = 0
         var emptyRounds = 0
-        // The start of the newest session read, and of the last one read before anything went wrong.
+        var reachedEnd = false
+        // The start of the newest session seen, and of the last one dealt with before anything went wrong.
         var newest: Long? = null
         var lastBeforeTrouble: Long? = null
         var troubled = false
+        // Short sessions that are waiting for a long one to vouch for the software, in order.
+        val waiting = ArrayList<SessionPlan.Planned>()
+
+        suspend fun write(plan: SessionPlan.Planned) {
+            val key = plan.readings.key
+            val now = nowMs()
+            val change = Reconcile.session(plan.readings, progress.state.ledger[key], offset, zone(), now, force) ?: return
+            // A reading that has not happened yet means the clock correction is wrong.
+            if (change.writes.any { it.time.toEpochMilli() > now + FUTURE_ALLOWANCE_MS }) throw Stop(SyncOutcome.CLOCK_UNRELIABLE)
+            // The intent first: from here on the ledger covers whatever is about to exist.
+            storeEntry(progress, key, change.intent)
+            sink.apply(change)
+            // Confirmed, and stored before the next session is begun: this one is finished for good.
+            storeEntry(progress, key, change.confirmed)
+            progress.written += change.writes.size
+        }
+
+        fun trouble() {
+            progress.partial = true
+            troubled = true
+        }
+
         while (true) {
             if (++rounds > MAX_ROUNDS) {
                 progress.partial = true
@@ -267,74 +299,95 @@ class SyncEngine(
                     // written (one unreadable night must not hold up every night that follows),
                     // but the place to resume from stays before it, so that it is read again.
                     is RecordResult.Failed -> {
-                        progress.partial = true
-                        troubled = true
+                        trouble()
                         continue
                     }
                 }
+                newest = record.firstMinuteEnd.epochMs
                 if (machineNow.epochMs - record.lastMinuteEnd.epochMs in -FUTURE_ALLOWANCE_MS until SETTLE_MS) {
                     // Its last minute has only just been recorded: the session may still be going on.
                     // It is left until it has ended, so that a night is written once, whole, and
                     // nothing depends on how the machine presents a record it is still adding to.
                     // The next run starts at it again.
-                    newest = record.firstMinuteEnd.epochMs
-                    if (!troubled) lastBeforeTrouble = newest
+                    if (!troubled && waiting.isEmpty()) lastBeforeTrouble = newest
                     continue
                 }
-                val plan = RespiratoryRatePlan.session(record, tag, progress.state.leakLimitLitresPerMinute)
-                if (!vouched) {
-                    if (plan is SessionPlan.Planned && record.sampleCount >= VOUCH_SAMPLES) {
-                        vouched = true
-                        progress.state = progress.state.with(vouchedSoftware = identity.applicationIdentifier)
-                        store.write(progress.state)
-                    } else {
-                        // Too short to prove that this software's data is being read as it is meant. It
-                        // waits, like a night that cannot be read, until a long session has been.
-                        progress.partial = true
-                        troubled = true
-                        continue
-                    }
+                if (log.doubted && record.sampleCount < VOUCH_SAMPLES) {
+                    // Something else in this download failed the way a misread layout would, and a
+                    // misreading can pass in a record this short. It is read again another time.
+                    trouble()
+                    continue
+                }
+                val plan = try {
+                    RespiratoryRatePlan.session(record, tag, progress.state.leakLimitLitresPerMinute)
+                } catch (e: IllegalArgumentException) {
+                    // A record no rule was written for (far too long, say) costs itself, like one that cannot be read.
+                    trouble()
+                    continue
+                } catch (e: IllegalStateException) {
+                    trouble()
+                    continue
                 }
                 when (plan) {
-                    is SessionPlan.Unplanned -> if (plan.minutesUnknown) {
-                        progress.partial = true
-                        troubled = true
-                    }
+                    is SessionPlan.Unplanned -> if (plan.minutesUnknown) trouble()
                     is SessionPlan.Planned -> {
-                        val key = plan.readings.key
-                        val now = nowMs()
-                        val change = Reconcile.session(plan.readings, progress.state.ledger[key], offset, zone(), now, force)
-                        if (change != null) {
-                            // A reading that has not happened yet means the clock correction is wrong.
-                            if (change.writes.any { it.time.toEpochMilli() > now + FUTURE_ALLOWANCE_MS }) throw Stop(SyncOutcome.CLOCK_UNRELIABLE)
-                            // The intent first: from here on the ledger covers whatever is about to exist.
-                            storeEntry(progress, key, change.intent)
-                            sink.apply(change)
-                            // Confirmed, and stored before the next session is begun: this one is finished for good.
-                            storeEntry(progress, key, change.confirmed)
-                            progress.written += change.writes.size
+                        val canVouch = record.sampleCount >= VOUCH_SAMPLES && (vouchFrom == null || record.firstMinuteEnd.epochMs >= vouchFrom)
+                        if (!vouched && canVouch) {
+                            vouched = true
+                            progress.state = progress.state.with(vouchedSoftware = identity.applicationIdentifier)
+                            store.write(progress.state)
+                            // The short sessions that were waiting for this are written first, in their order.
+                            for (held in waiting) write(held)
+                            progress.sessions += waiting.size
+                            waiting.clear()
                         }
+                        if (!vouched) {
+                            // Too short, or too old, to show that this software's data is read as it
+                            // is meant. It waits for a session that can.
+                            waiting += plan
+                            continue
+                        }
+                        write(plan)
                     }
                 }
                 progress.sessions++
-                newest = record.firstMinuteEnd.epochMs
-                if (!troubled) lastBeforeTrouble = newest
+                if (!troubled && waiting.isEmpty()) lastBeforeTrouble = newest
             }
-            address = SpoolAddress.Continuation(round.next ?: break)
+            // What is finished stays finished even if this run does not reach its end: the place to
+            // resume from moves up after every round, as long as nothing before it is outstanding.
+            val reached = lastBeforeTrouble
+            if (!troubled && waiting.isEmpty() && reached != null && reached > (progress.state.resumeFromMs ?: Long.MIN_VALUE)) {
+                progress.state = progress.state.with(resumeFromMs = reached)
+                store.write(progress.state)
+            }
+            val next = round.next
+            if (next == null) {
+                reachedEnd = true
+                break
+            }
+            address = SpoolAddress.Continuation(next)
         }
+        // Nothing long enough came to vouch for the software: the short sessions wait for the next run.
+        val unvouched = waiting.isNotEmpty()
+        if (unvouched) trouble()
         // Where the next run begins: at the newest session (it may still be in progress and grow),
-        // or, if something could not be dealt with, before it, so that it is read again. How far
-        // before is bounded: never more than the hold limit back from now. A night that still
-        // cannot be read when it is that old stops being asked for, or every run would read
-        // months of history again for its sake. (Where the trouble came before any session that
-        // could be read, there is no telling how old it is, and the bound alone decides.)
+        // or, if something could not be dealt with, before it, so that it is read again. Where the
+        // trouble came before any session that could be dealt with, the place stays where it was.
+        // How far back it is kept is bounded: never more than the hold limit before now. A night
+        // that still cannot be read when it is that old stops being asked for, or every run would
+        // read months of history again for its sake.
         val resume = when {
-            troubled -> minOf(maxOf(lastBeforeTrouble ?: Long.MIN_VALUE, machineNow.epochMs - HOLD_LIMIT_MS), newest ?: Long.MAX_VALUE)
-            else -> newest
+            troubled -> minOf(
+                maxOf(lastBeforeTrouble ?: progress.state.resumeFromMs ?: Long.MIN_VALUE, machineNow.epochMs - HOLD_LIMIT_MS),
+                newest ?: Long.MAX_VALUE,
+            )
+            else -> newest ?: progress.state.resumeFromMs
         }
         progress.state = progress.state.with(
-            resumeFromMs = resume ?: progress.state.resumeFromMs,
-            rewriteRequested = force && progress.partial,
+            resumeFromMs = resume,
+            // Writing everything again is done once the end of the machine's log has been reached.
+            // What could not be dealt with on the way holds the place to resume from, not this.
+            rewriteRequested = force && (!reachedEnd || unvouched),
         )
         store.write(progress.state)
     }

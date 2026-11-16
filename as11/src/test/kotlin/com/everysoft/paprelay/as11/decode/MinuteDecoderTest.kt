@@ -292,9 +292,10 @@ class MinuteDecoderTest {
     }
 
     @Test
-    fun `a series that will not decode condemns the whole download, as a wrong modulus would`() {
-        // A long session whose respiratory rate was written with another modulus usually fails to
-        // decode at all, and a short one beside it can pass with wrong values. So neither is served.
+    fun `a series that will not decode fails its record and casts doubt on the short ones beside it`() {
+        // A long session whose respiratory rate was written with another modulus fails to decode,
+        // and a short one beside it can pass with wrong values. The long one is not served, and
+        // the download says that its short records are not to be believed on their own.
         val random = Random(11)
         var condemned = 0
         repeat(40) {
@@ -307,8 +308,9 @@ class MinuteDecoderTest {
                 },
                 FIRMWARE,
             )
-            assertTrue(log.decoded.isEmpty(), "served ${log.decoded.size} record(s)")
-            assertEquals(2, log.failures.size)
+            assertTrue(log.decoded.none { it.sampleCount > 4 }, "served the long record")
+            assertTrue(log.doubted)
+            assertTrue(log.failures.isNotEmpty())
             condemned++
         }
         assertEquals(40, condemned)
@@ -389,7 +391,7 @@ class MinuteDecoderTest {
     }
 
     @Test
-    fun `signals that disagree about one record's length condemn the whole download`() {
+    fun `signals that disagree about one record's length fail that record and cast doubt on the download`() {
         val log = MinuteDecoder.decode(
             proto {
                 record(mapOf(MinuteSignal.LEAK to leak))
@@ -398,9 +400,11 @@ class MinuteDecoderTest {
             },
             FIRMWARE,
         )
-        // A wrong modulus can pass in a short record, so its neighbours are not believed either.
-        assertTrue(log.decoded.isEmpty())
-        assertEquals(listOf(0, 1, 2), log.failures.map { it.ordinal })
+        // It may be one record cut short; it may be a wrong modulus, which can pass in a short record.
+        // The record fails, its neighbours keep their places, and the caller is told of the doubt.
+        assertEquals(listOf(12, 3), log.decoded.map { it.sampleCount })
+        assertEquals(listOf(1), log.failures.map { it.ordinal })
+        assertTrue(log.doubted)
         assertNull(log.allOrNull())
     }
 
@@ -418,6 +422,8 @@ class MinuteDecoderTest {
         assertEquals(MachineTime(t + 3_600_000), log.decoded[1].firstMinuteEnd)
         assertEquals(listOf(1), log.failures.map { it.ordinal })
         assertEquals(3, log.entries.size)
+        // A record that is merely of a kind not known says nothing against the layout.
+        assertTrue(!log.doubted)
         assertTrue(MinuteDecoder.decode(ByteArray(0), FIRMWARE).entries.isEmpty())
     }
 

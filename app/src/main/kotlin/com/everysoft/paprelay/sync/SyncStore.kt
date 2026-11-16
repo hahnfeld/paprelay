@@ -132,7 +132,20 @@ class SyncState(
     val vouchedSoftware: String? = null,
     /** The rules ([com.everysoft.paprelay.core.sync.SessionReadings.RULES_VERSION]) the nights behind [resumeFromMs] were last looked at under. */
     val rulesVersion: Int? = null,
+    /** The machine software last seen, by its full identifier. */
+    val softwareSeen: String? = null,
+    /**
+     * The machine's time when [softwareSeen] was first seen in place of another. Only a session
+     * that began after it was certainly recorded by this software, and can vouch for it. Null
+     * when no other software was ever seen: then nothing says which sessions are older.
+     */
+    val softwareSinceMs: Long? = null,
 ) {
+    init {
+        require(leakLimitLitresPerMinute == null || leakLimitLitresPerMinute in 0..MAX_LEAK_LIMIT) { "not a leak limit" }
+        require((vouchedSoftware?.length ?: 0) <= MAX_IDENTIFIER && (softwareSeen?.length ?: 0) <= MAX_IDENTIFIER) { "not a software identifier" }
+    }
+
     fun with(
         machineTag: String? = this.machineTag,
         ledger: Map<String, LedgerEntry> = this.ledger,
@@ -144,7 +157,12 @@ class SyncState(
         rewriteRequested: Boolean = this.rewriteRequested,
         vouchedSoftware: String? = this.vouchedSoftware,
         rulesVersion: Int? = this.rulesVersion,
-    ) = SyncState(machineTag, ledger, resumeFromMs, lastReport, lastCompleteAtMs, leakLimitLitresPerMinute, clock, rewriteRequested, vouchedSoftware, rulesVersion)
+        softwareSeen: String? = this.softwareSeen,
+        softwareSinceMs: Long? = this.softwareSinceMs,
+    ) = SyncState(
+        machineTag, ledger, resumeFromMs, lastReport, lastCompleteAtMs, leakLimitLitresPerMinute, clock, rewriteRequested, vouchedSoftware,
+        rulesVersion, softwareSeen, softwareSinceMs,
+    )
 
     /**
      * With another leak rule. Every night is then looked at again, not only the recent ones,
@@ -154,10 +172,12 @@ class SyncState(
 
     /** With every session to be read again from as far back as the machine holds. */
     fun fromTheStart(): SyncState =
-        SyncState(machineTag, ledger, null, lastReport, lastCompleteAtMs, leakLimitLitresPerMinute, clock, rewriteRequested, vouchedSoftware, rulesVersion)
+        with(resumeFromMs = null)
 
     companion object {
         val EMPTY = SyncState(null, emptyMap(), null, null, null, null, null, false)
+        const val MAX_LEAK_LIMIT = 1_000
+        const val MAX_IDENTIFIER = 128
     }
 }
 
@@ -230,6 +250,8 @@ class SyncStore(private val file: File) {
             if (state.rewriteRequested) put("rewriteRequested", true)
             state.vouchedSoftware?.let { put("vouchedSoftware", it) }
             state.rulesVersion?.let { put("rulesVersion", it) }
+            state.softwareSeen?.let { put("softwareSeen", it) }
+            state.softwareSinceMs?.let { put("softwareSinceMs", it) }
             state.lastReport?.let { report ->
                 put(
                     "lastReport",
@@ -265,7 +287,7 @@ class SyncStore(private val file: File) {
 
         fun decode(json: JsonObject): SyncState {
             require(json.getValue("format").jsonPrimitive.long == FORMAT) { "written by another version" }
-            val entries = (json["ledger"] as? JsonArray).orEmpty().map { element ->
+            val entries = (json.getValue("ledger") as JsonArray).map { element ->
                 val entry = element.jsonObject
                 LedgerEntry(
                     machineTag = entry.getValue("tag").jsonPrimitive.content,
@@ -278,10 +300,14 @@ class SyncStore(private val file: File) {
                     pendingMinutes = (entry["pending"] as? JsonPrimitive)?.content?.let(::minutes),
                 )
             }
+            val machineTag = (json["machineTag"] as? JsonPrimitive)?.content
             val ledger = LinkedHashMap<String, LedgerEntry>()
-            for (entry in entries) require(ledger.put(entry.key, entry) == null) { "a session is listed twice" }
+            for (entry in entries) {
+                require(entry.machineTag == machineTag) { "a session of another machine" }
+                require(ledger.put(entry.key, entry) == null) { "a session is listed twice" }
+            }
             return SyncState(
-                machineTag = (json["machineTag"] as? JsonPrimitive)?.content,
+                machineTag = machineTag,
                 ledger = ledger,
                 resumeFromMs = (json["resumeFromMs"] as? JsonPrimitive)?.long,
                 lastReport = (json["lastReport"] as? JsonObject)?.let { report ->
@@ -295,15 +321,15 @@ class SyncStore(private val file: File) {
                 },
                 lastCompleteAtMs = (json["lastCompleteAtMs"] as? JsonPrimitive)?.long,
                 leakLimitLitresPerMinute = (json["leakLimit"] as? JsonPrimitive)?.long?.let {
-                    require(it in 0..MAX_LEAK_LIMIT) { "not a leak limit" }
+                    require(it in 0..SyncState.MAX_LEAK_LIMIT) { "not a leak limit" }
                     it.toInt()
                 },
                 clock = (json["clock"] as? JsonObject)?.let { ClockBaseline(it.getValue("offsetMs").jsonPrimitive.long, it.getValue("machineMs").jsonPrimitive.long) },
                 rewriteRequested = (json["rewriteRequested"] as? JsonPrimitive)?.content == "true",
-                vouchedSoftware = (json["vouchedSoftware"] as? JsonPrimitive)?.content?.also {
-                    require(it.length <= MAX_IDENTIFIER) { "not a software identifier" }
-                },
+                vouchedSoftware = (json["vouchedSoftware"] as? JsonPrimitive)?.content,
                 rulesVersion = (json["rulesVersion"] as? JsonPrimitive)?.long?.toInt(),
+                softwareSeen = (json["softwareSeen"] as? JsonPrimitive)?.content,
+                softwareSinceMs = (json["softwareSinceMs"] as? JsonPrimitive)?.long,
             )
         }
 
@@ -339,7 +365,5 @@ class SyncStore(private val file: File) {
 
         /** A week of minutes: far more than a session can hold, and a bound on what a damaged file can ask for. */
         private const val MAX_MINUTES = 7 * 24 * 60
-        private const val MAX_LEAK_LIMIT = 1_000L
-        private const val MAX_IDENTIFIER = 128
     }
 }

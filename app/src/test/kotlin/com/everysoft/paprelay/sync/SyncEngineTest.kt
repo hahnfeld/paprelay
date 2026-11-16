@@ -77,6 +77,9 @@ class SyncEngineTest {
         var perRound = 100
         var failPullAfterRounds: Int? = null
         var emptyForEver = false
+
+        /** The start of a session whose signals disagree about its length, or null for none. */
+        var torn: Long? = null
         val starts = ArrayList<Long>()
         var connections = 0
         private var reads = 0
@@ -119,7 +122,21 @@ class SyncEngineTest {
             val page = wanted.drop(offset).take(perRound)
             val more = offset + page.size < wanted.size
             val next = if (more) JsonObject(mapOf(SpoolName.ONE_MINUTE.wireName to JsonPrimitive(offset + page.size), "since" to JsonPrimitive(since))) else null
-            val data = proto { for (night in page) night(night) }
+            val tornAt = torn
+            val data = proto {
+                var placed = tornAt == null || offset > 0
+                for (night in page) {
+                    if (!placed && night.firstMinuteEnd > tornAt!!) {
+                        placed = true
+                        message(5) {
+                            message(1) { varint(1, 1); varint(2, tornAt); bytes(3, riceBlock(IntArray(50) { 2 }, 4)) }
+                            message(4) { varint(1, 1); varint(2, tornAt); bytes(3, riceBlock(rates(80), 8)) }
+                            varint(15, 1)
+                        }
+                    }
+                    night(night)
+                }
+            }
             return SpoolRound(data, ByteArray(32), next)
         }
     }
@@ -582,42 +599,129 @@ class SyncEngineTest {
         assertTrue(health.records.isEmpty())
         assertNull(store.read().vouchedSoftware)
 
-        // A long session arrives after them. It is written, and vouches for the software.
+        // A long session arrives after them. It vouches for the software, and the short ones
+        // that came before it in the same download are written with it.
         phoneNow += hour
         val long = first
         machine.nights = listOf(nap, later, long)
-        val partly = engine.sync()!!
-        assertEquals(SyncOutcome.PARTIAL, partly.outcome)
-        assertHolds(listOf(long))
+        val whole = engine.sync()!!
+        assertEquals(SyncOutcome.COMPLETE, whole.outcome)
+        assertEquals(3, whole.sessions)
+        assertHolds(listOf(nap, later, long))
         assertEquals(software, store.read().vouchedSoftware)
 
-        // The next run takes up the short ones that were waiting.
-        phoneNow += hour
-        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
-        assertHolds(listOf(nap, later, long))
-
-        // Two days on, a short session is written without waiting: the software is vouched for.
+        // From then on a short session is written without waiting.
         phoneNow += 48 * hour
         val brief = Night(machineNow - 2 * hour, rates(10, base = 56))
         machine.nights = listOf(nap, later, long, brief)
         assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
         assertHolds(listOf(nap, later, long, brief))
+    }
 
-        // Another build of the software has to earn it again, from a long session it can show.
-        phoneNow += hour
-        machine.applicationIdentifier = "SW04600.19.8.8.0.0123abc"
-        val another = Night(machineNow - 30 * 60_000L, rates(10, base = 60))
-        machine.nights = listOf(nap, later, long, brief, another)
-        assertEquals(SyncOutcome.PARTIAL, engine.sync()!!.outcome)
-        assertHolds(listOf(nap, later, long, brief))
-        phoneNow += 10 * hour
-        val night = Night(machineNow - 5 * hour, rates(240, base = 50))
-        machine.nights = listOf(nap, later, long, brief, another, night)
-        engine.sync()
-        phoneNow += hour
+    @Test
+    fun `new software is vouched for only by a session it recorded itself`() = runTest {
+        // A long night under the first software, ending an hour ago.
+        val under = Night(machineNow - 8 * hour, rates(400))
+        machine.nights = listOf(under)
         assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
-        assertHolds(listOf(nap, later, long, brief, another, night))
+
+        // The machine is updated, and a short session follows. The long night is read again (it
+        // is the newest but one), but it was recorded by the old software and proves nothing.
+        phoneNow += 2 * hour
+        machine.applicationIdentifier = "SW04600.19.8.8.0.0123abc"
+        phoneNow += hour
+        val short = Night(machineNow - 40 * 60_000L, rates(10, base = 60))
+        machine.nights = listOf(under, short)
+        assertEquals(SyncOutcome.PARTIAL, engine.sync()!!.outcome)
+        assertHolds(listOf(under))
+        assertEquals(software, store.read().vouchedSoftware)
+
+        // A night recorded after the update vouches, and the short session comes across with it.
+        phoneNow += 12 * hour
+        val night = Night(machineNow - 6 * hour, rates(300, base = 50))
+        machine.nights = listOf(under, short, night)
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertHolds(listOf(under, short, night))
         assertEquals("SW04600.19.8.8.0.0123abc", store.read().vouchedSoftware)
+    }
+
+    @Test
+    fun `one record that cannot be trusted costs itself and the short ones beside it, not the nights`() = runTest {
+        val before = first
+        val after = Night(machineNow - 5 * hour, rates(150, base = 50))
+        val nap = Night(machineNow - 2 * hour, rates(12))
+        // As a power cut might leave it: the rate has 80 minutes, the leak 50.
+        machine.torn = machineNow - 20 * hour
+        machine.nights = listOf(before, after, nap)
+        val report = engine.sync()!!
+        assertEquals(SyncOutcome.PARTIAL, report.outcome)
+        // The long nights stand on their own evidence. The nap is too short to, in this company.
+        assertHolds(listOf(before, after))
+        assertEquals(before.firstMinuteEnd, store.read().resumeFromMs)
+    }
+
+    @Test
+    fun `a record no rule was written for costs itself, and the nights after it are written`() = runTest {
+        // Longer than any session can be: a week and a minute.
+        val endless = Night(machineNow - 400 * hour, rates(SessionReadings.MAX_MINUTES + 1))
+        val after = Night(machineNow - 5 * hour, rates(150, base = 50))
+        machine.nights = listOf(endless, after)
+        assertEquals(SyncOutcome.PARTIAL, engine.sync()!!.outcome)
+        assertHolds(listOf(after))
+    }
+
+    @Test
+    fun `a run that is always cut off still gets through a long history, a piece at a time`() = runTest {
+        val nights = (1..12).map { Night(machineNow - (13 - it) * 24 * hour, rates(40 + it)) }
+        machine.nights = nights
+        machine.perRound = 2
+        // The link carries two rounds and then goes quiet, every time.
+        var allowed = 0
+        val never = CompletableDeferred<Unit>()
+        val stalling = object : MachineConnector by machine {
+            override suspend fun <T> withSession(block: suspend (MachineSession) -> T): T = machine.withSession { session ->
+                block(
+                    object : MachineSession by session {
+                        override suspend fun pull(log: SpoolName, from: SpoolAddress): SpoolRound {
+                            if (allowed-- <= 0) never.await()
+                            return session.pull(log, from)
+                        }
+                    },
+                )
+            }
+        }
+        val limited = SyncEngine(stalling, health, store, nowMs = { phoneNow }, limitMs = 60_000)
+        var runs = 0
+        do {
+            allowed = 2
+            phoneNow += hour
+            val report = limited.sync()!!
+            assertTrue(++runs < 12, "no progress: still ${health.records.size} records after $runs runs")
+        } while (report.outcome != SyncOutcome.COMPLETE)
+        assertHolds(nights)
+    }
+
+    @Test
+    fun `writing everything again is done once the end is reached, whatever could not be read on the way`() = runTest {
+        val good = first
+        val broken = Night(machineNow - 20 * hour, rates(203), kind = 2)
+        val after = Night(machineNow - 3 * hour, rates(101))
+        machine.nights = listOf(good, broken, after)
+        engine.sync()
+        // Health Connect's data is cleared, and the user asks for everything again.
+        health.records.clear()
+        store.write(store.read().with(rewriteRequested = true).fromTheStart())
+        phoneNow += hour
+        val rewrite = engine.sync()!!
+        assertEquals(SyncOutcome.PARTIAL, rewrite.outcome)
+        assertEquals(123 + 101, rewrite.readingsWritten)
+        assertHolds(listOf(good, after))
+        assertTrue(!store.read().rewriteRequested)
+        // The unreadable night is still asked for, but nothing is written twice for its sake.
+        phoneNow += hour
+        val next = engine.sync()!!
+        assertEquals(SyncOutcome.PARTIAL, next.outcome)
+        assertEquals(0, next.readingsWritten)
     }
 
     @Test

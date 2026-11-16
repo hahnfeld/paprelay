@@ -28,7 +28,9 @@ class PapRelayApp : Application() {
         DeviceCheck(this, scope, pairingStore, scanner, healthConnect, claim) { sync.forget() }
     }
     val sync: SyncRunner by lazy {
-        SyncRunner(this, scope, GattMachineConnector(this, scope, pairingStore, scanner), HealthConnectSink(this), claim, pairingStore, DeviceCheck::code)
+        SyncRunner(this, scope, GattMachineConnector(this, scope, pairingStore, scanner), HealthConnectSink(this), claim, pairingStore) {
+            DeviceCheck.code(it, messages = false)
+        }
     }
 
     override fun onCreate() {

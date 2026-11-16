@@ -163,7 +163,7 @@ public object MinuteDecoder {
 
     /**
      * A record's series could not be decoded, or contradict each other. Either is what a wrong
-     * modulus looks like, and that casts doubt on how every record of the download was read.
+     * modulus looks like, and that casts doubt on the short records of the same download.
      */
     private class LengthDisagreement(message: String) : Exception(message)
 
@@ -178,7 +178,7 @@ public object MinuteDecoder {
             throw SpoolDecodeException("per-minute log: this machine's software has not been confirmed, so its data is not decoded")
         }
         val sink = ResultSink<MinuteRecord>()
-        var disagreement: String? = null
+        var doubted = false
         var previous: MinuteRecord? = null
         unwrap(payload, SpoolEnvelope.MINUTE_LOG, "per-minute log").forEachIndexed { index, body ->
             val what = "per-minute record $index"
@@ -196,16 +196,17 @@ public object MinuteDecoder {
                 }
             } catch (e: LengthDisagreement) {
                 sink.fail(e.message!!)
-                disagreement = disagreement ?: e.message
+                doubted = true
             }
         }
-        // A series that will not decode, or signals that disagree about a record's length, mean a
-        // modulus is wrong, and a wrong modulus can pass in a short record. So one such record
-        // condemns the whole download. (A signal that decodes but holds an impossible value is
-        // different: on confirmed software that is a marker this version does not know, and it
-        // costs only that signal.)
-        disagreement?.let { sink.failAll("per-minute log: not trusted, because $it") }
-        return sink.finish(layoutConfirmed = true)
+        // A series that will not decode, or signals that disagree about a record's length, may mean
+        // a modulus is wrong, and a wrong modulus can pass in a short record. It may equally be
+        // one record cut short by a power failure. So such a record costs itself, and the doubt
+        // is passed on with the result: a long record that decoded cleanly beside it stands on
+        // its own evidence, and what to make of the short ones is for the caller. (A signal that
+        // decodes but holds an impossible value is different again: on confirmed software that
+        // is a marker this version does not know, and it costs only that signal.)
+        return sink.finish(layoutConfirmed = true, doubted = doubted)
     }
 
     private class Series(val start: MachineTime, val block: SampleBlock)
