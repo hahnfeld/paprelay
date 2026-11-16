@@ -103,6 +103,13 @@ class SyncEngine(
         }
     }
 
+    /**
+     * Runs [block] while no synchronisation is in progress, waiting for one to finish first.
+     * Everything else that changes the stored state goes through here: a run keeps the state
+     * in hand while it works, and a change made beside it would be overwritten, or overwrite it.
+     */
+    suspend fun <T> whileIdle(block: suspend () -> T): T = running.withLock { block() }
+
     private class Stop(val outcome: SyncOutcome) : Exception()
 
     private class Progress(var state: SyncState) {

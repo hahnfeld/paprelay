@@ -13,8 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -37,10 +36,12 @@ class SyncRunner(
     private val scope: CoroutineScope,
     connector: MachineConnector,
     sink: HealthSink,
+    /** True while something else (the device check) holds the connection to the machine. */
+    private val machineInUse: () -> Boolean,
 ) {
     private val store = SyncStore(File(context.noBackupFilesDir, "sync.json"))
     private val engine = SyncEngine(connector, sink, store, System::currentTimeMillis, ::keepRaw)
-    private val changes = Mutex()
+    private val active = AtomicBoolean(false)
 
     private val _status = MutableStateFlow(SyncStatus(running = false, lastReport = null, lastCompleteAtMs = null, storeUnreadable = false))
     val status: StateFlow<SyncStatus> = _status
@@ -53,12 +54,18 @@ class SyncRunner(
         scope.launch { runOnce() }
     }
 
-    /** Runs one synchronisation to its end. Returns its report, or null if another was already running. */
+    /**
+     * Runs one synchronisation to its end. Returns its report, or null if it did not run:
+     * another was already running, or the device check is using the machine (which accepts
+     * one connection at a time).
+     */
     suspend fun runOnce(): SyncReport? {
+        if (machineInUse() || !active.compareAndSet(false, true)) return null
         _status.value = SyncStatus(true, _status.value.lastReport, _status.value.lastCompleteAtMs, _status.value.storeUnreadable)
         return try {
             engine.sync()
         } finally {
+            active.set(false)
             refresh(running = false)
         }
     }
@@ -73,7 +80,7 @@ class SyncRunner(
     suspend fun requestRewrite() = change { it.with(rewriteRequested = true).fromTheStart() }
 
     /** Forgets everything about synchronising, when the machine is forgotten. Health Connect is not touched. */
-    suspend fun forget() = changes.withLock {
+    suspend fun forget() = engine.whileIdle {
         withContext(Dispatchers.IO) {
             store.delete()
             File(context.filesDir, RAW_DIRECTORY).deleteRecursively()
@@ -91,9 +98,10 @@ class SyncRunner(
         WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
     }
 
-    private suspend fun change(transform: (SyncState) -> SyncState) = changes.withLock {
+    /** Waits for a run in progress to finish: it holds the state in hand, and would overwrite the change. */
+    private suspend fun change(transform: (SyncState) -> SyncState) = engine.whileIdle {
         withContext(Dispatchers.IO) { runCatching { store.write(transform(store.read())) } }
-        refresh(running = _status.value.running)
+        refresh(running = false)
     }
 
     private suspend fun refresh(running: Boolean) {
