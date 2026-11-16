@@ -21,10 +21,9 @@ public class SampleBlock internal constructor(
     /** Everything the bits can express, padding included. */
     public val samples: IntArray,
     /**
-     * How many leading samples are definitely real: everything up to the last
-     * sample whose code either began before the last seven bits of the block
-     * or has a value other than zero (padding cannot produce one). Equal to
-     * `samples.size` when nothing is in doubt.
+     * How many leading samples are definitely real: those whose code began
+     * before the last seven bits of the block. Equal to `samples.size` when
+     * nothing is in doubt.
      */
     public val certain: Int,
     /**
@@ -80,6 +79,7 @@ public object SampleSeries {
         val limit = maxSamples ?: MAX_SAMPLES
         // Blocks too short to hold two seeds and a code are stored uncompressed.
         if (blob.size <= 4) {
+            if (blob.size % 2 != 0) throw SpoolDecodeException("sample block has half a sample")
             val raw = decodeRaw(blob)
             val kept = if (raw.size > limit) raw.copyOf(limit) else raw
             return SampleBlock(kept, kept.size, unreadBits = (raw.size - kept.size) * 16L)
@@ -146,10 +146,10 @@ public object SampleSeries {
                 throw SpoolDecodeException("sample block decodes outside the 16-bit range")
             }
             out[count++] = sample.toInt()
-            // Padding is whatever a bit writer leaves behind: zeros, which read as codes of
-            // value zero, or ones, which never complete a code. A code with any other value
-            // was therefore written on purpose, wherever it sits.
-            if (!mayBePadding || encoded != 0L) certain = count
+            // Position is the only evidence used. A code with a value of its own at the very
+            // end is probably real, but only if padding is all zeros or all ones, and no
+            // capture has shown yet what this machine pads with.
+            if (!mayBePadding) certain = count
         }
         var unread = if (exhausted) 0 else totalBits - bit
         if (!exhausted && count.toLong() == possible) {

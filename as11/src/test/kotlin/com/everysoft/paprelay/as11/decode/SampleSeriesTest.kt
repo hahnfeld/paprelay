@@ -81,8 +81,10 @@ class SampleSeriesTest {
         assertContentEquals(intArrayOf(7, -1), SampleSeries.decode(byteArrayOf(7, 0, 0xFF.toByte(), 0xFF.toByte()), 4).samples)
         assertContentEquals(intArrayOf(7), SampleSeries.decode(byteArrayOf(7, 0), 4).samples)
         assertEquals(0, SampleSeries.decode(ByteArray(0), 4).samples.size)
-        // A trailing odd byte is ignored, as the reference decoder does.
-        assertContentEquals(intArrayOf(0x0201), SampleSeries.decode(byteArrayOf(1, 2, 3), 4).samples)
+        // Half a sample is damage. The reference decoder drops the odd byte; a dropped byte
+        // is a silently shorter night, so it is refused here.
+        assertFailsWith<SpoolDecodeException> { SampleSeries.decode(byteArrayOf(1, 2, 3), 4) }
+        assertFailsWith<SpoolDecodeException> { SampleSeries.decode(byteArrayOf(1), 4) }
     }
 
     @Test
@@ -147,26 +149,6 @@ class SampleSeriesTest {
         // Seven bits that cannot hold a nine-bit code are padding; eight cannot be.
         assertEquals(0, SampleSeries.decode(ByteArray(6), modulus = 256).unreadBits)
         assertFailsWith<SpoolDecodeException> { SampleSeries.decode(ByteArray(5), modulus = 256) }
-    }
-
-    @Test
-    fun `a sample with a value of its own is real even at the very end`() {
-        // Padding is zeros or ones; neither can spell a code with a value. Seeds 10 and 12 at
-        // modulus 4, then d=0 (000), d=+3 (1 0 10), d=0 (000): ten bits, six of padding.
-        //   bits: 000 1010 000 + 000000 = 0001 0100 0000 0000
-        val block = SampleSeries.decode(byteArrayOf(10, 0, 12, 0, 0x14, 0x00), modulus = 4)
-        // 14, then 19 (the valued code, which starts before the last seven bits anyway), then
-        // 24 from the third code, which starts at bit 7 and is certain only by position.
-        assertContentEquals(intArrayOf(10, 12, 14, 19, 24, 29, 34), block.samples)
-        assertEquals(5, block.certain)
-
-        // The same stream shifted so that the valued code begins inside the last seven bits:
-        // seeds, d=0 x3 (nine bits), then d=+3 (1010), then three padding bits.
-        //   bits: 000 000 000 1010 000 = 0000 0000 0101 0000
-        val late = SampleSeries.decode(byteArrayOf(10, 0, 12, 0, 0x00, 0x50), modulus = 4)
-        assertContentEquals(intArrayOf(10, 12, 14, 16, 18, 23, 28), late.samples)
-        // Position alone would stop at five; the valued code at bit 9 proves the sixth.
-        assertEquals(6, late.certain)
     }
 
     @Test

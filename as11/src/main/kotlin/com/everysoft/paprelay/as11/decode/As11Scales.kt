@@ -47,6 +47,13 @@ public enum class SummaryIndex(public val field: Int) {
  *
  * Leak and the flows are in litres per **second** here; the per-minute log
  * ([MinuteSignal.LEAK]) uses litres per minute.
+ *
+ * Field 37 (respiratory flow, 5th and 95th percentile) is deliberately not
+ * listed. Its low percentile is negative on any used night, and the references
+ * do not say how a negative number is stored there; guessing would turn -0.30
+ * into +0.59. It is skipped as an unknown field until a capture settles it.
+ * The two references also differ on the flow divisors, so [BLOWER_FLOW] is to
+ * be confirmed against the SD card before anything depends on it.
  */
 public enum class SummaryMetric(
     public val field: Int,
@@ -71,7 +78,6 @@ public enum class SummaryMetric(
     HUMIDIFIER_POWER(32, HUNDREDTHS, PapUnit.PERCENT, PercentileLayout.MEDIAN),
     HEATED_TUBE_POWER(33, HUNDREDTHS, PapUnit.PERCENT, PercentileLayout.MEDIAN),
     BLOWER_PRESSURE(36, HUNDREDTHS, PapUnit.CM_H2O, PercentileLayout.RANGE),
-    RESPIRATORY_FLOW(37, HUNDREDTHS, PapUnit.LITRES_PER_SECOND, PercentileLayout.RANGE),
     BLOWER_FLOW(38, HUNDREDTHS, PapUnit.LITRES_PER_SECOND, PercentileLayout.MEDIAN),
     HEART_RATE(41, HUNDREDTHS, PapUnit.BEATS_PER_MINUTE, PercentileLayout.STANDARD),
     ALVEOLAR_MINUTE_VENTILATION(42, HUNDREDTHS, PapUnit.LITRES_PER_MINUTE, PercentileLayout.STANDARD),

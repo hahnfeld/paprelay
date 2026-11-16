@@ -19,7 +19,11 @@ class QuantityTest {
         assertEquals(10.4, Scale(1, 100).of(1040, PapUnit.CM_H2O).value)
         assertEquals(BigDecimal("0.007"), Scale(1, 1000).of(7, PapUnit.SECONDS).exact())
         assertEquals(BigDecimal("-3.75"), Scale(1, 4).of(-15, PapUnit.BREATHS_PER_MINUTE).exact())
-        assertEquals(BigDecimal("0"), Scale(1, 100).of(0, PapUnit.EVENTS_PER_HOUR).exact().stripTrailingZeros())
+        // Whole numbers stay in plain notation: an index of 10.00 is "10", not "1E+1".
+        assertEquals("10", Scale(1, 100).of(1000, PapUnit.EVENTS_PER_HOUR).exact().toString())
+        assertEquals("30", Scale(6, 5).of(25, PapUnit.LITRES_PER_MINUTE).exact().toString())
+        assertEquals("0", Scale(1, 100).of(0, PapUnit.EVENTS_PER_HOUR).exact().toString())
+        assertEquals("1100", Scale(4, 1).of(275, PapUnit.PERCENT).exact().toString())
     }
 
     @Test
@@ -41,5 +45,13 @@ class QuantityTest {
         assertFailsWith<IllegalArgumentException> { Scale(0, 5) }
         assertFailsWith<IllegalArgumentException> { Scale(1, -5) }
         assertFailsWith<IllegalArgumentException> { Scale.ONE.of(Long.MAX_VALUE, PapUnit.PERCENT) }
+        assertFailsWith<IllegalArgumentException> { Scale.ONE.of(Quantity.MAX_RAW + 1, PapUnit.PERCENT) }
+        // A third has no exact decimal form, and a huge factor would overflow.
+        assertFailsWith<IllegalArgumentException> { Scale(1, 3) }
+        assertFailsWith<IllegalArgumentException> { Scale(Int.MAX_VALUE, 1) }
+        // The largest value allowed is still exact.
+        val largest = Scale(Scale.MAX_NUMERATOR, 1).of(Quantity.MAX_RAW, PapUnit.PERCENT)
+        assertEquals(BigDecimal(Quantity.MAX_RAW).multiply(BigDecimal(Scale.MAX_NUMERATOR)), largest.exact())
+        assertEquals(Quantity.MAX_RAW.toDouble() * Scale.MAX_NUMERATOR, largest.value)
     }
 }

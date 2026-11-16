@@ -42,7 +42,7 @@ class SummaryDecoderTest {
 
     @Test
     fun `a night decodes to the machine's own figures`() {
-        val record = SummaryDecoder.decode(night()).single()
+        val record = SummaryDecoder.decode(night()).records.single()
         assertEquals(noon, record.periodStartMs)
         assertEquals(noon + day, record.periodEndMs)
         assertEquals(-300, record.zoneOffsetMinutes)
@@ -62,7 +62,7 @@ class SummaryDecoderTest {
 
     @Test
     fun `the documented pressure example is 10_40 cmH2O`() {
-        val pressure = SummaryDecoder.decode(night()).single().metrics.getValue(SummaryMetric.INSPIRATORY_PRESSURE)
+        val pressure = SummaryDecoder.decode(night()).records.single().metrics.getValue(SummaryMetric.INSPIRATORY_PRESSURE)
         assertEquals(BigDecimal("10.4"), pressure.getValue(Percentile.P50).exact())
         assertEquals(10.4, pressure.getValue(Percentile.P50).value)
         assertEquals(PapUnit.CM_H2O, pressure.getValue(Percentile.P50).unit)
@@ -72,7 +72,7 @@ class SummaryDecoderTest {
 
     @Test
     fun `sub-field 3 is the 70th percentile for leak and the 95th elsewhere`() {
-        val record = SummaryDecoder.decode(night()).single()
+        val record = SummaryDecoder.decode(night()).records.single()
         val leak = record.metrics.getValue(SummaryMetric.LEAK)
         assertEquals(BigDecimal("0.04"), leak.getValue(Percentile.P50).exact())
         assertEquals(BigDecimal("0.1"), leak.getValue(Percentile.P70).exact())
@@ -92,7 +92,7 @@ class SummaryDecoderTest {
 
     @Test
     fun `a value the record leaves out stays absent`() {
-        val record = SummaryDecoder.decode(night()).single()
+        val record = SummaryDecoder.decode(night()).records.single()
         assertNull(record.indices[SummaryIndex.CENTRAL_APNEA])
         assertNull(record.metrics[SummaryMetric.SPO2])
         assertNull(record.spontaneousTriggered)
@@ -105,7 +105,7 @@ class SummaryDecoderTest {
             message(2) { varint(1, 1); varint(2, noon); varint(3, noon + day) }
             message(2) { varint(1, 1); varint(2, noon + day); varint(3, noon + 2 * day) }
         }
-        val records = SummaryDecoder.decode(payload)
+        val records = SummaryDecoder.decode(payload).records
         assertEquals(2, records.size)
         assertNull(records[0].durationMinutes)
         assertTrue(records[0].sessions.isEmpty() && records[0].indices.isEmpty() && records[0].metrics.isEmpty())
@@ -114,7 +114,7 @@ class SummaryDecoderTest {
 
     @Test
     fun `an empty download holds no records`() {
-        assertTrue(SummaryDecoder.decode(ByteArray(0)).isEmpty())
+        assertTrue(SummaryDecoder.decode(ByteArray(0)).records.isEmpty())
     }
 
     @Test
@@ -126,7 +126,7 @@ class SummaryDecoderTest {
                 varint(39, 1)
             }
         }
-        assertEquals(0, SummaryDecoder.decode(payload).single().sessions.single().durationMinutes)
+        assertEquals(0, SummaryDecoder.decode(payload).records.single().sessions.single().durationMinutes)
     }
 
     @Test
@@ -138,7 +138,7 @@ class SummaryDecoderTest {
                 fixed32(62, 9)
                 message(22) { varint(2, 45); varint(9, 1) } // tidal volume with an unknown sub-field
             },
-        ).single()
+        ).records.single()
         assertEquals(4, record.unknownFields)
         assertEquals(7, record.storedIntegers[60])
         assertEquals(BigDecimal("0.45"), record.metrics.getValue(SummaryMetric.TIDAL_VOLUME).getValue(Percentile.P50).exact())
@@ -147,8 +147,14 @@ class SummaryDecoderTest {
 
     @Test
     fun `anything that contradicts the layout is refused, not guessed at`() {
+        // Refused outright, or reported as a record that could not be decoded; never passed off as a night.
         fun refused(payload: ByteArray) {
-            assertFailsWith<SpoolDecodeException> { SummaryDecoder.decode(payload) }
+            val log = try {
+                SummaryDecoder.decode(payload)
+            } catch (e: SpoolDecodeException) {
+                return
+            }
+            assertTrue(log.failures.isNotEmpty() && log.records.isEmpty(), "decoded to ${log.records.size} records")
         }
         // Another log's envelope.
         refused(proto { message(5) { varint(2, noon); varint(3, noon + day) } })
@@ -169,16 +175,81 @@ class SummaryDecoderTest {
         // A negative number where none belongs (ten-byte varint).
         refused(night { varint(11, -1) })
         refused(night { message(20) { varint(2, -5) } })
-        // Session list and its count disagree.
-        refused(night { message(6) { message(1) { varint(1, noon + 5); varint(2, 1) } } })
-        refused(proto { message(2) { varint(2, noon); varint(3, noon + day); varint(39, 1) } })
+        // A session with no start time.
         refused(proto { message(2) { varint(2, noon); varint(3, noon + day); message(6) { message(1) { varint(2, 5) } }; varint(39, 1) } })
+        // Times in seconds where milliseconds belong.
+        refused(proto { message(2) { varint(2, noon / 1000); varint(3, (noon + day) / 1000) } })
         // Out of range.
         refused(proto { message(2) { varint(2, noon); varint(3, noon + day); varint(5, 1441) } })
         refused(proto { message(2) { varint(2, noon); varint(3, noon + day); zigzag(4, 2000) } })
         refused(proto { message(2) { varint(2, 0); varint(3, noon + day) } })
         // Cut short.
-        refused(night().copyOf(night().size - 3))
+        assertFailsWith<SpoolDecodeException> { SummaryDecoder.decode(night().copyOf(night().size - 3)) }
+    }
+
+    @Test
+    fun `a session list that does not match its count is reported, not refused`() {
+        val agrees = SummaryDecoder.decode(night()).records.single()
+        assertEquals(2, agrees.storedSessionCount)
+        assertTrue(agrees.sessionCountMatches)
+        // One more session than the record counts.
+        val extra = SummaryDecoder.decode(night { message(6) { message(1) { varint(1, noon + 5); varint(2, 1) } } }).records.single()
+        assertEquals(3, extra.sessions.size)
+        assertEquals(2, extra.storedSessionCount)
+        assertTrue(!extra.sessionCountMatches)
+        // A count with no list, and a list with no count.
+        val counted = SummaryDecoder.decode(proto { message(2) { varint(2, noon); varint(3, noon + day); varint(39, 3) } }).records.single()
+        assertTrue(counted.sessions.isEmpty() && !counted.sessionCountMatches)
+        val uncounted = SummaryDecoder.decode(
+            proto { message(2) { varint(2, noon); varint(3, noon + day); message(6) { message(1) { varint(1, noon + 5); varint(2, 9) } } } },
+        ).records.single()
+        assertNull(uncounted.storedSessionCount)
+        assertTrue(!uncounted.sessionCountMatches)
+        // No sessions and no count is what an unused day looks like, and is consistent.
+        assertTrue(SummaryDecoder.decode(proto { message(2) { varint(2, noon); varint(3, noon + day) } }).records.single().sessionCountMatches)
+    }
+
+    @Test
+    fun `one night that is not understood does not take the others with it`() {
+        val log = SummaryDecoder.decode(
+            proto {
+                message(2) { varint(2, noon); varint(3, noon + day); varint(7, 150) }
+                message(2) { varint(2, noon + day); varint(3, noon + 2 * day); varint(7, 100); varint(7, 200) }
+                message(2) { varint(2, noon + 2 * day); varint(3, noon + 3 * day); varint(7, 50) }
+            },
+        )
+        assertEquals(listOf(noon, noon + 2 * day), log.records.map { it.periodStartMs })
+        assertEquals(listOf(1), log.failures.map { it.index })
+        assertTrue(!log.complete)
+        assertTrue(SummaryDecoder.decode(night()).complete)
+    }
+
+    @Test
+    fun `the remaining whole-number fields carry their own meaning`() {
+        val record = SummaryDecoder.decode(night { varint(17, 12); varint(18, 9_550); varint(19, 8_025) }).records.single()
+        assertEquals(12, record.minutesBelowSpo2Threshold)
+        val triggered = record.spontaneousTriggered!!
+        assertEquals(BigDecimal("95.5"), triggered.exact())
+        assertEquals(PapUnit.PERCENT, triggered.unit)
+        assertEquals(BigDecimal("80.25"), record.spontaneousCycled!!.exact())
+        // Kept as stored for export: the zone offset is still in its wire encoding there.
+        assertEquals(599, record.storedIntegers[4])
+        assertEquals(-300, record.zoneOffsetMinutes)
+    }
+
+    @Test
+    fun `percentiles that fall where they should rise mark the metric as misread`() {
+        assertTrue(SummaryDecoder.decode(night()).records.single().disorderedMetrics.isEmpty())
+        val record = SummaryDecoder.decode(night { message(20) { varint(2, 900); varint(3, 600); varint(4, 950) } }).records.single()
+        assertEquals(setOf(SummaryMetric.EXPIRATORY_PRESSURE), record.disorderedMetrics)
+    }
+
+    @Test
+    fun `respiratory flow is left alone until its sign convention is known`() {
+        // Field 37's low percentile is negative in life; neither way of storing that is assumed.
+        val record = SummaryDecoder.decode(night { message(37) { varint(1, 59); varint(3, 80) } }).records.single()
+        assertEquals(1, record.unknownFields)
+        assertTrue(SummaryMetric.entries.none { it.field == 37 })
     }
 
     @Test
@@ -202,7 +273,6 @@ class SummaryDecoderTest {
             SummaryMetric.HUMIDIFIER_POWER to Row(32, 100, PapUnit.PERCENT, MEDIAN),
             SummaryMetric.HEATED_TUBE_POWER to Row(33, 100, PapUnit.PERCENT, MEDIAN),
             SummaryMetric.BLOWER_PRESSURE to Row(36, 100, PapUnit.CM_H2O, RANGE),
-            SummaryMetric.RESPIRATORY_FLOW to Row(37, 100, PapUnit.LITRES_PER_SECOND, RANGE),
             SummaryMetric.BLOWER_FLOW to Row(38, 100, PapUnit.LITRES_PER_SECOND, MEDIAN),
             SummaryMetric.HEART_RATE to Row(41, 100, PapUnit.BEATS_PER_MINUTE, STANDARD),
             SummaryMetric.ALVEOLAR_MINUTE_VENTILATION to Row(42, 100, PapUnit.LITRES_PER_MINUTE, STANDARD),

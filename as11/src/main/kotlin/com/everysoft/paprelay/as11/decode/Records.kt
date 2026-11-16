@@ -13,6 +13,57 @@ import com.everysoft.paprelay.core.Scale
 internal const val MAX_TIMESTAMP_MS: Long = 4_102_444_800_000L
 
 /**
+ * 2015-01-01, years before the machine existed. An earlier time is a clock that
+ * was never set, or a value in seconds mistaken for milliseconds; either way it
+ * must not be filed under 1970.
+ */
+internal const val MIN_TIMESTAMP_MS: Long = 1_420_070_400_000L
+
+/** One record of a log that could not be decoded. */
+public class RecordFailure(
+    /** Position of the record in the download, counting from zero. */
+    public val index: Int,
+    public val reason: String,
+)
+
+/**
+ * What one download of a log decoded to.
+ *
+ * A record that is not understood is reported in [failures] and leaves the
+ * others standing: it stays on the machine, so refusing the whole log would
+ * hide every night until the app is fixed. A caller must treat the period a
+ * failed record covers as unknown, never as empty.
+ */
+public class DecodedLog<T> internal constructor(
+    public val records: List<T>,
+    public val failures: List<RecordFailure>,
+) {
+    public val complete: Boolean get() = failures.isEmpty()
+}
+
+/**
+ * Decodes each record of a log on its own. Damage to the envelope itself still
+ * fails the whole download: then nothing can be told apart.
+ */
+internal fun <T> decodeRecords(
+    payload: ByteArray,
+    envelopeField: Int,
+    what: String,
+    decode: (body: ByteArray, what: String) -> List<T>,
+): DecodedLog<T> {
+    val records = ArrayList<T>()
+    val failures = ArrayList<RecordFailure>()
+    unwrap(payload, envelopeField, what).forEachIndexed { index, body ->
+        try {
+            records += decode(body, "$what record $index")
+        } catch (e: SpoolDecodeException) {
+            failures += RecordFailure(index, e.message ?: "not understood")
+        }
+    }
+    return DecodedLog(java.util.Collections.unmodifiableList(records), java.util.Collections.unmodifiableList(failures))
+}
+
+/**
  * Splits a downloaded log into its records. Every top-level field must be the
  * log's own envelope field; anything else means this is not the log that was
  * asked for, or a layout this version does not know.
@@ -26,7 +77,7 @@ internal fun unwrap(payload: ByteArray, envelopeField: Int, what: String): List<
     }
 
 internal fun timestamp(value: Long, what: String): Long {
-    if (value !in 1..MAX_TIMESTAMP_MS) throw SpoolDecodeException("$what: a time is out of range")
+    if (value !in MIN_TIMESTAMP_MS..MAX_TIMESTAMP_MS) throw SpoolDecodeException("$what: a time is out of range")
     return value
 }
 

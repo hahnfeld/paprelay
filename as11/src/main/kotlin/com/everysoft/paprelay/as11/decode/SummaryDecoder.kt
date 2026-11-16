@@ -7,8 +7,15 @@ package com.everysoft.paprelay.as11.decode
 import com.everysoft.paprelay.core.PapUnit
 import com.everysoft.paprelay.core.Quantity
 import com.everysoft.paprelay.core.Scale
+import java.util.Collections
 
-/** One mask-on period listed in a day's Summary. */
+/**
+ * One mask-on period listed in a day's Summary.
+ *
+ * @property startMs when it began, by the machine's clock, in UTC milliseconds.
+ * @property durationMinutes its length; zero when the record stores none, which is
+ *   how the machine writes a session shorter than a minute.
+ */
 public class SummarySession(public val startMs: Long, public val durationMinutes: Int)
 
 /**
@@ -23,24 +30,42 @@ public class SummarySession(public val startMs: Long, public val durationMinutes
  * guessed here.
  */
 public class SummaryRecord internal constructor(
+    /** The machine's local noon that starts the day, by its clock, in UTC milliseconds. */
     public val periodStartMs: Long,
+    /** The following noon, in UTC milliseconds. */
     public val periodEndMs: Long,
     /** The machine's zone offset when the record was sent, not when the night happened. */
     public val zoneOffsetMinutes: Int?,
     public val durationMinutes: Int?,
     public val sessions: List<SummarySession>,
-    /** When the machine last wrote this record, by its own clock. */
+    /** How many sessions the record says it lists, when it says. See [sessionCountMatches]. */
+    public val storedSessionCount: Int?,
+    /** When the machine last wrote this record, by its own clock, in UTC milliseconds. */
     public val recordTimestampMs: Long?,
     public val indices: Map<SummaryIndex, Quantity>,
     public val metrics: Map<SummaryMetric, Map<Percentile, Quantity>>,
     public val spontaneousTriggered: Quantity?,
     public val spontaneousCycled: Quantity?,
     public val minutesBelowSpo2Threshold: Int?,
-    /** Every whole-number field of the record by field number, as stored, for export. */
+    /**
+     * Metrics whose percentiles are not in rising order. A higher percentile below a lower
+     * one cannot be a real distribution, so the metric was probably misread; do not use it.
+     */
+    public val disorderedMetrics: Set<SummaryMetric>,
+    /**
+     * Every whole-number field of the record by field number, exactly as stored, for
+     * export. Not interpreted: the zone offset, for one, is still in its wire encoding.
+     */
     public val storedIntegers: Map<Int, Long>,
     /** Fields and sub-fields this version does not understand. They are skipped, not errors. */
     public val unknownFields: Int,
-)
+) {
+    /**
+     * Whether the session list has as many entries as the record says. When it does not,
+     * the list may be incomplete, and a duration summed from it is not to be trusted.
+     */
+    public val sessionCountMatches: Boolean get() = (storedSessionCount ?: 0) == sessions.size
+}
 
 /** Decodes the `Summary` log. */
 public object SummaryDecoder {
@@ -68,10 +93,10 @@ public object SummaryDecoder {
 
     /**
      * @param payload one verified download of the `Summary` log.
-     * @throws SpoolDecodeException if the payload is not what this version understands.
+     * @throws SpoolDecodeException if the download as a whole is not this log.
      */
-    public fun decode(payload: ByteArray): List<SummaryRecord> =
-        unwrap(payload, SpoolEnvelope.SUMMARY, "Summary").mapIndexed { index, body -> record(body, "Summary record $index") }
+    public fun decode(payload: ByteArray): DecodedLog<SummaryRecord> =
+        decodeRecords(payload, SpoolEnvelope.SUMMARY, "Summary") { body, what -> listOf(record(body, what)) }
 
     private fun record(body: ByteArray, what: String): SummaryRecord {
         val integers = LinkedHashMap<Int, Long>()
@@ -88,7 +113,7 @@ public object SummaryDecoder {
                 metric != null -> {
                     val values = LinkedHashMap<Percentile, Quantity>()
                     unknown += percentiles(metric, bytes ?: wrongType(what, field), what, values)
-                    if (metrics.put(metric, values) != null) repeated(what, field.number)
+                    if (metrics.put(metric, Collections.unmodifiableMap(values)) != null) repeated(what, field.number)
                 }
                 field.wireType == ProtoReader.VARINT ->
                     if (integers.put(field.number, field.value) != null) repeated(what, field.number)
@@ -100,11 +125,6 @@ public object SummaryDecoder {
         val start = timestamp(integers[PERIOD_START] ?: missing(what, "the period start"), what)
         val end = timestamp(integers[PERIOD_END] ?: missing(what, "the period end"), what)
         if (end <= start) throw SpoolDecodeException("$what: the period ends before it starts")
-
-        val sessionCount = integers[SESSION_COUNT] ?: 0
-        if (sessionCount != sessions.size.toLong()) {
-            throw SpoolDecodeException("$what: lists ${sessions.size} sessions but counts $sessionCount")
-        }
 
         val indices = LinkedHashMap<SummaryIndex, Quantity>()
         for ((number, index) in indexByField) {
@@ -121,14 +141,20 @@ public object SummaryDecoder {
                 minutes.toInt()
             },
             durationMinutes = integers[DURATION]?.let { count(it, MINUTES_PER_DAY, what, "duration") },
-            sessions = sessions,
+            sessions = Collections.unmodifiableList(sessions),
+            storedSessionCount = integers[SESSION_COUNT]?.let { count(it, MAX_SESSIONS, what, "the session count") },
             recordTimestampMs = integers[RECORD_TIMESTAMP]?.let { timestamp(it, what) },
-            indices = indices,
-            metrics = metrics,
+            indices = Collections.unmodifiableMap(indices),
+            metrics = Collections.unmodifiableMap(metrics),
             spontaneousTriggered = integers[SPONT_TRIGGER]?.let { quantity(it, PERCENT_HUNDREDTHS, PapUnit.PERCENT, what) },
             spontaneousCycled = integers[SPONT_CYCLE]?.let { quantity(it, PERCENT_HUNDREDTHS, PapUnit.PERCENT, what) },
             minutesBelowSpo2Threshold = integers[SPO2_THRESHOLD]?.let { count(it, MINUTES_PER_DAY, what, "time below the SpO2 threshold") },
-            storedIntegers = integers,
+            disorderedMetrics = metrics.filterValues { values ->
+                // Percentile is declared lowest first, so the values must not fall along it.
+                val inOrder = Percentile.entries.mapNotNull { values[it]?.raw }
+                inOrder.zipWithNext().any { (lower, higher) -> higher < lower }
+            }.keys,
+            storedIntegers = Collections.unmodifiableMap(integers),
             unknownFields = unknown,
         )
     }

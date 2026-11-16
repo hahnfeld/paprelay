@@ -37,16 +37,16 @@ class MinuteDecoderTest {
                 varint(15, 1)
             }
         }
-        val record = MinuteDecoder.decode(payload).single()
+        val record = MinuteDecoder.decode(payload).records.single()
         assertEquals(t, record.startMs)
         assertEquals(60_000, record.intervalMs)
         assertEquals(12, record.sampleCount)
         assertEquals(0, record.uncertainTail)
         assertEquals(setOf(MinuteSignal.LEAK, MinuteSignal.INSPIRATORY_PRESSURE, MinuteSignal.RESPIRATORY_RATE), record.signals)
-        assertContentEquals(leak, record.samples(MinuteSignal.LEAK))
-        assertContentEquals(rate, record.samples(MinuteSignal.RESPIRATORY_RATE))
-        assertContentEquals(pressure, record.samples(MinuteSignal.INSPIRATORY_PRESSURE))
-        assertNull(record.samples(MinuteSignal.SPO2))
+        assertContentEquals(leak, record.storedSamples(MinuteSignal.LEAK))
+        assertContentEquals(rate, record.storedSamples(MinuteSignal.RESPIRATORY_RATE))
+        assertContentEquals(pressure, record.storedSamples(MinuteSignal.INSPIRATORY_PRESSURE))
+        assertNull(record.storedSamples(MinuteSignal.SPO2))
         assertEquals(t + 7 * 60_000, record.timeOf(7))
         assertEquals(0, record.unknownFields)
     }
@@ -60,7 +60,7 @@ class MinuteDecoderTest {
                 signal(MinuteSignal.INSPIRATORY_PRESSURE, pressure)
             }
         }
-        val record = MinuteDecoder.decode(payload).single()
+        val record = MinuteDecoder.decode(payload).records.single()
         // 20 stored -> 24 L/min; 70 stored -> 17.5 breaths/min; 52 stored -> 10.4 cmH2O.
         val leakAt5 = record.quantity(MinuteSignal.LEAK, 5)!!
         assertEquals(BigDecimal("24"), leakAt5.exact())
@@ -94,23 +94,25 @@ class MinuteDecoderTest {
     }
 
     @Test
-    fun `the sample interval is minutes when small, milliseconds otherwise, one minute when absent`() {
+    fun `the sample interval is one minute, however it is written`() {
         fun interval(token: Long?): Long = MinuteDecoder.decode(
             proto { message(5) { signal(MinuteSignal.LEAK, leak); if (token != null) varint(15, token) } },
-        ).single().intervalMs
+        ).records.single().intervalMs
         assertEquals(60_000, interval(null))
         assertEquals(60_000, interval(1))
-        assertEquals(600_000, interval(10))
         assertEquals(60_000, interval(60_000))
-        assertFailsWith<SpoolDecodeException> { interval(0) }
-        assertFailsWith<SpoolDecodeException> { interval(999_999_999) }
+        // Other intervals are possible in the format but have never been seen; a misread one
+        // would misplace every sample, so they are not guessed at.
+        for (token in listOf(0L, 2L, 10L, 999L, 1_000L, 59_999L, 600_000L)) {
+            assertFailsWith<NoSuchElementException>("interval $token") { interval(token) }
+        }
     }
 
     @Test
     fun `one signal that ends cleanly settles the length for all of them`() {
         // Flat pressure, zero padded: its tail cannot be told from padding on its own.
         val flat = IntArray(11) { 50 }
-        val alone = MinuteDecoder.decode(proto { message(5) { signal(MinuteSignal.EXPIRATORY_PRESSURE, flat, padWith = 0) } }).single()
+        val alone = MinuteDecoder.decode(proto { message(5) { signal(MinuteSignal.EXPIRATORY_PRESSURE, flat, padWith = 0) } }).records.single()
         assertTrue(alone.uncertainTail > 0, "the flat series alone must be ambiguous for this test to mean anything")
 
         // Beside an uncompressed oximeter signal, which has an exact length, nothing is in doubt.
@@ -121,10 +123,10 @@ class MinuteDecoderTest {
                     signal(MinuteSignal.SPO2, IntArray(11) { 96 })
                 }
             },
-        ).single()
+        ).records.single()
         assertEquals(11, settled.sampleCount)
         assertEquals(0, settled.uncertainTail)
-        assertContentEquals(flat, settled.samples(MinuteSignal.EXPIRATORY_PRESSURE))
+        assertContentEquals(flat, settled.storedSamples(MinuteSignal.EXPIRATORY_PRESSURE))
     }
 
     @Test
@@ -137,13 +139,13 @@ class MinuteDecoderTest {
                     signal(MinuteSignal.INSPIRATORY_PRESSURE, IntArray(11) { 60 }, padWith = 0)
                 }
             },
-        ).single()
+        ).records.single()
         // What is certain never exceeds what is real, and the truth lies within what is offered.
         assertTrue(record.sampleCount <= 11)
         assertTrue(record.sampleCount + record.uncertainTail >= 11)
         assertTrue(record.uncertainTail > 0)
-        assertEquals(record.sampleCount, record.samples(MinuteSignal.EXPIRATORY_PRESSURE)!!.size)
-        val withTail = record.samplesWithTail(MinuteSignal.EXPIRATORY_PRESSURE)!!
+        assertEquals(record.sampleCount, record.storedSamples(MinuteSignal.EXPIRATORY_PRESSURE)!!.size)
+        val withTail = record.storedSamples(MinuteSignal.EXPIRATORY_PRESSURE, record.sampleCount + record.uncertainTail)!!
         assertEquals(record.sampleCount + record.uncertainTail, withTail.size)
         assertContentEquals(flat, withTail.copyOf(11))
     }
@@ -160,12 +162,12 @@ class MinuteDecoderTest {
             }
             val record = MinuteDecoder.decode(
                 proto { message(5) { for ((signal, samples) in series) signal(signal, samples, padWith = random.nextInt(2)) } },
-            ).single()
+            ).records.single()
             assertTrue(record.sampleCount <= n, "certain ${record.sampleCount} of $n")
             assertTrue(record.sampleCount + record.uncertainTail >= n)
             for ((signal, samples) in series) {
-                assertContentEquals(samples.copyOf(record.sampleCount), record.samples(signal))
-                assertContentEquals(samples, record.samplesWithTail(signal)!!.copyOf(n))
+                assertContentEquals(samples.copyOf(record.sampleCount), record.storedSamples(signal))
+                assertContentEquals(samples, record.storedSamples(signal, record.sampleCount + record.uncertainTail)!!.copyOf(n))
             }
         }
     }
@@ -178,9 +180,19 @@ class MinuteDecoderTest {
                 message(5) { signal(MinuteSignal.LEAK, intArrayOf(1, 2, 3), start = t + 3_600_000) }
             },
         )
-        assertEquals(listOf(12, 3), records.map { it.sampleCount })
-        assertEquals(t + 3_600_000, records[1].startMs)
-        assertTrue(MinuteDecoder.decode(ByteArray(0)).isEmpty())
+        assertEquals(listOf(12, 3), records.records.map { it.sampleCount })
+        assertEquals(t + 3_600_000, records.records[1].startMs)
+        assertTrue(MinuteDecoder.decode(ByteArray(0)).records.isEmpty())
+        // A record that is not understood is reported and leaves its neighbours standing.
+        val mixed = MinuteDecoder.decode(
+            proto {
+                message(5) { signal(MinuteSignal.LEAK, leak) }
+                message(5) { signal(MinuteSignal.LEAK, leak, status = 2) }
+                message(5) { signal(MinuteSignal.LEAK, intArrayOf(1, 2, 3), start = t + 3_600_000) }
+            },
+        )
+        assertEquals(listOf(12, 3), mixed.records.map { it.sampleCount })
+        assertEquals(listOf(1), mixed.failures.map { it.index })
     }
 
     @Test
@@ -194,15 +206,21 @@ class MinuteDecoderTest {
                     message(MinuteSignal.RESPIRATORY_RATE.field) { varint(1, 1); varint(2, t); bytes(3, riceBlock(rate, 4)); varint(7, 9) }
                 }
             },
-        ).single()
+        ).records.single()
         assertEquals(3, record.unknownFields)
-        assertContentEquals(rate, record.samples(MinuteSignal.RESPIRATORY_RATE))
+        assertContentEquals(rate, record.storedSamples(MinuteSignal.RESPIRATORY_RATE))
     }
 
     @Test
     fun `records that contradict themselves or the layout are refused`() {
+        // Refused outright, or reported as a record that could not be decoded; never passed off as data.
         fun refused(payload: ByteArray) {
-            assertFailsWith<SpoolDecodeException> { MinuteDecoder.decode(payload) }
+            val log = try {
+                MinuteDecoder.decode(payload)
+            } catch (e: SpoolDecodeException) {
+                return
+            }
+            assertTrue(log.failures.isNotEmpty() && log.records.isEmpty(), "decoded to ${log.records.size} records")
         }
         // Another log's envelope.
         refused(proto { message(2) { signal(MinuteSignal.LEAK, leak) } })
@@ -213,22 +231,40 @@ class MinuteDecoderTest {
         // A kind of series never seen before.
         refused(proto { message(5) { signal(MinuteSignal.LEAK, leak, status = 2) } })
         // Missing parts.
-        refused(proto { message(5) { message(1) { varint(1, 1); bytes(3, riceBlock(leak, 4)) } } })
+        refused(proto { message(5) { message(1) { varint(1, 1); bytes(3, riceBlock(leak, 4)) } } }) // no start
         refused(proto { message(5) { message(1) { varint(1, 1); varint(2, t) } } })
         refused(proto { message(5) { varint(15, 1) } })
         // A signal given twice, the wrong kind of field, an odd-length plain series.
         refused(proto { message(5) { signal(MinuteSignal.LEAK, leak); signal(MinuteSignal.LEAK, leak) } })
         refused(proto { message(5) { varint(4, 60) } })
         refused(proto { message(5) { signal(MinuteSignal.LEAK, leak); bytes(15, byteArrayOf(1)) } })
-        refused(proto { message(5) { message(8) { varint(2, t); bytes(3, byteArrayOf(96, 0, 95)) } } })
+        refused(proto { message(5) { message(8) { varint(1, 1); varint(2, t); bytes(3, byteArrayOf(96, 0, 95)) } } })
         // A compressed series cut in the middle.
         val block = riceBlock(IntArray(40) { it * it % 50 }, 4)
-        refused(proto { message(5) { message(1) { varint(2, t); bytes(3, block.copyOf(block.size - 1).also { it[it.size - 1] = 0xFF.toByte(); it[it.size - 2] = 0xFF.toByte() }) } } })
+        refused(proto { message(5) { message(1) { varint(1, 1); varint(2, t); bytes(3, block.copyOf(block.size - 1).also { it[it.size - 1] = 0xFF.toByte(); it[it.size - 2] = 0xFF.toByte() }) } } })
     }
 
     @Test
-    fun `a series with no status marker is accepted`() {
-        val record = MinuteDecoder.decode(proto { message(5) { signal(MinuteSignal.LEAK, leak, status = null) } }).single()
-        assertContentEquals(leak, record.samples(MinuteSignal.LEAK))
+    fun `a series with no kind marker is not assumed to be the usual kind`() {
+        val log = MinuteDecoder.decode(proto { message(5) { signal(MinuteSignal.LEAK, leak, status = null) } })
+        assertTrue(log.records.isEmpty())
+        assertEquals(1, log.failures.size)
+    }
+
+    @Test
+    fun `nothing outside the settled length can be read`() {
+        val flat = IntArray(11) { 50 }
+        val record = MinuteDecoder.decode(proto { message(5) { signal(MinuteSignal.EXPIRATORY_PRESSURE, flat, padWith = 0) } }).records.single()
+        val most = record.sampleCount + record.uncertainTail
+        assertTrue(record.uncertainTail > 0)
+        // The tail is reachable only by naming a length, and only within what the bits allow.
+        assertFailsWith<IndexOutOfBoundsException> { record.quantity(MinuteSignal.EXPIRATORY_PRESSURE, record.sampleCount) }
+        assertEquals(BigDecimal("10"), record.quantity(MinuteSignal.EXPIRATORY_PRESSURE, record.sampleCount, length = most)!!.exact())
+        assertFailsWith<IllegalArgumentException> { record.storedSamples(MinuteSignal.EXPIRATORY_PRESSURE, most + 1) }
+        assertFailsWith<IllegalArgumentException> { record.storedSamples(MinuteSignal.EXPIRATORY_PRESSURE, record.sampleCount - 1) }
+        assertFailsWith<IllegalArgumentException> { record.quantity(MinuteSignal.EXPIRATORY_PRESSURE, 0, length = most + 1) }
+        assertEquals(record.startMs + (most - 1) * 60_000L, record.timeOf(most - 1))
+        assertFailsWith<IndexOutOfBoundsException> { record.timeOf(most) }
+        assertFailsWith<IndexOutOfBoundsException> { record.timeOf(-1) }
     }
 }

@@ -15,11 +15,15 @@ import com.everysoft.paprelay.core.Quantity
  *
  *  - [sampleCount] samples that certainly exist, and
  *  - [uncertainTail] further positions that may be real minutes or may be
- *    padding. They are **not** included in [samples]. A caller that can settle
- *    the true length from elsewhere (the mask-off time, the next record) may
- *    read them with [samplesWithTail].
+ *    padding. Nothing returns them unless the caller names a length it has
+ *    settled from elsewhere (the mask-off time, the next record).
+ *
+ * Values come out as [Quantity], which carries the factor and the unit. The
+ * stored integers are available too, but they are not physical values: a
+ * stored respiratory rate of 60 means 15 breaths a minute.
  */
 public class MinuteRecord internal constructor(
+    /** When the first sample was taken, by the machine's clock, in UTC milliseconds. */
     public val startMs: Long,
     public val intervalMs: Long,
     public val sampleCount: Int,
@@ -30,21 +34,41 @@ public class MinuteRecord internal constructor(
 ) {
     public val signals: Set<MinuteSignal> get() = series.keys
 
-    /** The stored integers of [signal] for the samples that certainly exist, or null if the record has no such signal. */
-    public fun samples(signal: MinuteSignal): IntArray? = series[signal]?.copyOf(sampleCount)
+    /**
+     * The integers the machine stored for [signal], or null if the record has no such signal.
+     * These are not physical values; use [quantity] for those.
+     *
+     * @param length how many samples to return: [sampleCount] unless the caller has settled
+     *   the record's true length, which lies between [sampleCount] and `sampleCount + uncertainTail`.
+     */
+    public fun storedSamples(signal: MinuteSignal, length: Int = sampleCount): IntArray? {
+        checkLength(length)
+        return series[signal]?.copyOf(length)
+    }
 
-    /** As [samples], followed by the [uncertainTail] positions that may be padding. */
-    public fun samplesWithTail(signal: MinuteSignal): IntArray? = series[signal]?.copyOf(sampleCount + uncertainTail)
-
-    /** The physical value of one sample, or null if the record has no such signal. */
-    public fun quantity(signal: MinuteSignal, index: Int): Quantity? {
+    /**
+     * The physical value of one sample, or null if the record has no such signal.
+     *
+     * @param length the record's settled length, as for [storedSamples].
+     */
+    public fun quantity(signal: MinuteSignal, index: Int, length: Int = sampleCount): Quantity? {
+        checkLength(length)
+        if (index !in 0 until length) throw IndexOutOfBoundsException("sample $index of $length")
         val values = series[signal] ?: return null
-        if (index !in 0 until sampleCount) throw IndexOutOfBoundsException("sample $index of $sampleCount")
         return signal.scale.of(values[index].toLong(), signal.unit)
     }
 
-    /** When sample [index] was taken, by the machine's clock. */
-    public fun timeOf(index: Int): Long = startMs + index * intervalMs
+    /** When sample [index] was taken, by the machine's clock, in UTC milliseconds. */
+    public fun timeOf(index: Int): Long {
+        if (index !in 0 until sampleCount + uncertainTail) throw IndexOutOfBoundsException("sample $index")
+        return startMs + index * intervalMs
+    }
+
+    private fun checkLength(length: Int) {
+        require(length in sampleCount..sampleCount + uncertainTail) {
+            "a length of $length is not possible for this record ($sampleCount to ${sampleCount + uncertainTail})"
+        }
+    }
 }
 
 /** Decodes the `TherapyOneMinutePeriodic` log. */
@@ -55,17 +79,15 @@ public object MinuteDecoder {
     private const val INTERVAL = 15
     private const val EXPECTED_STATUS = 1L
     private const val MINUTE_MS = 60_000L
-    private const val MAX_INTERVAL_MS = 24 * 60 * MINUTE_MS
 
     private val signalByField = MinuteSignal.entries.associateBy { it.field }
 
     /**
      * @param payload one verified download of the per-minute log.
-     * @throws SpoolDecodeException if the payload is not what this version understands,
-     *   or the signals of a record contradict each other.
+     * @throws SpoolDecodeException if the download as a whole is not this log.
      */
-    public fun decode(payload: ByteArray): List<MinuteRecord> =
-        unwrap(payload, SpoolEnvelope.MINUTE_LOG, "per-minute log").mapIndexed { index, body -> record(body, "per-minute record $index") }
+    public fun decode(payload: ByteArray): DecodedLog<MinuteRecord> =
+        decodeRecords(payload, SpoolEnvelope.MINUTE_LOG, "per-minute log") { body, what -> listOf(record(body, what)) }
 
     private class Series(val start: Long, val block: SampleBlock)
 
@@ -128,8 +150,9 @@ public object MinuteDecoder {
                 else -> unknown++
             }
         }
-        // Only one kind of series has ever been seen. Another may mean the samples are not what is assumed here.
-        if (status != null && status != EXPECTED_STATUS) throw SpoolDecodeException("$what: unknown kind of series ($status)")
+        // Only one kind of series has ever been seen. Any other, a missing marker included
+        // (which reads as kind zero), may mean the samples are not what is assumed here.
+        if (status != EXPECTED_STATUS) throw SpoolDecodeException("$what: unknown kind of series (${status ?: "none"})")
         val bytes = block ?: missing(what, "the sample block")
         val modulus = signal.modulus
         val decoded = if (modulus != null) {
@@ -143,14 +166,13 @@ public object MinuteDecoder {
         return Series(timestamp(start ?: missing(what, "the start time"), what), decoded) to unknown
     }
 
-    /** The interval field holds minutes when small and milliseconds otherwise; absent means one minute. */
+    /**
+     * One minute, however it is written: left out, as 1 (minutes) or as 60000
+     * (milliseconds). The format allows other intervals, but none has been
+     * seen, and a misread interval would misplace every sample after the first.
+     */
     private fun intervalMs(token: Long?, what: String): Long {
-        val ms = when {
-            token == null -> MINUTE_MS
-            token in 1 until 1000 -> token * MINUTE_MS
-            else -> token
-        }
-        if (ms !in 1000..MAX_INTERVAL_MS) throw SpoolDecodeException("$what: sample interval out of range")
-        return ms
+        if (token != null && token != 1L && token != MINUTE_MS) throw SpoolDecodeException("$what: unexpected sample interval ($token)")
+        return MINUTE_MS
     }
 }
