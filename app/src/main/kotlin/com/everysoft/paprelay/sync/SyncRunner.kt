@@ -3,6 +3,8 @@
 package com.everysoft.paprelay.sync
 
 import android.content.Context
+import android.net.Uri
+import androidx.core.net.toUri
 import android.os.SystemClock
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
@@ -15,6 +17,8 @@ import com.everysoft.paprelay.as11.SpoolName
 import com.everysoft.paprelay.as11.SpoolRound
 import com.everysoft.paprelay.ble.MachineClaim
 import com.everysoft.paprelay.ble.PresenceWatch
+import com.everysoft.paprelay.core.nights.Night
+import com.everysoft.paprelay.core.nights.NightReport
 import com.everysoft.paprelay.pairing.PairingState
 import com.everysoft.paprelay.pairing.PairingStore
 import kotlinx.coroutines.CoroutineScope
@@ -41,7 +45,24 @@ class SyncStatus(
     val lastCompleteAtMs: Long?,
     /** True when the stored record of synchronising is damaged and cannot be read. */
     val storeUnreadable: Boolean,
-)
+    /** What the user has chosen to have passed on, and where. */
+    val respiratoryRate: Boolean = false,
+    val healthRecords: Boolean = true,
+    val exportFolder: String? = null,
+    /** True when the table of nights could not be written to the chosen folder at the last attempt. */
+    val exportFailed: Boolean = false,
+) {
+    fun with(
+        running: Boolean = this.running,
+        lastReport: SyncReport? = this.lastReport,
+        lastCompleteAtMs: Long? = this.lastCompleteAtMs,
+        storeUnreadable: Boolean = this.storeUnreadable,
+        respiratoryRate: Boolean = this.respiratoryRate,
+        healthRecords: Boolean = this.healthRecords,
+        exportFolder: String? = this.exportFolder,
+        exportFailed: Boolean = this.exportFailed,
+    ) = SyncStatus(running, lastReport, lastCompleteAtMs, storeUnreadable, respiratoryRate, healthRecords, exportFolder, exportFailed)
+}
 
 /**
  * Runs synchronisations for the app. There are three reasons for one: the user asks, the
@@ -61,11 +82,22 @@ class SyncRunner(
     sink: HealthSink,
     private val claim: MachineClaim,
     private val pairings: PairingStore,
+    /** The phone's health records, or null on a phone that has none. */
+    records: NightRecords?,
     describe: (Throwable) -> String?,
 ) {
     private val store = SyncStore(File(context.noBackupFilesDir, "sync.json"))
-    private val engine =
-        SyncEngine(connector, sink, store, System::currentTimeMillis, ::keepRaw, phoneClockWrong = ::phoneClockWrong, describe = describe)
+    private val nightStore = NightStore(File(context.noBackupFilesDir, "nights.json"))
+    private val nightFile = NightFile(context)
+    private val engine = SyncEngine(
+        connector, sink, store, System::currentTimeMillis, ::keepRaw,
+        phoneClockWrong = ::phoneClockWrong, describe = describe, nights = nightStore, records = records,
+    )
+
+    private val _nights = MutableStateFlow<List<Night>>(emptyList())
+
+    /** The nights kept on the phone, newest first. */
+    val nights: StateFlow<List<Night>> = _nights
     private val presence = PresenceWatch(context)
 
     /**
@@ -254,7 +286,10 @@ class SyncRunner(
             claim.release(connected = mayConnect || report?.outcome !in PRECONDITIONS)
             active.set(false)
             publish()
-            withContext(NonCancellable) { refresh() }
+            withContext(NonCancellable) {
+                refresh()
+                export()
+            }
         }
     }
 
@@ -293,6 +328,46 @@ class SyncRunner(
         }
     }
 
+    /**
+     * Switches the minute-by-minute respiratory rate on or off. Switched on, every night the
+     * machine holds is read for it; switched off, what was written stays where it is.
+     */
+    fun setRespiratoryRate(on: Boolean) {
+        scope.launch {
+            change { if (on) it.with(respiratoryRate = true).fromTheStart() else it.with(respiratoryRate = false) }
+            if (on) syncNow()
+        }
+    }
+
+    /** Switches the writing of each night's figures to the phone's health records on or off. */
+    fun setHealthRecords(on: Boolean) {
+        scope.launch {
+            change { it.with(healthRecords = on) }
+            if (on) syncNow()
+        }
+    }
+
+    /**
+     * Sets the folder the table of nights is kept in, or none. [folder] is what the system's
+     * folder picker returned; the right to write there is kept until another is chosen.
+     */
+    fun setExportFolder(folder: Uri?) {
+        scope.launch {
+            val before = _status.value.exportFolder
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    if (folder != null) nightFile.keep(folder)
+                    if (before != null && before != folder?.toString()) nightFile.release(before.toUri())
+                }
+            }
+            change { it.with(exportFolder = folder?.toString()) }
+            export()
+        }
+    }
+
+    /** The recent nights as a few lines of text, for sharing by hand. */
+    fun shareText(): String = NightReport.text(_nights.value)
+
     /** Sets or removes the leak rule. Every night is then looked at again. */
     suspend fun setLeakLimit(litresPerMinute: Int?) = change { it.withLeakLimit(litresPerMinute) }
 
@@ -303,8 +378,12 @@ class SyncRunner(
     suspend fun forget() {
         stopWatch()
         engine.whileIdle {
+            // What the user chose (what is passed on, and the folder) is theirs, not the machine's, and stays.
             withContext(Dispatchers.IO) {
+                val kept = runCatching { store.read().cleared() }.getOrNull()
                 store.delete()
+                if (kept != null) runCatching { store.write(kept) }
+                nightStore.delete()
                 File(context.filesDir, RAW_DIRECTORY).deleteRecursively()
             }
         }
@@ -375,7 +454,14 @@ class SyncRunner(
     }
 
     private fun publish() {
-        _status.update { SyncStatus(request.get() != IDLE || active.get(), it.lastReport, it.lastCompleteAtMs, it.storeUnreadable) }
+        _status.update { it.with(running = request.get() != IDLE || active.get()) }
+    }
+
+    /** Writes the table of nights to the chosen folder, if one is chosen. */
+    private suspend fun export() {
+        val folder = _status.value.exportFolder ?: return
+        val written = withContext(Dispatchers.IO) { runCatching { nightFile.write(folder.toUri(), nightStore.read().all) }.getOrDefault(false) }
+        _status.update { it.with(exportFailed = !written) }
     }
 
     /** Reads the stored report again. Whether a run is in progress is not its affair. */
@@ -387,14 +473,18 @@ class SyncRunner(
                 stored != null -> {
                     // A run that could not store its report has still happened, and is what the screen should say.
                     val report = listOfNotNull(stored.lastReport, latest).maxByOrNull { it.atMs }
-                    SyncStatus(before.running, report, stored.lastCompleteAtMs, storeUnreadable = false)
+                    before.with(
+                        lastReport = report, lastCompleteAtMs = stored.lastCompleteAtMs, storeUnreadable = false,
+                        respiratoryRate = stored.respiratoryRate, healthRecords = stored.healthRecords, exportFolder = stored.exportFolder,
+                    )
                 }
                 // Damaged: the user is told, and offered a fresh start.
-                state.exceptionOrNull() is SyncStateUnreadableException -> SyncStatus(before.running, latest, null, storeUnreadable = true)
+                state.exceptionOrNull() is SyncStateUnreadableException -> before.with(lastReport = latest, lastCompleteAtMs = null, storeUnreadable = true)
                 // Could not be read this time (the storage was busy or full). What is known stays as it was.
-                else -> SyncStatus(before.running, latest ?: before.lastReport, before.lastCompleteAtMs, before.storeUnreadable)
+                else -> before.with(lastReport = latest ?: before.lastReport)
             }
         }
+        withContext(Dispatchers.IO) { runCatching { nightStore.read().all } }.getOrNull()?.let { _nights.value = it }
     }
 
     /**

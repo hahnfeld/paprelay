@@ -34,6 +34,7 @@ import com.everysoft.paprelay.ble.MachineScanner
 import com.everysoft.paprelay.ble.NoAnswerException
 import com.everysoft.paprelay.ble.Sighting
 import com.everysoft.paprelay.hc.HealthConnectProbe
+import com.everysoft.paprelay.hc.HealthRecords
 import com.everysoft.paprelay.hc.HealthConnectUnresponsiveException
 import com.everysoft.paprelay.pairing.FileNonceRegistry
 import com.everysoft.paprelay.pairing.Pairing
@@ -128,6 +129,9 @@ class DeviceCheck(
     private val store: PairingStore,
     private val scanner: MachineScanner,
     private val healthConnect: HealthConnectProbe,
+    private val healthRecords: HealthRecords,
+    /** Whether anything is switched on to be written to Health Connect. */
+    private val healthWanted: () -> Boolean,
     private val claim: MachineClaim,
     /** Removes what synchronising remembers about the machine, when the machine is forgotten. */
     private val forgetSync: suspend () -> Unit,
@@ -262,9 +266,35 @@ class DeviceCheck(
     private suspend fun execute(full: Boolean) {
         step(HEALTH) {
             if (!healthConnect.available) throw CheckFailure(Message(R.string.detail_hc_unavailable), onPhone = true)
-            val allowed = withTimeoutOrNull(HEALTH_ANSWER_MS) { healthConnect.hasPermission() }
+            val vitals = withTimeoutOrNull(HEALTH_ANSWER_MS) { healthConnect.hasPermission() }
                 ?: throw HealthConnectUnresponsiveException()
-            if (!allowed) throw CheckFailure(Message(R.string.detail_hc_no_permission), onPhone = true)
+            // Two things can be written: each night's figures as health records, where the phone keeps
+            // them, and respiratory rate. Whichever PAPRelay is allowed is proved; with neither, nothing can be.
+            val records = healthRecords.supported
+            val recordsAllowed = records && healthRecords.allowed
+            if (!vitals && !recordsAllowed) {
+                // Nothing switched on to go there is not a fault; something switched on and not allowed is.
+                if (!healthWanted()) throw Observation(Message(R.string.detail_hc_nothing))
+                throw CheckFailure(Message(R.string.detail_hc_no_permission), onPhone = true)
+            }
+            if (recordsAllowed) {
+                val accepted = try {
+                    healthRecords.probe()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    note("  health records: ${code(e)}")
+                    throw CheckFailure(Message(R.string.error_hc_failed), onPhone = true)
+                }
+                note("  health records: test record accepted $accepted")
+                if (!accepted) throw CheckFailure(Message(R.string.detail_records_refused), onPhone = true)
+            } else {
+                note("  health records: " + if (records) "not allowed, so not tried" else "not on this phone")
+            }
+            if (!vitals) {
+                note("  respiratory rate: not allowed, so not tried")
+                return@step Message(R.string.detail_hc_ok)
+            }
             val result = try {
                 healthConnect.writeAndRemove()
             } catch (e: CancellationException) {

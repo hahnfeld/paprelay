@@ -22,6 +22,8 @@
 
     <!-- Health Connect: write-only. PAPRelay never reads other apps' health data. -->
     <uses-permission android:name="android.permission.health.WRITE_RESPIRATORY_RATE" />
+    <!-- Each night's figures, as health records, on Android 16 and later. Also write-only. -->
+    <uses-permission android:name="android.permission.health.WRITE_MEDICAL_DATA" />
 
     <!-- PAPRelay has no network access. If a library ever asks for it, the build drops the request. -->
     <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />

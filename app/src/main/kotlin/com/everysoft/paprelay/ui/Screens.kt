@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -41,6 +42,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -81,6 +83,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import com.everysoft.paprelay.BuildConfig
 import com.everysoft.paprelay.R
+import com.everysoft.paprelay.core.nights.Night
+import com.everysoft.paprelay.core.nights.NightFigure
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 import com.everysoft.paprelay.sync.SyncOutcome
 import com.everysoft.paprelay.sync.SyncStatus
 import android.text.format.DateUtils
@@ -191,6 +197,7 @@ fun HomeScreen(
     busy: Boolean,
     syncEnabled: Boolean,
     sync: SyncStatus,
+    nights: List<Night>,
     healthAllowed: Boolean,
     healthRefused: Boolean,
     permissionRefused: Boolean,
@@ -200,6 +207,8 @@ fun HomeScreen(
     onStartAgain: () -> Unit,
     onPair: () -> Unit,
     onOpenCheck: () -> Unit,
+    onOpenNights: () -> Unit,
+    onOpenChoices: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenHealthConnect: () -> Unit,
     onOpenUnusedSetting: () -> Unit,
@@ -232,6 +241,12 @@ fun HomeScreen(
 
         val free = !sync.running && !checkRunning && !busy
         if (paired && syncEnabled) {
+            // What the app is for: the latest finished night, in the machine's own figures.
+            nights.firstOrNull { it.complete }?.let { night ->
+                Spacer(Modifier.height(20.dp))
+                NightSummary(night, prominent = true)
+                Spacer(Modifier.height(8.dp))
+            }
             // Only the sentence is announced when it changes; the time under it ticks on quietly.
             Text(
                 syncLine(sync),
@@ -296,11 +311,134 @@ fun HomeScreen(
         // Where the primary button is not already the way to the check.
         if (paired && syncEnabled || pairing == PairingState.Unreadable || pairing == PairingState.Absent && checkStarted) {
             Spacer(Modifier.height(24.dp))
-            // Text buttons carry 12 dp of padding; pulled out so the label sits on the text margin.
-            TextButton(onClick = onOpenCheck, modifier = Modifier.offset(x = (-12).dp)) {
-                Text(stringResource(R.string.action_device_check))
+            // Text buttons carry 12 dp of padding; pulled out so the first label sits on the text margin.
+            FlowRow(Modifier.offset(x = (-12).dp)) {
+                if (paired && syncEnabled) {
+                    if (nights.any { it.complete }) TextButton(onClick = onOpenNights) { Text(stringResource(R.string.nights_title)) }
+                    TextButton(onClick = onOpenChoices) { Text(stringResource(R.string.choices_title)) }
+                }
+                TextButton(onClick = onOpenCheck) { Text(stringResource(R.string.action_device_check)) }
             }
         }
+    }
+}
+
+/**
+ * One night in two lines: how long, the index that matters most, and the two figures usually
+ * looked at next. Said in numbers and symbols, which need no translating.
+ */
+@Composable
+private fun NightSummary(night: Night, prominent: Boolean) {
+    val date = remember(night.date) { DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).format(night.date) }
+    Column(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}) {
+        Secondary(stringResource(R.string.night_of, date))
+        if (night.usageMinutes == 0) {
+            Text(stringResource(R.string.night_none), style = if (prominent) MaterialTheme.typography.titleLarge else MaterialTheme.typography.bodyLarge)
+            return@Column
+        }
+        val usage = stringResource(R.string.night_usage, night.usageMinutes / 60, night.usageMinutes % 60)
+        val ahi = night.value(NightFigure.AHI)?.let { stringResource(R.string.night_ahi, it.toPlainString()) }
+        Text(
+            listOfNotNull(usage, ahi).joinToString(" · "),
+            style = if (prominent) MaterialTheme.typography.titleLarge else MaterialTheme.typography.bodyLarge,
+        )
+        val leak = night.value(NightFigure.LEAK_95)?.let { stringResource(R.string.night_leak, it.toPlainString()) }
+        val pressure = night.value(NightFigure.PRESSURE_95)?.let { stringResource(R.string.night_pressure, it.toPlainString()) }
+        if (leak != null || pressure != null) Secondary(listOfNotNull(leak, pressure).joinToString(" · "), Modifier.padding(top = 2.dp))
+    }
+}
+
+/** Every night kept on the phone, newest first. */
+@Composable
+fun NightsScreen(nights: List<Night>, onShare: () -> Unit, onBack: () -> Unit) {
+    Page(
+        title = stringResource(R.string.nights_title),
+        onBack = onBack,
+        action = { TextButton(onClick = onShare) { Text(stringResource(R.string.action_share)) } },
+    ) {
+        Secondary(stringResource(R.string.nights_note))
+        Spacer(Modifier.height(12.dp))
+        val finished = nights.filter { it.complete }
+        finished.forEachIndexed { index, night ->
+            if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Box(Modifier.padding(vertical = 12.dp)) { NightSummary(night, prominent = false) }
+        }
+    }
+}
+
+/** What is passed on, and where to. */
+@Composable
+fun ChoicesScreen(
+    sync: SyncStatus,
+    recordsSupported: Boolean,
+    recordsAllowed: Boolean,
+    onRecords: (Boolean) -> Unit,
+    onRespiratoryRate: (Boolean) -> Unit,
+    onChooseFolder: () -> Unit,
+    onNoFolder: () -> Unit,
+    onShare: () -> Unit,
+    onBack: () -> Unit,
+) {
+    Page(title = stringResource(R.string.choices_title), onBack = onBack) {
+        Choice(
+            title = R.string.choice_records,
+            body = if (recordsSupported) R.string.choice_records_body else R.string.choice_records_unsupported,
+            checked = recordsSupported && sync.healthRecords,
+            enabled = recordsSupported,
+            onChange = onRecords,
+        )
+        if (recordsSupported && sync.healthRecords && !recordsAllowed) {
+            Text(
+                stringResource(R.string.choice_records_not_allowed),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        Choice(R.string.choice_respiratory, R.string.choice_respiratory_body, sync.respiratoryRate, enabled = true, onChange = onRespiratoryRate)
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        Column(Modifier.fillMaxWidth().padding(vertical = 14.dp)) {
+            Text(stringResource(R.string.choice_file), style = MaterialTheme.typography.bodyLarge)
+            Secondary(stringResource(R.string.choice_file_body), Modifier.padding(top = 2.dp))
+            if (sync.exportFolder != null) {
+                Text(
+                    stringResource(if (sync.exportFailed) R.string.choice_file_failed else R.string.choice_file_on),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (sync.exportFailed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onChooseFolder) {
+                    Text(stringResource(if (sync.exportFolder == null) R.string.action_choose_folder else R.string.action_other_folder))
+                }
+                if (sync.exportFolder != null) TextButton(onClick = onNoFolder) { Text(stringResource(R.string.action_no_folder)) }
+            }
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        Spacer(Modifier.height(8.dp))
+        TextButton(onClick = onShare, modifier = Modifier.offset(x = (-12).dp)) { Text(stringResource(R.string.action_share_nights)) }
+    }
+}
+
+/** A choice with a switch: the whole row answers to a tap, and is read out as one thing. */
+@Composable
+private fun Choice(@StringRes title: Int, @StringRes body: Int, checked: Boolean, enabled: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .toggleable(value = checked, enabled = enabled, role = Role.Switch, onValueChange = onChange)
+            .padding(vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(stringResource(title), style = MaterialTheme.typography.bodyLarge)
+            Secondary(stringResource(body), Modifier.padding(top = 2.dp))
+        }
+        Spacer(Modifier.width(16.dp))
+        Switch(checked = checked, onCheckedChange = null, enabled = enabled)
     }
 }
 

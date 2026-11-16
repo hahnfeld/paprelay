@@ -65,35 +65,48 @@ private fun Root(app: PapRelayApp) {
     val passkeyRequest by check.passkeyRequest.collectAsState()
     val machineChoice by check.machineChoice.collectAsState()
     val sync by app.sync.status.collectAsState()
+    val nights by app.sync.nights.collectAsState()
     val forgetting by check.forgetting.collectAsState()
     val stopping by check.stopping.collectAsState()
-    var showAbout by rememberSaveable { mutableStateOf(false) }
-    var showCheck by rememberSaveable { mutableStateOf(false) }
+    var page by rememberSaveable { mutableStateOf(PAGE_HOME) }
     var confirmForget by rememberSaveable { mutableStateOf(false) }
     var confirmRewrite by rememberSaveable { mutableStateOf(false) }
     var confirmClock by rememberSaveable { mutableStateOf(false) }
-    var pendingFull by rememberSaveable { mutableStateOf(true) }
-    // What the permissions being asked for are wanted for: a device check, or a synchronisation.
-    var pendingSync by rememberSaveable { mutableStateOf(false) }
+    // What is to happen once the permissions have been asked for: a device check, a
+    // synchronisation, or a choice the user has just switched on.
+    var pending by rememberSaveable { mutableStateOf(PENDING_SYNC) }
     var permissionRefused by rememberSaveable { mutableStateOf(false) }
     // True from asking for a permission until the answer has been dealt with. Not kept across a
     // restart of the screen: left set by mistake, it would stop the look on every later opening.
     var askingPermission by remember { mutableStateOf(false) }
-    // Whether Health Connect already lets PAPRelay write, so the picture can show that leg as
-    // ready; and whether it was asked and still does not, so the way to its settings can be shown.
+    // Whether Health Connect lets PAPRelay write what is switched on to go there, so the picture
+    // can show that leg as ready; and whether it was asked and still does not, so the way to its
+    // settings can be shown.
     var healthAllowed by rememberSaveable { mutableStateOf(false) }
     var healthRefused by rememberSaveable { mutableStateOf(false) }
+    var recordsAllowed by rememberSaveable { mutableStateOf(false) }
     // Whether Android would pause the app, and with it synchronising, if it is not opened for months.
     var pausesWhenUnused by rememberSaveable { mutableStateOf(false) }
+    val recordsSupported = remember { app.healthRecords.supported }
     val uiScope = rememberCoroutineScope()
-    fun refreshHealth() {
-        uiScope.launch {
-            healthAllowed = app.healthConnect.allowedNow()
-            if (healthAllowed) healthRefused = false
-        }
+
+    /** The Health Connect permissions that what is switched on needs. */
+    fun wanted(respiratoryRate: Boolean = sync.respiratoryRate, healthRecords: Boolean = sync.healthRecords): Set<String> = buildSet {
+        if (respiratoryRate) add(app.healthConnect.writePermission)
+        if (healthRecords && recordsSupported) add(app.healthRecords.writePermission)
     }
-    // On first showing, and again whenever a check or a synchronisation finishes.
-    LaunchedEffect(running, sync.running) { if (!running && !sync.running) refreshHealth() }
+
+    fun missing(permissions: Set<String>): Set<String> =
+        permissions.filterTo(LinkedHashSet()) { context.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+
+    fun refreshHealth() {
+        val needed = wanted()
+        healthAllowed = needed.isNotEmpty() && missing(needed).isEmpty()
+        recordsAllowed = recordsSupported && app.healthRecords.allowed
+        if (missing(needed).isEmpty()) healthRefused = false
+    }
+    // On first showing, and again whenever a check or a synchronisation finishes or a choice changes.
+    LaunchedEffect(running, sync.running, sync.respiratoryRate, sync.healthRecords) { if (!running && !sync.running) refreshHealth() }
 
     // The user may change things in system settings and come back.
     DisposableEffect(Unit) {
@@ -123,19 +136,38 @@ private fun Root(app: PapRelayApp) {
 
     fun proceed() {
         askingPermission = false
-        if (pendingSync) app.sync.syncNow() else check.start(pendingFull)
+        when (pending) {
+            PENDING_CHECK -> check.start(true)
+            PENDING_RECONNECT -> check.start(false)
+            // Switching it on stores the choice and starts a run of its own.
+            PENDING_RECORDS -> app.sync.setHealthRecords(true)
+            PENDING_RESPIRATORY -> app.sync.setRespiratoryRate(true)
+            else -> app.sync.syncNow()
+        }
+    }
+
+    /** The Health Connect permissions the pending action needs, counting a choice about to be switched on. */
+    fun wantedForPending(): Set<String> = when (pending) {
+        PENDING_RECORDS -> wanted(healthRecords = true)
+        PENDING_RESPIRATORY -> wanted(respiratoryRate = true)
+        else -> wanted()
     }
 
     val healthPermission = rememberLauncherForActivityResult(
         PermissionController.createRequestPermissionResultContract(),
     ) {
-        uiScope.launch {
-            healthAllowed = app.healthConnect.allowedNow()
-            // After two refusals Android no longer asks, and the request comes straight back.
-            healthRefused = !healthAllowed && app.healthConnect.available
-            // Either reports a missing grant itself.
-            proceed()
-        }
+        // After two refusals Android no longer asks, and the request comes straight back.
+        healthRefused = missing(wantedForPending()).isNotEmpty()
+        refreshHealth()
+        // Whatever was asked for reports a missing grant itself.
+        proceed()
+    }
+
+    /** Asks Health Connect for whatever the pending action still lacks, then carries it out. */
+    fun askHealth() {
+        val lacking = missing(wantedForPending())
+        // If Health Connect cannot even be asked, the check or the synchronisation reports why.
+        if (lacking.isNotEmpty() && app.healthConnect.available) healthPermission.launch(lacking) else proceed()
     }
 
     val bluetoothPermission = rememberLauncherForActivityResult(
@@ -145,17 +177,7 @@ private fun Root(app: PapRelayApp) {
         val allowed = BLUETOOTH_PERMISSIONS.all { context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
         // Whatever the reason, the same two ways forward apply: tap again, or open settings.
         permissionRefused = !allowed
-        if (!allowed) askingPermission = false
-        if (allowed) {
-            uiScope.launch {
-                // If Health Connect cannot even be asked, the check or the synchronisation reports why.
-                if (app.healthConnect.available && !app.healthConnect.allowedNow()) {
-                    healthPermission.launch(setOf(app.healthConnect.writePermission))
-                } else {
-                    proceed()
-                }
-            }
-        }
+        if (allowed) askHealth() else askingPermission = false
     }
 
     val export = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
@@ -174,12 +196,18 @@ private fun Root(app: PapRelayApp) {
         }
     }
 
-    fun request(full: Boolean, forSync: Boolean = false) {
-        pendingFull = full
-        pendingSync = forSync
+    // The system's own folder picker: PAPRelay sees only the folder the user hands it.
+    val folder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) app.sync.setExportFolder(uri)
+    }
+
+    /** Asks for whatever permissions [action] needs, then carries it out. */
+    fun request(action: String) {
+        pending = action
         askingPermission = true
-        // Returns at once when already granted, then carries on to Health Connect.
-        bluetoothPermission.launch(BLUETOOTH_PERMISSIONS)
+        // A choice switched on needs nothing of Bluetooth. Everything else talks to the machine;
+        // the request returns at once when already granted, then carries on to Health Connect.
+        if (action == PENDING_RECORDS || action == PENDING_RESPIRATORY) askHealth() else bluetoothPermission.launch(BLUETOOTH_PERMISSIONS)
     }
 
     fun open(vararg intents: Intent) {
@@ -197,15 +225,35 @@ private fun Root(app: PapRelayApp) {
 
     val appSettings = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
     val openSettings = { open(appSettings) }
-
-    BackHandler(enabled = showAbout || showCheck) {
-        if (showAbout) showAbout = false else showCheck = false
+    val openHealthConnect = {
+        open(
+            Intent(HealthConnectManager.ACTION_MANAGE_HEALTH_PERMISSIONS).putExtra(Intent.EXTRA_PACKAGE_NAME, context.packageName),
+            Intent(HealthConnectClient.ACTION_HEALTH_CONNECT_SETTINGS),
+        )
+    }
+    val share = {
+        // Handed to whichever app the user picks from the system's own list; PAPRelay sends nothing itself.
+        val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, app.sync.shareText())
+        open(Intent.createChooser(send, null))
     }
 
-    if (showAbout) {
-        AboutScreen(onBack = { showAbout = false })
-    } else if (showCheck) {
-        CheckScreen(
+    BackHandler(enabled = page != PAGE_HOME) { page = PAGE_HOME }
+
+    when (page) {
+        PAGE_ABOUT -> AboutScreen(onBack = { page = PAGE_HOME })
+        PAGE_NIGHTS -> NightsScreen(nights = nights, onShare = share, onBack = { page = PAGE_HOME })
+        PAGE_CHOICES -> ChoicesScreen(
+            sync = sync,
+            recordsSupported = recordsSupported,
+            recordsAllowed = recordsAllowed,
+            onRecords = { on -> if (on) request(PENDING_RECORDS) else app.sync.setHealthRecords(false) },
+            onRespiratoryRate = { on -> if (on) request(PENDING_RESPIRATORY) else app.sync.setRespiratoryRate(false) },
+            onChooseFolder = { folder.launch(null) },
+            onNoFolder = { app.sync.setExportFolder(null) },
+            onShare = share,
+            onBack = { page = PAGE_HOME },
+        )
+        PAGE_CHECK -> CheckScreen(
             pairing = pairing,
             steps = steps,
             running = running,
@@ -215,51 +263,48 @@ private fun Root(app: PapRelayApp) {
             syncEnabled = app.sync.enabled,
             syncRunning = sync.running,
             permissionRefused = permissionRefused,
-            onRunFull = { request(full = true) },
-            onRunReconnect = { request(full = false) },
+            onRunFull = { request(PENDING_CHECK) },
+            onRunReconnect = { request(PENDING_RECONNECT) },
             onStop = { check.cancel() },
             onSync = {
-                showCheck = false
-                request(full = false, forSync = true)
+                page = PAGE_HOME
+                request(PENDING_SYNC)
             },
             onExport = { export.launch("paprelay-device-check.txt") },
             onRewrite = { confirmRewrite = true },
             onForget = { confirmForget = true },
             onOpenSettings = openSettings,
-            onBack = { showCheck = false },
+            onBack = { page = PAGE_HOME },
         )
-    } else {
-        HomeScreen(
+        else -> HomeScreen(
             pairing = pairing,
             steps = steps,
             checkRunning = running,
             busy = forgetting,
             syncEnabled = app.sync.enabled,
             sync = sync,
+            nights = nights,
             healthAllowed = healthAllowed,
             healthRefused = healthRefused,
             permissionRefused = permissionRefused,
             pausesWhenUnused = pausesWhenUnused,
-            onSync = { request(full = false, forSync = true) },
+            onSync = { request(PENDING_SYNC) },
             onAcceptClock = { confirmClock = true },
             onStartAgain = { app.sync.startAgain() },
             onPair = {
                 // The steps are worth watching while the machine is paired for the first time.
-                showCheck = true
-                request(full = true)
+                page = PAGE_CHECK
+                request(PENDING_CHECK)
             },
-            onOpenCheck = { showCheck = true },
+            onOpenCheck = { page = PAGE_CHECK },
+            onOpenNights = { page = PAGE_NIGHTS },
+            onOpenChoices = { page = PAGE_CHOICES },
             onOpenSettings = openSettings,
-            onOpenHealthConnect = {
-                open(
-                    Intent(HealthConnectManager.ACTION_MANAGE_HEALTH_PERMISSIONS).putExtra(Intent.EXTRA_PACKAGE_NAME, context.packageName),
-                    Intent(HealthConnectClient.ACTION_HEALTH_CONNECT_SETTINGS),
-                )
-            },
+            onOpenHealthConnect = openHealthConnect,
             onOpenUnusedSetting = {
                 open(Intent(Intent.ACTION_AUTO_REVOKE_PERMISSIONS, Uri.fromParts("package", context.packageName, null)), appSettings)
             },
-            onAbout = { showAbout = true },
+            onAbout = { page = PAGE_ABOUT },
         )
     }
 
@@ -301,7 +346,7 @@ private fun Root(app: PapRelayApp) {
             confirm = R.string.action_rewrite,
             onConfirm = {
                 confirmRewrite = false
-                showCheck = false
+                page = PAGE_HOME
                 app.sync.rewriteEverything()
             },
             onCancel = { confirmRewrite = false },
@@ -322,3 +367,15 @@ private fun Root(app: PapRelayApp) {
         )
     }
 }
+
+private const val PAGE_HOME = "home"
+private const val PAGE_ABOUT = "about"
+private const val PAGE_CHECK = "check"
+private const val PAGE_NIGHTS = "nights"
+private const val PAGE_CHOICES = "choices"
+
+private const val PENDING_SYNC = "sync"
+private const val PENDING_CHECK = "check"
+private const val PENDING_RECONNECT = "reconnect"
+private const val PENDING_RECORDS = "records"
+private const val PENDING_RESPIRATORY = "respiratory"

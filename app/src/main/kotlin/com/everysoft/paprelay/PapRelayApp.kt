@@ -7,6 +7,7 @@ import com.everysoft.paprelay.ble.MachineClaim
 import com.everysoft.paprelay.ble.MachineScanner
 import com.everysoft.paprelay.check.DeviceCheck
 import com.everysoft.paprelay.hc.HealthConnectProbe
+import com.everysoft.paprelay.hc.HealthRecords
 import com.everysoft.paprelay.pairing.PairingStore
 import com.everysoft.paprelay.pairing.PairingState
 import com.everysoft.paprelay.sync.GattMachineConnector
@@ -23,18 +24,22 @@ class PapRelayApp : Application() {
     val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val pairingStore: PairingStore by lazy { PairingStore(this) }
     val healthConnect: HealthConnectProbe by lazy { HealthConnectProbe(this) }
+    val healthRecords: HealthRecords by lazy { HealthRecords(this) }
     private val scanner: MachineScanner by lazy { MachineScanner(this) }
     private val claim = MachineClaim()
     val deviceCheck: DeviceCheck by lazy {
-        DeviceCheck(this, scope, pairingStore, scanner, healthConnect, claim) { sync.forget() }
+        DeviceCheck(this, scope, pairingStore, scanner, healthConnect, healthRecords, ::healthWanted, claim) { sync.forget() }
     }
     val sync: SyncRunner by lazy {
-        SyncRunner(this, scope, GattMachineConnector(this, scope, pairingStore, scanner), HealthConnectSink(this), claim, pairingStore) {
+        SyncRunner(this, scope, GattMachineConnector(this, scope, pairingStore, scanner), HealthConnectSink(this), claim, pairingStore, healthRecords) {
             DeviceCheck.code(it, messages = false)
         }
     }
 
     private val cleaned = AtomicBoolean(false)
+
+    /** Whether anything is switched on to be written to Health Connect. */
+    private fun healthWanted(): Boolean = sync.status.value.let { it.respiratoryRate || (it.healthRecords && healthRecords.supported) }
 
     /**
      * A check that was cut short may have left its test value in Health Connect. Looked for
@@ -43,7 +48,12 @@ class PapRelayApp : Application() {
      * background run.
      */
     fun cleanUpOnce() {
-        if (cleaned.compareAndSet(false, true) || healthConnect.testValueMayRemain) scope.launch { healthConnect.removeLeftover() }
+        if (cleaned.compareAndSet(false, true) || healthConnect.testValueMayRemain) {
+            scope.launch {
+                healthConnect.removeLeftover()
+                healthRecords.removeLeftover()
+            }
+        }
     }
 
     override fun onCreate() {
