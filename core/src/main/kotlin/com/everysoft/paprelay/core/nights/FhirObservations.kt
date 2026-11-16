@@ -51,7 +51,7 @@ public object FhirObservations {
     private val TIME = DateTimeFormatter.ISO_OFFSET_DATE_TIME
 
     /** One Observation: its headline figure, and the others it carries as components. */
-    private class Group(val key: String, val label: String, val headline: NightFigure, val others: List<NightFigure>)
+    private class Group(val key: String, val label: String, val plain: String, val headline: NightFigure, val others: List<NightFigure>)
 
     private const val USAGE_KEY = "usage"
     private const val USAGE_LABEL = "CPAP therapy usage in the night (hours)"
@@ -62,15 +62,15 @@ public object FhirObservations {
 
     private val GROUPS = listOf(
         Group(
-            "events", NightFigure.AHI.label, NightFigure.AHI,
+            "events", NightFigure.AHI.label, "Residual breathing events on CPAP therapy in the night", NightFigure.AHI,
             listOf(
                 NightFigure.APNEA_INDEX, NightFigure.OBSTRUCTIVE_APNEA_INDEX, NightFigure.CENTRAL_APNEA_INDEX,
                 NightFigure.UNCLASSIFIED_APNEA_INDEX, NightFigure.HYPOPNEA_INDEX, NightFigure.RERA_INDEX,
             ),
         ),
-        Group("leak", "CPAP mask leak in the night, 95th percentile", NightFigure.LEAK_95, listOf(NightFigure.LEAK_MEDIAN, NightFigure.LEAK_MAX)),
+        Group("leak", "CPAP mask leak in the night, 95th percentile", "CPAP mask leak in the night", NightFigure.LEAK_95, listOf(NightFigure.LEAK_MEDIAN, NightFigure.LEAK_MAX)),
         Group(
-            "pressure", "CPAP therapy pressure in the night, 95th percentile", NightFigure.THERAPY_PRESSURE_95,
+            "pressure", "CPAP therapy pressure in the night, 95th percentile", "CPAP pressure in the night", NightFigure.THERAPY_PRESSURE_95,
             listOf(
                 NightFigure.THERAPY_PRESSURE_MEDIAN, NightFigure.THERAPY_PRESSURE_MAX,
                 NightFigure.EXPIRATORY_PRESSURE_MEDIAN, NightFigure.EXPIRATORY_PRESSURE_95, NightFigure.EXPIRATORY_PRESSURE_MAX,
@@ -78,7 +78,7 @@ public object FhirObservations {
             ),
         ),
         Group(
-            "breathing", "Respiratory rate during CPAP therapy in the night, median", NightFigure.RESPIRATORY_RATE_MEDIAN,
+            "breathing", "Respiratory rate during CPAP therapy in the night, median", "Breathing during CPAP therapy in the night", NightFigure.RESPIRATORY_RATE_MEDIAN,
             listOf(NightFigure.TIDAL_VOLUME_MEDIAN, NightFigure.MINUTE_VENTILATION_MEDIAN),
         ),
     )
@@ -111,7 +111,13 @@ public object FhirObservations {
             val others = group.others.mapNotNull { figure -> night.value(figure)?.let { component(figure.key, figure.label, quantity(it, figure.unit)) } }
             // A group none of whose figures the night has is not written at all.
             if (headline == null && others.isEmpty()) continue
-            out += observation(night, machineTag, group.key, group.label, headline?.let { quantity(it, group.headline.unit) }, others, group.headline.key)
+            // With its headline figure the record is named for that figure, whose value it carries. Without
+            // it the record is named for the group alone, and says no more than that about what it holds.
+            out += if (headline != null) {
+                observation(night, machineTag, group.key, group.label, quantity(headline, group.headline.unit), others, group.headline.key)
+            } else {
+                observation(night, machineTag, group.key, group.plain, null, others, group.key)
+            }
         }
         return out
     }

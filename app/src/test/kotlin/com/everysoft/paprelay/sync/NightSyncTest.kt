@@ -349,6 +349,33 @@ class NightSyncTest {
     }
 
     @Test
+    fun `a day that claims a date another day already holds from an earlier run is not believed either`() = runTest {
+        machine.days = week()
+        engine.sync()
+        val kept = nightStore.read().byDate.mapValues { it.value.night.fingerprint() }
+        // The machine's clock was set between runs: its days now begin a quarter of an hour off, and
+        // each lands on a date that already has a night.
+        machine.days = week().map { Day(it.start + 15 * 60_000, it.usage, it.ahi?.plus(500)) }
+        phoneNow += hour
+        assertEquals(SyncOutcome.PARTIAL, engine.sync()!!.outcome)
+        assertEquals(kept, nightStore.read().byDate.mapValues { it.value.night.fingerprint() })
+    }
+
+    @Test
+    fun `forgetting removes the nights and whatever was put aside`() {
+        val file = File(directory, "gone.json")
+        val nights = NightStore(file)
+        nights.write(Nights(tag, emptyMap()))
+        file.writeText("{ not nights")
+        nights.setAside("damaged")
+        nights.write(Nights(tag, emptyMap()))
+        nights.setAside("previous")
+        nights.write(Nights(tag, emptyMap()))
+        nights.delete()
+        assertTrue(directory.listFiles()!!.none { it.name.startsWith("gone.json") })
+    }
+
+    @Test
     fun `a finished day that cannot stand as a night leaves the run short, and says so`() = runTest {
         // Its list of sessions is not whole.
         machine.days = week().mapIndexed { index, one -> if (index == 2) Day(one.start, one.usage, one.ahi, listed = 3) else one }

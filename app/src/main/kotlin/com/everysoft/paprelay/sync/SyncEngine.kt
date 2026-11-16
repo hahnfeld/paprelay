@@ -540,7 +540,9 @@ class SyncEngine(
                 }
                 if (night.date in disputed) continue
                 val earlier = given[night.date]
-                if (earlier != null && earlier.first != record.periodStart.epochMs) {
+                // What is already kept for the date, from an earlier run, counts as a claim on it too.
+                val keptStart = before[night.date]?.night?.start?.toInstant()?.toEpochMilli()
+                if ((earlier != null && earlier.first != record.periodStart.epochMs) || (keptStart != null && keptStart != record.periodStart.epochMs)) {
                     // Two different days claim one date: the machine's clock or zone was set. Which of
                     // them the date belongs to cannot be told, so neither is believed, and what was
                     // kept for it before stays as it was.
@@ -584,7 +586,8 @@ class SyncEngine(
                 // user removed it, or Health Connect's data was cleared. Nothing recorded before is
                 // there now, whatever is remembered here.
                 for ((date, stored) in byDate.toMap()) byDate[date] = StoredNight(stored.night, null)
-                unsaved = SAVE_EVERY_NIGHTS
+                // Saved at once: if the run dies here, the next finds the place there and would believe the old marks.
+                nightStore.write(Nights(tag, byDate))
             }
             for (date in byDate.keys.sorted()) {
                 currentCoroutineContext().ensureActive()

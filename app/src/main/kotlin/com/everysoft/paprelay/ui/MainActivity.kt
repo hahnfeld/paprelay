@@ -37,6 +37,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.everysoft.paprelay.PapRelayApp
 import com.everysoft.paprelay.R
 import com.everysoft.paprelay.sync.NightFile
+import com.everysoft.paprelay.sync.SyncOutcome
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -128,7 +129,15 @@ private fun Root(app: PapRelayApp) {
                 refreshHealth()
                 // What the screen says should be how things are now, not how they were at the last attempt.
                 // Not on the way back from a permission question, whose answer starts what was asked for.
-                if (!askingPermission) app.sync.onForeground()
+                if (!askingPermission) {
+                    val status = app.sync.status.value
+                    // Allowed in Health Connect's own settings a moment ago: the run that said "not allowed" is out of date at once.
+                    if (!healthMissing && !status.running && status.lastReport?.outcome == SyncOutcome.HEALTH_CONNECT_NOT_ALLOWED) {
+                        app.sync.syncNow()
+                    } else {
+                        app.sync.onForeground()
+                    }
+                }
             }
         }
         lifecycle?.addObserver(observer)
@@ -228,8 +237,8 @@ private fun Root(app: PapRelayApp) {
                 return
             } catch (e: ActivityNotFoundException) {
                 // The next one, if there is one.
-            } catch (e: SecurityException) {
-                // The same.
+            } catch (e: RuntimeException) {
+                // Not allowed to, or too much to hand over at once: the same.
             }
         }
     }

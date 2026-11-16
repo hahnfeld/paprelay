@@ -65,7 +65,7 @@
     <string name="night_leak">Leak 95%%: %1$s L/min</string>
     <string name="night_pressure">Pressure 95%%: %1$s cmH₂O</string>
     <!-- The same, as a screen reader says them. -->
-    <string name="night_usage_spoken">Used for %1$s hours and %2$s minutes</string>
+    <string name="night_usage_spoken">Hours of use: %1$s. Minutes: %2$s</string>
     <string name="night_ahi_spoken">A H I %1$s</string>
     <string name="night_leak_spoken">Leak, 95th percentile, %1$s litres per minute</string>
     <string name="night_pressure_spoken">Pressure, 95th percentile, %1$s centimetres of water</string>
@@ -77,6 +77,7 @@
     <string name="choice_records">Nightly figures to health records</string>
     <string name="choice_records_body">Usage, AHI, leak and pressure for each night are written to the health records in Health Connect. They appear there as lab results from PAPRelay.</string>
     <string name="choice_records_unsupported">Health records are not available on this phone. They need Health Connect on Android 16 or later.</string>
+    <string name="choice_not_allowed">Health Connect does not allow PAPRelay to write this. Open Health Connect and allow it, then switch this on.</string>
     <string name="choice_respiratory">Respiratory rate to Health Connect</string>
     <string name="choice_respiratory_body">One value for each minute of therapy. Leave this off if another device already writes your respiratory rate.</string>
     <string name="choice_file">Table of nights</string>

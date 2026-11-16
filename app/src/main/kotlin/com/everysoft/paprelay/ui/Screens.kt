@@ -91,6 +91,7 @@ import com.everysoft.paprelay.R
 import com.everysoft.paprelay.core.nights.Night
 import com.everysoft.paprelay.core.nights.NightFigure
 import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 import com.everysoft.paprelay.sync.SyncOutcome
 import com.everysoft.paprelay.sync.SyncStatus
 import android.text.format.DateFormat
@@ -383,7 +384,12 @@ private fun NightSummary(night: Night, prominent: Boolean) {
 /** A date with its weekday, in the phone's language and its usual order: "Sat, 14 Nov 2026". */
 private fun dayFormatter(): DateTimeFormatter {
     val locale = Locale.getDefault()
-    return DateTimeFormatter.ofPattern(DateFormat.getBestDateTimePattern(locale, "yMMMEd"), locale)
+    return try {
+        DateTimeFormatter.ofPattern(DateFormat.getBestDateTimePattern(locale, "yMMMEd"), locale)
+    } catch (e: IllegalArgumentException) {
+        // A pattern the phone's language uses and this formatter does not know: the plain date instead.
+        DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM)
+    }
 }
 
 /**
@@ -495,7 +501,7 @@ fun ChoicesScreen(
 @Composable
 private fun NotAllowed(onOpenHealthConnect: () -> Unit) {
     Text(
-        stringResource(R.string.sync_hc_not_allowed),
+        stringResource(R.string.choice_not_allowed),
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.error,
     )

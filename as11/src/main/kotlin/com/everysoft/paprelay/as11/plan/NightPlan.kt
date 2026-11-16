@@ -53,6 +53,7 @@ public object NightPlan {
     )
 
     private const val HOUR_MS = 3_600_000L
+    private const val MAX_ZONE_DRIFT_MINUTES = 120
     private const val DAY_MS = 24 * HOUR_MS
     private val HUNDRED = BigDecimal(100)
     private val SIXTY = BigDecimal(60)
@@ -112,7 +113,9 @@ public object NightPlan {
         return when {
             possible.size == 1 -> possible.single()
             sent == null -> null
-            else -> possible.minByOrNull { kotlin.math.abs(it - sent) }
+            // The nearer, if it is near: a machine's zone moves an hour with the seasons. A zone field
+            // hours away from both (the machine carried across the world and set there) decides nothing.
+            else -> possible.minByOrNull { kotlin.math.abs(it - sent) }?.takeIf { kotlin.math.abs(it - sent) <= MAX_ZONE_DRIFT_MINUTES }
         }
     }
 

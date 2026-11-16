@@ -173,8 +173,10 @@ class NightTest {
         val only = FhirObservations.forNight(night(figures = mapOf(NightFigure.LEAK_MAX to 5160L)), tag).single { it.id.endsWith("-leak") }.json
         assertFalse(only.contains(""""valueQuantity":{"value":51.6,"unit":"L/min","system":"http://unitsofmeasure.org","code":"L/min"},"device""""))
         assertTrue(only.contains(""""component":[{"code":{"coding":[{"system":"https://github.com/hahnfeld/paprelay/fhir/CodeSystem/cpap-night","code":"leak-max""""))
-        // The top level has no value of its own.
+        // The top level has no value of its own, and is named for the group, not for the figure it lacks.
         assertFalse(only.substringBefore(""""component"""").contains("valueQuantity"))
+        assertTrue(only.contains(""""code":"leak","display":"CPAP mask leak in the night""""))
+        assertFalse(only.substringBefore(""""component"""").contains("95th"))
     }
 
     @Test

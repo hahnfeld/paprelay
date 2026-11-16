@@ -139,6 +139,9 @@ class NightPlanTest {
         // Hawaii, sent from California: nowhere near the date line, and unaffected.
         val hawaii = LocalDate.of(2026, 11, 14).atTime(22, 0).toInstant(java.time.ZoneOffset.UTC).toEpochMilli()
         assertEquals(LocalDate.of(2026, 11, 14), plan { night(start = hawaii, zone = -480) }.single()!!.date)
+        // A zone field hours from both possibilities decides nothing: the machine was carried far and set there.
+        assertNull(plan { night(start = winter, zone = 0) }.single())
+        assertNull(plan { night(start = winter, zone = 60) }.single())
         // With no zone to go by and two dates possible, none is given.
         assertNull(
             plan {

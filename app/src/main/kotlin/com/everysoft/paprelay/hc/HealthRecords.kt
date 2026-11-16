@@ -81,6 +81,8 @@ class HealthRecords(private val context: Context) : NightRecords {
         val existing = answered { sources(manager) }.firstOrNull { it.displayName == SOURCE_NAME }
         val source = existing ?: answered { create(manager) }
         sourceId = source.id
+        // A made-up night that a device check could not confirm it had removed goes now, before anything real is written beside it.
+        if (existing != null) answered { remove(manager, source.id, FhirObservations.idsFor(PROBE_NIGHT, PROBE_TAG)) }
         existing == null
     }
 
@@ -217,11 +219,11 @@ class HealthRecords(private val context: Context) : NightRecords {
      * is a failure of Health Connect's, and is reported as one: not as this run having been stopped.
      */
     private suspend fun <T> answered(block: suspend () -> T): T {
-        var done = false
-        val value = withTimeoutOrNull(ANSWER_MS) { block().also { done = true } }
-        if (!done) throw HealthSinkException(notAllowed = false, cause = HealthConnectUnresponsiveException())
-        @Suppress("UNCHECKED_CAST")
-        return value as T
+        // Kept apart from what the timeout itself returns: an answer that arrives in the very instant the
+        // wait is given up is still an answer, and the absence of one is not mistaken for a null.
+        var answer: Result<T>? = null
+        withTimeoutOrNull(ANSWER_MS) { answer = Result.success(block()) }
+        return (answer ?: throw HealthSinkException(notAllowed = false, cause = HealthConnectUnresponsiveException())).getOrThrow()
     }
 
     @RequiresApi(FIRST_VERSION)

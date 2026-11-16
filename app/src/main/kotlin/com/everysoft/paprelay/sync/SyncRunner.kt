@@ -346,7 +346,7 @@ class SyncRunner(
     fun setRespiratoryRate(on: Boolean) {
         scope.launch {
             change { if (on) it.with(respiratoryRate = true).fromTheStart() else it.with(respiratoryRate = false) }
-            if (on) syncNow()
+            if (on || blockedByHealthConnect()) syncNow()
         }
     }
 
@@ -354,7 +354,7 @@ class SyncRunner(
     fun setHealthRecords(on: Boolean) {
         scope.launch {
             change { it.with(healthRecords = on) }
-            if (on) syncNow()
+            if (on || blockedByHealthConnect()) syncNow()
         }
     }
 
@@ -374,6 +374,9 @@ class SyncRunner(
             export()
         }
     }
+
+    /** Whether the last run ended on something Health Connect did not allow: switching that thing off is then a reason for another. */
+    private fun blockedByHealthConnect(): Boolean = _status.value.lastReport?.outcome == SyncOutcome.HEALTH_CONNECT_NOT_ALLOWED
 
     /** What the table is, and the table itself, as text to hand to another app. */
     fun shareText(): String = NightReport.EXPLANATION + "\n\n" + NightReport.csv(_nights.value.take(MAX_SHARED_NIGHTS))

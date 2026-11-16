@@ -93,9 +93,11 @@ class NightStore(private val file: File) {
         runCatching { FileChannel.open(directory.toPath(), StandardOpenOption.READ).use { it.force(true) } }
     }
 
+    /** Removes the nights and everything that was ever put aside: all of it is the user's health data. */
     fun delete() {
         file.delete()
-        File(file.absoluteFile.parentFile, file.name + ".new").delete()
+        val directory = file.absoluteFile.parentFile ?: return
+        directory.listFiles { candidate -> candidate.name.startsWith(file.name + ".") }?.forEach { it.delete() }
     }
 
     internal companion object {
