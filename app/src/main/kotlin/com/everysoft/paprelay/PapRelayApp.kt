@@ -44,7 +44,5 @@ class PapRelayApp : Application() {
             // the system has dropped the request.
             if (pairing is PairingState.Paired && sync.status.value.lastReport != null) sync.keepWatch()
         }
-        // A check that was cut short may have left its test value in Health Connect.
-        scope.launch { healthConnect.removeLeftover() }
     }
 }

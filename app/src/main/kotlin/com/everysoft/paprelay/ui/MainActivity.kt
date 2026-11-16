@@ -46,7 +46,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent { PapRelayTheme { Root(application as PapRelayApp) } }
+        val app = application as PapRelayApp
+        // A check that was cut short may have left its test value in Health Connect. Looked for when
+        // the app is opened, not every time the system starts it for a background run.
+        if (savedInstanceState == null) app.scope.launch { app.healthConnect.removeLeftover() }
+        setContent { PapRelayTheme { Root(app) } }
     }
 }
 

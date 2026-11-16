@@ -20,7 +20,7 @@
     <string name="action_device_check">Device check</string>
     <string name="action_rewrite">Write everything again</string>
     <string name="action_open_health">Open Health Connect</string>
-    <string name="action_unused_setting">Open that setting</string>
+    <string name="action_unused_setting">Open the setting for unused apps</string>
 
     <!-- How synchronising stands. One sentence each. -->
     <string name="sync_running">Synchronising…</string>
@@ -80,7 +80,7 @@
     <string name="machine_unreadable_hint">This phone can no longer read its saved pairing. Put the machine in pairing mode and run the device check.</string>
     <string name="machine_unavailable">The saved pairing could not be read</string>
     <string name="machine_unavailable_hint">Open Device check and run it. If this message stays, choose Forget machine there and pair again.</string>
-    <string name="unused_hint">Android pauses apps that are not opened for some months. PAPRelay would then stop synchronising. Turn off “Pause app activity if unused” for PAPRelay.</string>
+    <string name="unused_hint">Android pauses apps that are not opened for some months. PAPRelay would then stop synchronising. Turn off the switch for unused apps for PAPRelay. Android calls it “Manage app if unused” or “Pause app activity if unused”.</string>
     <string name="busy_try_again">PAPRelay is busy. Try again in a moment.</string>
     <string name="machine_loading">Loading…</string>
 

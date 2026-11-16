@@ -20,9 +20,17 @@ class MachineClaim {
     /** Takes the claim, or returns false at once if something else holds it. */
     fun tryTake(): Boolean = held.compareAndSet(false, true)
 
-    /** Gives it up. Only whoever took it may call this. */
-    fun release() {
-        releasedAt = SystemClock.elapsedRealtime()
+    /** True while something holds it. */
+    val taken: Boolean get() = held.get()
+
+    /**
+     * Gives it up. Only whoever took it may call this.
+     *
+     * @param connected false if the machine was never called while it was held, so that the
+     *   next holder need not wait for it to recover from a connection it never had.
+     */
+    fun release(connected: Boolean = true) {
+        if (connected) releasedAt = SystemClock.elapsedRealtime()
         held.set(false)
     }
 

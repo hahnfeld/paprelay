@@ -45,16 +45,15 @@ class PresenceWatch(private val context: Context) {
                 .setScanMode(ScanSettings.SCAN_MODE_LOW_POWER)
                 // Once when it appears and once when it has gone; not for every announcement in between.
                 .setCallbackType(ScanSettings.CALLBACK_TYPE_FIRST_MATCH or ScanSettings.CALLBACK_TYPE_MATCH_LOST)
+                // One slot of the few the chip has for this, not half of them.
+                .setNumOfMatches(ScanSettings.MATCH_NUM_ONE_ADVERTISEMENT)
                 // The same kinds of announcement the device check listens for.
                 .setLegacy(false)
                 .setPhy(BluetoothDevice.PHY_LE_1M)
                 .build()
             scanner.startScan(listOf(filter), settings, intent()) == 0
-        } catch (e: SecurityException) {
-            false
-        } catch (e: IllegalArgumentException) {
-            false
-        } catch (e: IllegalStateException) {
+        } catch (e: RuntimeException) {
+            // Not allowed, Bluetooth just switched off, or a phone that will not have such a request.
             false
         }
     }
@@ -64,9 +63,7 @@ class PresenceWatch(private val context: Context) {
         if (!allowed) return
         try {
             scanner?.stopScan(intent())
-        } catch (e: SecurityException) {
-            // Nothing to withdraw with.
-        } catch (e: IllegalStateException) {
+        } catch (e: RuntimeException) {
             // Bluetooth went off in between, and took the request with it.
         }
     }
@@ -83,7 +80,12 @@ class PresenceWatch(private val context: Context) {
 /** Told by the system that the paired machine has been heard, or has gone. Nothing it is given is kept or logged. */
 class PresenceReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.getIntExtra(BluetoothLeScanner.EXTRA_ERROR_CODE, 0) != 0) return
+        if (intent.getIntExtra(BluetoothLeScanner.EXTRA_ERROR_CODE, 0) != 0) {
+            // The phone could not keep the request. It is withdrawn, so that the next run asks afresh
+            // instead of being told that an equal request is already in place.
+            PresenceWatch(context.applicationContext).stop()
+            return
+        }
         // Gone again is not news: being out of range is the ordinary state of a phone away from home.
         if (intent.getIntExtra(BluetoothLeScanner.EXTRA_CALLBACK_TYPE, 0) == ScanSettings.CALLBACK_TYPE_MATCH_LOST) return
         (context.applicationContext as? PapRelayApp)?.sync?.onMachineHeard()

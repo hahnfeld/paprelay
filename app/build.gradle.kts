@@ -5,7 +5,8 @@ plugins {
 }
 
 val commit = providers.exec {
-    commandLine("git", "rev-parse", "--short", "HEAD")
+    // The short commit, marked when the files differ from it. (No tag ever matches, so it is never a tag's name.)
+    commandLine("git", "describe", "--always", "--dirty", "--abbrev=7", "--match=no-tag-is-named-this")
     isIgnoreExitValue = true
 }.standardOutput.asText
 
@@ -40,7 +41,7 @@ android {
             val password = providers.environmentVariable("PAPRELAY_KEYSTORE_PASSWORD").orNull
                 ?: throw GradleException("PAPRELAY_KEYSTORE is set, so PAPRELAY_KEYSTORE_PASSWORD must be set too")
             create("release") {
-                // Relative to where the build is started, not to this module.
+                // A relative path is taken from the project's root, not from this module.
                 storeFile = rootProject.file(releaseKeystore.get())
                 storeType = "PKCS12"
                 storePassword = password

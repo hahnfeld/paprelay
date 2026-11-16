@@ -67,8 +67,11 @@ class SyncRunner(
         SyncEngine(connector, sink, store, System::currentTimeMillis, ::keepRaw, phoneClockWrong = ::phoneClockWrong, describe = describe)
     private val presence = PresenceWatch(context)
 
-    /** Asked for by hand and not yet begun. */
+    /** Asked for by hand, and taken up by nobody yet. */
     private val requested = AtomicBoolean(false)
+
+    /** The system has begun the run that was asked for by hand; it has not reached the machine yet. */
+    private val starting = AtomicBoolean(false)
 
     /** A run of this object's holds the machine. */
     private val active = AtomicBoolean(false)
@@ -91,22 +94,75 @@ class SyncRunner(
      * it is run here instead.
      */
     fun syncNow() {
-        if (!enabled || !requested.compareAndSet(false, true)) return
+        if (!enabled || active.get() || starting.get() || !requested.compareAndSet(false, true)) return
         publish()
-        enqueue(NOW_WORK, SyncWorker.TAG_NOW)
+        val handedOver = runCatching { enqueue(NOW_WORK, SyncWorker.TAG_NOW) }.isSuccess
         scope.launch {
-            delay(START_GRACE_MS)
-            if (requested.get()) {
-                WorkManager.getInstance(context).cancelUniqueWork(NOW_WORK)
-                if (runOnce() != null) keepWatch()
+            if (handedOver) delay(START_GRACE_MS)
+            // Whoever takes the request has it: the system's run when it begins, or this one. Never both.
+            if (requested.compareAndSet(true, false)) {
+                runCatching { WorkManager.getInstance(context).cancelUniqueWork(NOW_WORK) }
+                if (runOnce() != null) keepWatch() else publish()
             }
         }
+    }
+
+    /**
+     * Called first thing by the system's run of a request made by hand: takes the request, so
+     * that it is not also run here. [doneStarting] must follow, whatever happens.
+     */
+    fun beginRequested() {
+        starting.set(true)
+        requested.set(false)
+        publish()
+    }
+
+    fun doneStarting() {
+        starting.set(false)
+        publish()
     }
 
     /** The phone has heard the paired machine come into range. */
     fun onMachineHeard() {
         if (!enabled) return
-        enqueue(HEARD_WORK, SyncWorker.TAG_HEARD)
+        // Decided here when it can be, to spare the system a piece of work that would do nothing;
+        // decided again by the work itself, which knows the stored state for certain.
+        when (val wait = heardWaitMs()) {
+            null -> Unit
+            0L -> enqueue(HEARD_WORK, SyncWorker.TAG_HEARD)
+            else -> retryLater(wait)
+        }
+    }
+
+    /**
+     * How long a run begun because the machine was heard should wait: not at all, some
+     * milliseconds, or null for no run. Everything came across a short while ago; nothing can
+     * change until the user has acted; or an attempt was made minutes ago, as happens with a
+     * machine at the edge of range that is heard, lost and heard again.
+     */
+    fun heardWaitMs(): Long? {
+        val report = _status.value.lastReport ?: return 0
+        val age = abs(System.currentTimeMillis() - report.atMs)
+        return when {
+            report.outcome in USER_DECIDES -> null
+            report.outcome == SyncOutcome.COMPLETE && age < FRESH_MS -> null
+            age < HEARD_GAP_MS -> HEARD_GAP_MS - age
+            else -> 0
+        }
+    }
+
+    /**
+     * One more attempt in a while, after the machine was heard but could not be reached or
+     * not everything came across: it may have been at the edge of range. One, not a series;
+     * the hourly run is the series.
+     */
+    fun retryLater(waitMs: Long = HEARD_GAP_MS) {
+        if (!enabled) return
+        val request = OneTimeWorkRequestBuilder<SyncWorker>()
+            .setInitialDelay(waitMs.coerceIn(1_000, HEARD_GAP_MS), TimeUnit.MILLISECONDS)
+            .addTag(SyncWorker.TAG_RETRY)
+            .build()
+        WorkManager.getInstance(context).enqueueUniqueWork(RETRY_WORK, ExistingWorkPolicy.KEEP, request)
     }
 
     /**
@@ -117,16 +173,20 @@ class SyncRunner(
     fun onForeground() {
         if (!enabled) return
         scope.launch {
+            // Not beside a device check, which has the machine and the user's attention.
+            if (claim.taken) return@launch
+            pairings.current()
             refresh()
             val status = _status.value
             val report = status.lastReport ?: return@launch
             if (status.running || status.storeUnreadable) return@launch
+            val age = abs(System.currentTimeMillis() - report.atMs)
             val again = when (report.outcome) {
-                in PRECONDITIONS -> engine.blockedBy() == null
+                in PRECONDITIONS -> age > RECHECK_MS && engine.blockedBy() == null
                 in USER_DECIDES -> false
-                else -> abs(System.currentTimeMillis() - report.atMs) > FRESH_MS
+                else -> age > FRESH_MS
             }
-            if (again) syncNow()
+            if (again && !claim.taken) syncNow()
         }
     }
 
@@ -137,37 +197,24 @@ class SyncRunner(
      */
     suspend fun runOnce(): SyncReport? {
         if (!enabled) return null
-        if (!claim.tryTake()) {
-            requested.set(false)
-            publish()
-            return null
-        }
+        if (!claim.tryTake()) return null
         active.set(true)
-        requested.set(false)
         publish()
+        var report: SyncReport? = null
         try {
-            // The machine does not answer a new connection in the first seconds after the last one ended.
-            delay(claim.restMs())
-            return engine.sync()?.also { latest = it }
+            // The machine does not answer a new connection in the first seconds after the last one
+            // ended. Only if this run can get as far as calling it at all.
+            if (engine.blockedBy() == null) delay(claim.restMs())
+            report = engine.sync()?.also { latest = it }
+            return report
         } finally {
             // In this order, and at once: the screen must never show a run that holds nothing,
             // nor offer a button while the machine is still taken.
-            claim.release()
+            claim.release(connected = report?.outcome !in PRECONDITIONS)
             active.set(false)
             publish()
             withContext(NonCancellable) { refresh() }
         }
-    }
-
-    /**
-     * True if hearing the machine is no reason for a run just now: everything came across a
-     * short while ago, or an attempt of any kind was made in the last few minutes (a machine at
-     * the edge of range is heard, lost and heard again).
-     */
-    fun heardTooSoon(): Boolean {
-        val report = _status.value.lastReport ?: return false
-        val age = abs(System.currentTimeMillis() - report.atMs)
-        return age < HEARD_GAP_MS || (report.outcome == SyncOutcome.COMPLETE && age < FRESH_MS)
     }
 
     /**
@@ -232,7 +279,8 @@ class SyncRunner(
             // Not at once: the run that led here has only just finished.
             .setInitialDelay(1, TimeUnit.HOURS)
             .build()
-        WorkManager.getInstance(context).enqueueUniquePeriodicWork(HOURLY_WORK, ExistingPeriodicWorkPolicy.UPDATE, hourly)
+        // Kept if it is already there: replacing it would cancel the very run that may have started this process.
+        WorkManager.getInstance(context).enqueueUniquePeriodicWork(HOURLY_WORK, ExistingPeriodicWorkPolicy.KEEP, hourly)
         listenForMachine()
     }
 
@@ -249,11 +297,11 @@ class SyncRunner(
     /** Stops the background runs. */
     fun stopWatch() {
         val work = WorkManager.getInstance(context)
-        for (name in listOf(HOURLY_WORK, NOW_WORK, HEARD_WORK)) work.cancelUniqueWork(name)
+        for (name in listOf(HOURLY_WORK, NOW_WORK, HEARD_WORK, RETRY_WORK)) work.cancelUniqueWork(name)
         presence.stop()
     }
 
-    /** The last attempts, for the saved report: outcomes, counts and failure labels only. */
+    /** The last attempt, for the saved report: its outcome, when, and a failure label. No counts: a count of minutes is a night's length. */
     fun reportText(): String {
         val status = _status.value
         val report = status.lastReport
@@ -261,7 +309,7 @@ class SyncRunner(
             appendLine("sync enabled $enabled")
             if (status.storeUnreadable) appendLine("sync record unreadable")
             if (report != null) {
-                appendLine("sync last ${report.outcome} at ${Instant.ofEpochMilli(report.atMs)} sessions ${report.sessions} written ${report.readingsWritten}")
+                appendLine("sync last ${report.outcome} at ${Instant.ofEpochMilli(report.atMs)}")
                 report.code?.let { appendLine("  $it") }
             }
             status.lastCompleteAtMs?.let { appendLine("sync last complete at ${Instant.ofEpochMilli(it)}") }
@@ -284,7 +332,7 @@ class SyncRunner(
     }
 
     private fun publish() {
-        _status.update { SyncStatus(requested.get() || active.get(), it.lastReport, it.lastCompleteAtMs, it.storeUnreadable) }
+        _status.update { SyncStatus(requested.get() || starting.get() || active.get(), it.lastReport, it.lastCompleteAtMs, it.storeUnreadable) }
     }
 
     /** Reads the stored report again. Whether a run is in progress is not its affair. */
@@ -337,6 +385,7 @@ class SyncRunner(
         const val HOURLY_WORK = "sync"
         const val NOW_WORK = "sync-now"
         const val HEARD_WORK = "sync-heard"
+        const val RETRY_WORK = "sync-retry"
         const val RAW_DIRECTORY = "raw"
         const val MAX_RAW_FILES = 400
         const val PHONE_CLOCK_TOLERANCE_MS = 30_000L
@@ -349,6 +398,9 @@ class SyncRunner(
 
         /** The least time between an attempt of any kind and one begun because the machine was heard. */
         const val HEARD_GAP_MS = 5L * 60 * 1000
+
+        /** The least time before a run stopped by a missing permission or the like is tried again on opening the app. */
+        const val RECHECK_MS = 60_000L
 
         /** Stopped before anything was asked of the machine, by something the user can put right. */
         val PRECONDITIONS = setOf(

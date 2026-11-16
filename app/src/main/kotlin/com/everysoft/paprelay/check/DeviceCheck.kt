@@ -238,7 +238,7 @@ class DeviceCheck(
                 clearData()
                 forgetSync()
             } finally {
-                claim.release()
+                claim.release(connected = false)
                 _forgetting.value = false
             }
         }
