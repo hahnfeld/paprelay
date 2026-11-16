@@ -23,11 +23,28 @@ android {
         versionName = "0.1.0"
     }
 
+    // The release key lives outside the repository, and is named to the build only through the
+    // environment. Without it a release build is still made, unsigned, so that it can be checked;
+    // it just cannot be installed.
+    val releaseKeystore = providers.environmentVariable("PAPRELAY_KEYSTORE")
+    signingConfigs {
+        if (releaseKeystore.isPresent) {
+            create("release") {
+                storeFile = file(releaseKeystore.get())
+                storeType = "PKCS12"
+                storePassword = providers.environmentVariable("PAPRELAY_KEYSTORE_PASSWORD").get()
+                keyAlias = providers.environmentVariable("PAPRELAY_KEY_ALIAS").getOrElse("paprelay")
+                keyPassword = providers.environmentVariable("PAPRELAY_KEYSTORE_PASSWORD").get()
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (releaseKeystore.isPresent) signingConfig = signingConfigs.getByName("release")
         }
         debug {
             applicationIdSuffix = ".debug"

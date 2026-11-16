@@ -18,3 +18,4 @@ capture-raw/
 *.jks
 *.keystore
 keystore.properties
+*.p12
