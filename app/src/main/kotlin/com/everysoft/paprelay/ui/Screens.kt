@@ -80,6 +80,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import com.everysoft.paprelay.BuildConfig
 import com.everysoft.paprelay.R
+import com.everysoft.paprelay.sync.SyncOutcome
+import com.everysoft.paprelay.sync.SyncStatus
+import android.text.format.DateUtils
 import com.everysoft.paprelay.check.CheckSteps
 import com.everysoft.paprelay.check.Message
 import com.everysoft.paprelay.check.Step
@@ -181,6 +184,9 @@ fun HomeScreen(
     running: Boolean,
     hasReport: Boolean,
     busy: Boolean,
+    sync: SyncStatus,
+    onSync: () -> Unit,
+    onAcceptClock: () -> Unit,
     stopping: Boolean,
     healthAllowed: Boolean,
     permissionRefused: Boolean,
@@ -227,6 +233,20 @@ fun HomeScreen(
             }
         }
 
+        if (pairing is PairingState.Paired) {
+            // Synchronising is what the app is for; the check below it is for finding faults.
+            Secondary(syncLine(sync), Modifier.padding(top = 4.dp))
+            Spacer(Modifier.height(16.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onSync, enabled = !sync.running && !running && !busy) {
+                    Text(stringResource(if (sync.running) R.string.sync_running else R.string.action_sync))
+                }
+                if (!sync.running && sync.lastReport?.outcome == SyncOutcome.CLOCK_CHANGED) {
+                    OutlinedButton(onClick = onAcceptClock) { Text(stringResource(R.string.action_accept_clock)) }
+                }
+            }
+        }
+
         Spacer(Modifier.height(20.dp))
         // Wraps instead of clipping at large font sizes.
         FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -237,9 +257,14 @@ fun HomeScreen(
                 }
             } else {
                 // Held back while a pairing is being forgotten, so a check cannot start on it.
-                Button(onClick = onRunFull, enabled = !busy && pairing != PairingState.Loading) { Text(stringResource(R.string.action_run_check)) }
+                // Once a machine is paired the check is the lesser action, and looks it.
                 if (pairing is PairingState.Paired) {
-                    OutlinedButton(onClick = onRunReconnect, enabled = !busy) { Text(stringResource(R.string.action_reconnect_check)) }
+                    OutlinedButton(onClick = onRunFull, enabled = !busy && !sync.running) { Text(stringResource(R.string.action_run_check)) }
+                } else {
+                    Button(onClick = onRunFull, enabled = !busy && pairing != PairingState.Loading) { Text(stringResource(R.string.action_run_check)) }
+                }
+                if (pairing is PairingState.Paired) {
+                    OutlinedButton(onClick = onRunReconnect, enabled = !busy && !sync.running) { Text(stringResource(R.string.action_reconnect_check)) }
                 }
             }
         }
@@ -560,4 +585,37 @@ fun ConfirmDialog(
         },
         dismissButton = { TextButton(onClick = onCancel) { Text(stringResource(R.string.action_cancel)) } },
     )
+}
+
+/** One sentence on how synchronising stands. */
+@Composable
+private fun syncLine(sync: SyncStatus): String {
+    val report = sync.lastReport
+    return when {
+        sync.running -> stringResource(R.string.sync_running)
+        sync.storeUnreadable -> stringResource(R.string.sync_store_unreadable)
+        report == null -> stringResource(R.string.sync_never)
+        else -> when (report.outcome) {
+            SyncOutcome.COMPLETE -> stringResource(
+                R.string.sync_complete,
+                DateUtils.getRelativeTimeSpanString(report.atMs, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString(),
+            )
+            SyncOutcome.PARTIAL -> stringResource(R.string.sync_partial)
+            SyncOutcome.MACHINE_AWAY -> stringResource(R.string.sync_machine_away)
+            SyncOutcome.BLUETOOTH_OFF -> stringResource(R.string.detail_bluetooth_off)
+            SyncOutcome.BLUETOOTH_NOT_ALLOWED -> stringResource(R.string.sync_bluetooth_not_allowed)
+            SyncOutcome.HEALTH_CONNECT_NOT_ALLOWED -> stringResource(R.string.sync_hc_not_allowed)
+            SyncOutcome.HEALTH_CONNECT_UNAVAILABLE -> stringResource(R.string.detail_hc_unavailable)
+            SyncOutcome.PAIRING_REJECTED -> stringResource(R.string.sync_pairing_rejected)
+            SyncOutcome.WRONG_MACHINE -> stringResource(R.string.sync_wrong_machine)
+            SyncOutcome.SOFTWARE_NOT_CONFIRMED -> stringResource(R.string.sync_software_not_confirmed)
+            SyncOutcome.CLOCK_UNRELIABLE -> stringResource(R.string.sync_clock_unreliable)
+            SyncOutcome.CLOCK_CHANGED -> stringResource(R.string.sync_clock_changed)
+            SyncOutcome.NOT_PAIRED -> stringResource(R.string.detail_not_paired)
+            SyncOutcome.CONNECTION_LOST -> stringResource(R.string.sync_connection_lost)
+            SyncOutcome.DATA_NOT_UNDERSTOOD -> stringResource(R.string.sync_data_not_understood)
+            SyncOutcome.HEALTH_CONNECT_FAILED -> stringResource(R.string.sync_hc_failed)
+            SyncOutcome.INTERNAL -> stringResource(R.string.error_internal)
+        }
+    }
 }

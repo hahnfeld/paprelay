@@ -80,6 +80,7 @@ dependencies {
     implementation(libs.compose.ui)
     implementation(libs.compose.material3)
     implementation(libs.health.connect)
+    implementation(libs.work.runtime)
     implementation(libs.serialization.json)
 
     // Android's local unit tests run on JUnit 4.

@@ -33,6 +33,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.everysoft.paprelay.PapRelayApp
 import com.everysoft.paprelay.R
+import com.everysoft.paprelay.pairing.PairingState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -62,6 +63,9 @@ private fun Root(app: PapRelayApp) {
     var showAbout by rememberSaveable { mutableStateOf(false) }
     var confirmForget by rememberSaveable { mutableStateOf(false) }
     var pendingFull by rememberSaveable { mutableStateOf(true) }
+    // What the permissions being asked for are wanted for: a device check, or a synchronisation.
+    var pendingSync by rememberSaveable { mutableStateOf(false) }
+    val sync by app.sync.status.collectAsState()
     var permissionRefused by rememberSaveable { mutableStateOf(false) }
     val forgetting by check.forgetting.collectAsState()
     val stopping by check.stopping.collectAsState()
@@ -81,6 +85,8 @@ private fun Root(app: PapRelayApp) {
     }
     // On first showing, and again whenever a check finishes.
     LaunchedEffect(running) { if (!running) refreshHealth() }
+    // Once a machine is paired, the hourly background run is asked for; asking again changes nothing.
+    LaunchedEffect(pairing) { if (pairing is PairingState.Paired) app.sync.schedule() }
     val uiScope = rememberCoroutineScope()
 
     // The user may grant the permission in system settings and come back.
@@ -107,7 +113,7 @@ private fun Root(app: PapRelayApp) {
 
     val healthPermission = rememberLauncherForActivityResult(
         PermissionController.createRequestPermissionResultContract(),
-    ) { check.start(pendingFull) } // the check itself reports a missing grant
+    ) { if (pendingSync) app.sync.syncNow() else check.start(pendingFull) } // either reports a missing grant itself
 
     val bluetoothPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -128,6 +134,8 @@ private fun Root(app: PapRelayApp) {
                 }
                 if (needsGrant) {
                     healthPermission.launch(setOf(app.healthConnect.writePermission))
+                } else if (pendingSync) {
+                    app.sync.syncNow()
                 } else {
                     check.start(pendingFull)
                 }
@@ -150,8 +158,9 @@ private fun Root(app: PapRelayApp) {
         }
     }
 
-    fun request(full: Boolean) {
+    fun request(full: Boolean, forSync: Boolean = false) {
         pendingFull = full
+        pendingSync = forSync
         // Returns at once when already granted, then carries on to Health Connect.
         bluetoothPermission.launch(BLUETOOTH_PERMISSIONS)
     }
@@ -167,6 +176,9 @@ private fun Root(app: PapRelayApp) {
             running = running,
             hasReport = check.hasReport(),
             busy = forgetting,
+            sync = sync,
+            onSync = { request(full = false, forSync = true) },
+            onAcceptClock = { uiScope.launch { app.sync.acceptMachineClock() } },
             stopping = stopping,
             healthAllowed = healthAllowed,
             permissionRefused = permissionRefused,
@@ -208,6 +220,9 @@ private fun Root(app: PapRelayApp) {
             onConfirm = {
                 confirmForget = false
                 check.forgetMachine()
+                // With no machine there is nothing to synchronise, and its record goes with it.
+                app.sync.unschedule()
+                uiScope.launch { app.sync.forget() }
             },
             onCancel = { confirmForget = false },
         )

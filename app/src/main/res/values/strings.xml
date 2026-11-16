@@ -13,6 +13,27 @@
     <string name="action_forget">Forget machine</string>
     <string name="action_export">Save report</string>
     <string name="action_stop">Stop</string>
+    <string name="action_sync">Synchronise now</string>
+    <string name="action_accept_clock">Use the machine\'s clock as it is now</string>
+
+    <!-- How synchronising stands. One sentence each. -->
+    <string name="sync_running">Synchronising…</string>
+    <string name="sync_never">PAPRelay has not synchronised yet.</string>
+    <!-- %1$s is a time such as "5 minutes ago". -->
+    <string name="sync_complete">Health Connect is up to date. Last synchronised %1$s.</string>
+    <string name="sync_partial">Some nights could not be read. PAPRelay will try again.</string>
+    <string name="sync_machine_away">The machine did not answer. It may be out of range. PAPRelay will try again.</string>
+    <string name="sync_bluetooth_not_allowed">PAPRelay is not allowed to use Bluetooth. Choose Synchronise now and allow it.</string>
+    <string name="sync_hc_not_allowed">PAPRelay is not allowed to write to Health Connect. Choose Synchronise now and allow it.</string>
+    <string name="sync_pairing_rejected">The machine no longer accepts this phone. Forget the machine and pair again.</string>
+    <string name="sync_wrong_machine">The machine that answered is not the paired machine. Nothing was written.</string>
+    <string name="sync_software_not_confirmed">PAPRelay cannot yet read this machine\'s software version. Nothing was written.</string>
+    <string name="sync_clock_unreliable">The machine\'s clock could not be read. Nothing was written.</string>
+    <string name="sync_clock_changed">The machine\'s clock was changed. PAPRelay cannot tell when the nights since the last synchronisation happened. It writes nothing until you decide.</string>
+    <string name="sync_connection_lost">The connection to the machine was lost. PAPRelay will try again.</string>
+    <string name="sync_data_not_understood">PAPRelay could not read the data from the machine. Nothing was written.</string>
+    <string name="sync_hc_failed">Health Connect did not accept the data. PAPRelay will try again.</string>
+    <string name="sync_store_unreadable">PAPRelay cannot read its record of what it has written.</string>
     <string name="action_stopping">Stopping…</string>
     <string name="action_use_this">Use this machine</string>
     <string name="action_open_settings">Open app settings</string>
