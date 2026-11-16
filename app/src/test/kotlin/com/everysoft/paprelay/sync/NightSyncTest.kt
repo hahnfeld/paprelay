@@ -1,0 +1,322 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// PAPRelay — Copyright (C) 2026 PAPRelay contributors.
+package com.everysoft.paprelay.sync
+
+import com.everysoft.paprelay.as11.MachineClockReading
+import com.everysoft.paprelay.as11.SpoolAddress
+import com.everysoft.paprelay.as11.SpoolName
+import com.everysoft.paprelay.as11.SpoolRound
+import com.everysoft.paprelay.as11.decode.Proto
+import com.everysoft.paprelay.as11.decode.proto
+import com.everysoft.paprelay.core.nights.FhirResource
+import com.everysoft.paprelay.core.nights.NightFigure
+import com.everysoft.paprelay.core.sync.SessionChange
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import java.io.File
+import java.nio.file.Files
+import java.time.LocalDate
+import java.time.ZoneOffset
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+
+/** The nightly figures: from the machine's daily summaries to the phone's list and its health records. */
+class NightSyncTest {
+    private val serial = "23211234567"
+    private val software = "SW04600.19.8.8.0.dced143ae"
+    private val day = 86_400_000L
+    private val hour = 3_600_000L
+
+    private fun noon(date: LocalDate) = date.atTime(19, 0).toInstant(ZoneOffset.UTC).toEpochMilli()
+    private val first = LocalDate.of(2026, 11, 10)
+
+    /** The phone's clock: half past five in the afternoon, machine time, on the 16th. */
+    private var phoneNow = noon(LocalDate.of(2026, 11, 16)) + 5 * hour + 30 * 60_000
+    private val machineNow get() = phoneNow + 361_600
+
+    /** A day on the machine: when it began, minutes of therapy, and its AHI in hundredths (null for a day without therapy). */
+    private class Day(val start: Long, val usage: Int, val ahi: Long?, val broken: Boolean = false)
+
+    private fun Proto.day(day: Day) {
+        message(2) {
+            varint(1, if (day.broken) 2 else 1)
+            varint(2, day.start)
+            varint(3, day.start + 86_400_000L)
+            zigzag(4, -420)
+            varint(5, day.usage.toLong())
+            if (day.ahi != null) {
+                message(6) { message(1) { varint(1, day.start + 36_000_000); varint(2, day.usage.toLong()) } }
+                varint(7, day.ahi); varint(10, day.ahi); varint(11, 0); varint(9, 0)
+                message(14) { varint(2, 6); varint(3, 8); varint(4, 42); varint(5, 86) }
+                message(21) { varint(2, 800); varint(3, 960); varint(4, 1020) }
+                varint(39, 1)
+            }
+            varint(40, day.start + 80_000_000)
+        }
+    }
+
+    private inner class Machine : MachineConnector, MachineSession {
+        var days = listOf<Day>()
+        var perRound = 100
+        var applicationIdentifier = software
+        var serialNumber = serial
+        val asked = ArrayList<Pair<SpoolName, Long>>()
+
+        override fun notReady(): SyncOutcome? = null
+
+        override fun pairedSerial() = serial
+
+        override suspend fun <T> withSession(block: suspend (MachineSession) -> T): T = block(this)
+
+        override suspend fun identity() = MachineIdentity(serialNumber, applicationIdentifier)
+
+        override suspend fun clock() = MachineClockReading(machineEpochMs = machineNow + 20, sentAtMs = phoneNow, roundTripMs = 40)
+
+        override suspend fun pull(log: SpoolName, from: SpoolAddress): SpoolRound {
+            if (log != SpoolName.SUMMARY) return SpoolRound(ByteArray(0), ByteArray(32), null)
+            val (wanted, offset) = when (from) {
+                is SpoolAddress.FromMachineTime -> {
+                    asked += log to from.machineEpochMs
+                    // The machine sends a day once it has ended, and only those ending after the time asked for.
+                    days.filter { it.start + day > from.machineEpochMs && it.start + day <= machineNow } to 0
+                }
+                is SpoolAddress.Continuation -> days.filter { it.start >= from.next.getValue("since").toString().toLong() && it.start + day <= machineNow } to
+                    from.next.getValue("at").toString().toInt()
+            }
+            val page = wanted.drop(offset).take(perRound)
+            val next = if (offset + page.size < wanted.size) {
+                JsonObject(mapOf("at" to JsonPrimitive(offset + page.size), "since" to JsonPrimitive(wanted.first().start)))
+            } else {
+                null
+            }
+            return SpoolRound(proto { for (one in page) day(one) }, ByteArray(32), next)
+        }
+    }
+
+    /** The phone's health records as the app sees them: resources by id; a write replaces. */
+    private inner class Records : NightRecords {
+        val held = HashMap<String, String>()
+        var ready = true
+        var failOnWrite: Int? = null
+        var writes = 0
+
+        override suspend fun ready() = ready
+
+        override suspend fun write(resources: List<FhirResource>, removeIds: List<String>) {
+            writes++
+            if (failOnWrite == writes) throw HealthSinkException(notAllowed = false)
+            for (id in removeIds) held.remove(id)
+            for (resource in resources) held[resource.id] = resource.json
+        }
+    }
+
+    private object NoMinutes : HealthSink {
+        override suspend fun notReady(): SyncOutcome? = SyncOutcome.HEALTH_CONNECT_NOT_ALLOWED
+
+        override suspend fun apply(change: SessionChange) = error("respiratory rate is switched off")
+    }
+
+    private val machine = Machine()
+    private val records = Records()
+    private val directory: File = Files.createTempDirectory("paprelay-nights").toFile()
+    private val store = SyncStore(File(directory, "sync.json"))
+    private val nightStore = NightStore(File(directory, "nights.json"))
+    private val engine = SyncEngine(machine, NoMinutes, store, nowMs = { phoneNow }, nights = nightStore, records = records)
+    private val tag = SyncEngine.machineTag(serial)
+
+    private fun week() = (0..5).map { Day(noon(first.plusDays(it.toLong())), if (it == 3) 0 else 400 + it, if (it == 3) null else 100L + it * 10) }
+
+    @Test
+    fun `the first run brings every finished night, used or not, to the phone and to its health records`() = runTest {
+        machine.days = week()
+        val report = engine.sync()!!
+        // Respiratory rate is off and Health Connect would not allow it: neither stands in the way.
+        assertEquals(SyncOutcome.COMPLETE, report.outcome)
+        val nights = nightStore.read()
+        assertEquals(tag, nights.machineTag)
+        assertEquals((0..5).map { first.plusDays(it.toLong()) }.reversed(), nights.all.map { it.date })
+        assertEquals("1.2", nights.byDate.getValue(first.plusDays(2)).night.value(NightFigure.AHI)!!.toPlainString())
+        assertEquals(0, nights.byDate.getValue(first.plusDays(3)).night.usageMinutes)
+        assertTrue(nights.all.all { it.complete })
+        // Asked for from as far back as the machine might hold.
+        assertEquals(SpoolName.SUMMARY to machineNow + 20 - SyncEngine.FIRST_WINDOW_MS, machine.asked.single())
+
+        // Usage for all six, and four more figures for each of the five nights with therapy:
+        // AHI, obstructive, central and hypopnoea indices, three of leak, three of pressure.
+        assertEquals(6 + 5 * 10, records.held.size)
+        assertTrue(records.held.containsKey("$tag-20261112-ahi"))
+        assertTrue(records.held.getValue("$tag-20261113-usage-hours").contains(""""value":0,"""))
+        assertTrue(nights.byDate.values.all { it.recorded == it.night.fingerprint() })
+
+        // The second run asks only for the last few days, and writes nothing.
+        phoneNow += hour
+        machine.asked.clear()
+        val writes = records.writes
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertEquals(noon(first.plusDays(6)) - SyncEngine.NIGHT_OVERLAP_MS, machine.asked.single().second)
+        assertEquals(writes, records.writes)
+    }
+
+    @Test
+    fun `a new night and an amended one are passed on, and the others are left alone`() = runTest {
+        machine.days = week()
+        engine.sync()
+        val before = records.held.toMap()
+        val writes = records.writes
+        // A day later: one more night, and the machine has amended the one before it.
+        phoneNow += day
+        machine.days = week().dropLast(1) + Day(noon(first.plusDays(5)), 405, 290) + Day(noon(first.plusDays(6)), 380, 70)
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertEquals(writes + 2, records.writes)
+        assertTrue(records.held.getValue("$tag-20261115-ahi").contains(""""value":2.9,"""))
+        assertTrue(records.held.getValue("$tag-20261116-ahi").contains(""""value":0.7,"""))
+        assertEquals(before.filterKeys { "-20261115-" !in it }, records.held.filterKeys { "-20261115-" !in it && "-20261116-" !in it })
+        assertEquals(7, nightStore.read().byDate.size)
+    }
+
+    @Test
+    fun `a figure a night no longer has is removed from the health records`() = runTest {
+        machine.days = week()
+        engine.sync()
+        assertTrue(records.held.containsKey("$tag-20261115-ahi"))
+        assertTrue(records.held.containsKey("$tag-20261115-leak-95th"))
+        // The machine now says the last day had no therapy after all.
+        machine.days = week().dropLast(1) + Day(noon(first.plusDays(5)), 0, null)
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertEquals(listOf("$tag-20261115-usage-hours"), records.held.keys.filter { "-20261115-" in it })
+        assertTrue(records.held.getValue("$tag-20261115-usage-hours").contains(""""value":0,"""))
+        // The other nights are untouched.
+        assertEquals(5 + 4 * 10 + 1, records.held.size)
+    }
+
+    @Test
+    fun `a day still running is neither kept as finished nor passed on`() = runTest {
+        // The machine sends only days that have ended; one that has not is not there to be read.
+        machine.days = week() + Day(noon(first.plusDays(6)), 200, 50)
+        engine.sync()
+        assertEquals(6, nightStore.read().byDate.size)
+        assertFalse(records.held.keys.any { "-20261116-" in it })
+    }
+
+    @Test
+    fun `health records that fail keep the nights on the phone, and are tried again`() = runTest {
+        machine.days = week()
+        records.failOnWrite = 3
+        val report = engine.sync()!!
+        assertEquals(SyncOutcome.HEALTH_CONNECT_FAILED, report.outcome)
+        // Every night is on the phone all the same; two were passed on before it failed.
+        assertEquals(6, nightStore.read().byDate.size)
+        assertEquals(2, nightStore.read().byDate.values.count { it.recorded != null })
+        records.failOnWrite = null
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertTrue(nightStore.read().byDate.values.all { it.recorded != null })
+        assertEquals(6 + 5 * 10, records.held.size)
+    }
+
+    @Test
+    fun `with health records switched off, missing, or not allowed, the nights are kept and nothing is passed on`() = runTest {
+        machine.days = week()
+        store.write(SyncState.EMPTY.with(healthRecords = false))
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertEquals(6, nightStore.read().byDate.size)
+        assertEquals(0, records.writes)
+
+        // Switched on, but the phone does not let PAPRelay write: still nothing, and no failure.
+        store.write(store.read().with(healthRecords = true))
+        records.ready = false
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertEquals(0, records.writes)
+
+        // Allowed at last: everything kept so far is passed on.
+        records.ready = true
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertEquals(6, records.writes)
+
+        // A phone with no health records at all.
+        val plain = SyncEngine(machine, NoMinutes, store, nowMs = { phoneNow }, nights = NightStore(File(directory, "other.json")))
+        assertEquals(SyncOutcome.COMPLETE, plain.sync()!!.outcome)
+    }
+
+    @Test
+    fun `asked to write everything again, every night is passed on once more`() = runTest {
+        machine.days = week()
+        engine.sync()
+        records.held.clear()
+        store.write(store.read().with(rewriteRequested = true))
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertEquals(6 + 5 * 10, records.held.size)
+        assertFalse(store.read().rewriteRequested)
+        // And only once.
+        val writes = records.writes
+        phoneNow += hour
+        engine.sync()
+        assertEquals(writes, records.writes)
+    }
+
+    @Test
+    fun `a day that cannot be read costs itself, and the run says not everything came across`() = runTest {
+        machine.days = week().mapIndexed { index, one -> if (index == 2) Day(one.start, one.usage, one.ahi, broken = true) else one }
+        assertEquals(SyncOutcome.PARTIAL, engine.sync()!!.outcome)
+        assertEquals(5, nightStore.read().byDate.size)
+        assertNull(nightStore.read().byDate[first.plusDays(2)])
+    }
+
+    @Test
+    fun `a long history arrives in several rounds`() = runTest {
+        machine.days = (0..39L).map { Day(noon(LocalDate.of(2026, 10, 1).plusDays(it)), 300, 150) }
+        machine.perRound = 7
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertEquals(40, nightStore.read().byDate.size)
+    }
+
+    @Test
+    fun `another machine's nights are not kept beside this one's`() = runTest {
+        machine.days = week()
+        engine.sync()
+        machine.serialNumber = "23219999999"
+        val other = SyncEngine(
+            object : MachineConnector by machine {
+                override fun pairedSerial() = "23219999999"
+            },
+            NoMinutes, store, nowMs = { phoneNow }, nights = nightStore, records = records,
+        )
+        machine.days = listOf(Day(noon(first.plusDays(4)), 100, 300))
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, other.sync()!!.outcome)
+        val nights = nightStore.read()
+        assertEquals(SyncEngine.machineTag("23219999999"), nights.machineTag)
+        assertEquals(listOf(first.plusDays(4)), nights.all.map { it.date })
+        assertEquals("3", nights.all.single().value(NightFigure.AHI)!!.toPlainString())
+    }
+
+    @Test
+    fun `the nights survive being stored and read back, and a damaged file is simply built again`() {
+        val file = File(directory, "round.json")
+        val nights = NightStore(file)
+        assertTrue(nights.read().byDate.isEmpty())
+        val night = com.everysoft.paprelay.core.nights.Night(first, -420, 432, 2, mapOf(NightFigure.AHI to 230L, NightFigure.LEAK_95 to 1440L), true)
+        val running = com.everysoft.paprelay.core.nights.Night(first.plusDays(1), 330, 10, 1, emptyMap(), false)
+        nights.write(Nights("m-13f8d92ec4854105", mapOf(first to StoredNight(night, night.fingerprint()), first.plusDays(1) to StoredNight(running, null))))
+        val back = nights.read()
+        assertEquals("m-13f8d92ec4854105", back.machineTag)
+        assertEquals(night.fingerprint(), back.byDate.getValue(first).night.fingerprint())
+        assertEquals(night.fingerprint(), back.byDate.getValue(first).recorded)
+        assertEquals(running.fingerprint(), back.byDate.getValue(first.plusDays(1)).night.fingerprint())
+        assertNull(back.byDate.getValue(first.plusDays(1)).recorded)
+        // The file holds figures, which is its purpose, but no serial number.
+        assertFalse(file.readText().contains("2321"))
+        file.writeText("{ not nights")
+        assertTrue(nights.read().byDate.isEmpty())
+        nights.delete()
+        assertFalse(file.exists())
+    }
+}

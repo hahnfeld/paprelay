@@ -145,8 +145,15 @@ class SyncState(
      * when no other software was ever seen: then nothing says which sessions are older.
      */
     val softwareSinceMs: Long? = null,
+    /** Whether the machine's per-minute respiratory rate is written to Health Connect. Off unless switched on. */
+    val respiratoryRate: Boolean = false,
+    /** Whether each night's figures are written to the phone's health records, where the phone has them. */
+    val healthRecords: Boolean = true,
+    /** The folder the user chose for the table of nights, as the system names it, or null for none. */
+    val exportFolder: String? = null,
 ) {
     init {
+        require((exportFolder?.length ?: 0) <= MAX_FOLDER) { "not a folder" }
         require(leakLimitLitresPerMinute == null || leakLimitLitresPerMinute in 0..MAX_LEAK_LIMIT) { "not a leak limit" }
         require((vouchedSoftware?.length ?: 0) <= MAX_IDENTIFIER && (softwareSeen?.length ?: 0) <= MAX_IDENTIFIER) { "not a software identifier" }
     }
@@ -164,9 +171,20 @@ class SyncState(
         rulesVersion: Int? = this.rulesVersion,
         softwareSeen: String? = this.softwareSeen,
         softwareSinceMs: Long? = this.softwareSinceMs,
+        respiratoryRate: Boolean = this.respiratoryRate,
+        healthRecords: Boolean = this.healthRecords,
+        exportFolder: String? = this.exportFolder,
     ) = SyncState(
         machineTag, ledger, resumeFromMs, lastReport, lastCompleteAtMs, leakLimitLitresPerMinute, clock, rewriteRequested, vouchedSoftware,
-        rulesVersion, softwareSeen, softwareSinceMs,
+        rulesVersion, softwareSeen, softwareSinceMs, respiratoryRate, healthRecords, exportFolder,
+    )
+
+    /** Everything about a machine forgotten; what the user has chosen kept. */
+    fun cleared(): SyncState = EMPTY.with(
+        leakLimitLitresPerMinute = leakLimitLitresPerMinute,
+        respiratoryRate = respiratoryRate,
+        healthRecords = healthRecords,
+        exportFolder = exportFolder,
     )
 
     /**
@@ -183,6 +201,7 @@ class SyncState(
         val EMPTY = SyncState(null, emptyMap(), null, null, null, null, null, false)
         const val MAX_LEAK_LIMIT = 1_000
         const val MAX_IDENTIFIER = 128
+        const val MAX_FOLDER = 2048
     }
 }
 
@@ -257,6 +276,9 @@ class SyncStore(private val file: File) {
             state.rulesVersion?.let { put("rulesVersion", it) }
             state.softwareSeen?.let { put("softwareSeen", it) }
             state.softwareSinceMs?.let { put("softwareSinceMs", it) }
+            if (state.respiratoryRate) put("respiratoryRate", true)
+            if (!state.healthRecords) put("healthRecords", false)
+            state.exportFolder?.let { put("exportFolder", it) }
             state.lastReport?.let { report ->
                 put(
                     "lastReport",
@@ -335,6 +357,9 @@ class SyncStore(private val file: File) {
                 rulesVersion = (json["rulesVersion"] as? JsonPrimitive)?.long?.toInt(),
                 softwareSeen = (json["softwareSeen"] as? JsonPrimitive)?.content,
                 softwareSinceMs = (json["softwareSinceMs"] as? JsonPrimitive)?.long,
+                respiratoryRate = (json["respiratoryRate"] as? JsonPrimitive)?.content == "true",
+                healthRecords = (json["healthRecords"] as? JsonPrimitive)?.content != "false",
+                exportFolder = (json["exportFolder"] as? JsonPrimitive)?.content,
             )
         }
 

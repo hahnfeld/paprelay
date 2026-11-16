@@ -175,6 +175,13 @@ class SyncEngineTest {
     private val kept = ArrayList<Int>()
     private val engine = SyncEngine(machine, health, store, nowMs = { phoneNow }, keepRaw = { _, round -> kept += round.data.size })
 
+    /** These tests are about the minute-by-minute respiratory rate, which is written only when switched on. */
+    private val switchedOn = SyncState.EMPTY.with(respiratoryRate = true)
+
+    init {
+        store.write(switchedOn)
+    }
+
     private val tag = SyncEngine.machineTag(serial)
 
     /** What Health Connect should hold for these nights: every minute (within the leak limit, if one is set), at its corrected time. */
@@ -847,7 +854,7 @@ class SyncEngineTest {
         for ((id, held) in health.records.toMap()) health.records[id] = health.Held(Long.MAX_VALUE - 5, held.rate + 1, held.time)
 
         // This time with the leak rule on, so some of what is there is no longer wanted at all.
-        store.write(SyncState.EMPTY.withLeakLimit(24))
+        store.write(switchedOn.withLeakLimit(24))
         phoneNow += hour
         assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
         assertHolds(listOf(leaky, other), leakLimit = 24)
