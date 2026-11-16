@@ -52,8 +52,10 @@ class PresenceWatch(private val context: Context) {
                 .setPhy(BluetoothDevice.PHY_LE_1M)
                 .build()
             scanner.startScan(listOf(filter), settings, intent()) == 0
+        } catch (e: SecurityException) {
+            false
         } catch (e: RuntimeException) {
-            // Not allowed, Bluetooth just switched off, or a phone that will not have such a request.
+            // Bluetooth just switched off, or a phone that will not have such a request.
             false
         }
     }
@@ -63,6 +65,8 @@ class PresenceWatch(private val context: Context) {
         if (!allowed) return
         try {
             scanner?.stopScan(intent())
+        } catch (e: SecurityException) {
+            // Nothing to withdraw with.
         } catch (e: RuntimeException) {
             // Bluetooth went off in between, and took the request with it.
         }
