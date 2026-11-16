@@ -45,8 +45,12 @@ android {
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             if (releaseKeystore.isPresent) signingConfig = signingConfigs.getByName("release")
+            buildConfigField("boolean", "SYNC_ENABLED", "true")
         }
         debug {
+            // Health Connect files records under the app that wrote them, and this build is a
+            // different app to it than the released one. It checks the connections and writes nothing.
+            buildConfigField("boolean", "SYNC_ENABLED", "false")
             applicationIdSuffix = ".debug"
             // The commit, so that a report says which build wrote it.
             versionNameSuffix = "-debug+" + (commit.orNull?.trim()?.ifEmpty { null } ?: "unknown")

@@ -15,25 +15,34 @@
     <string name="action_stop">Stop</string>
     <string name="action_sync">Synchronise now</string>
     <string name="action_accept_clock">Use the machine\'s clock as it is now</string>
+    <string name="action_start_again">Start again</string>
+    <string name="action_pair">Pair the machine</string>
+    <string name="action_device_check">Device check</string>
+    <string name="action_rewrite">Write everything again</string>
 
     <!-- How synchronising stands. One sentence each. -->
     <string name="sync_running">Synchronising…</string>
     <string name="sync_never">PAPRelay has not synchronised yet.</string>
     <!-- %1$s is a time such as "5 minutes ago". -->
     <string name="sync_complete">Health Connect is up to date. Last synchronised %1$s.</string>
-    <string name="sync_partial">Some nights could not be read. PAPRelay will try again.</string>
+    <string name="sync_complete_now">Health Connect is up to date. Synchronised just now.</string>
+    <!-- %1$s is a time such as "5 minutes ago". Shown under a sentence that says what went wrong since. -->
+    <string name="sync_last_complete">Last complete synchronisation: %1$s.</string>
+    <string name="sync_partial">Not every night is in Health Connect yet. PAPRelay will try again.</string>
     <string name="sync_machine_away">The machine did not answer. It may be out of range. PAPRelay will try again.</string>
     <string name="sync_bluetooth_not_allowed">PAPRelay is not allowed to use Bluetooth. Choose Synchronise now and allow it.</string>
     <string name="sync_hc_not_allowed">PAPRelay is not allowed to write to Health Connect. Choose Synchronise now and allow it.</string>
     <string name="sync_pairing_rejected">The machine no longer accepts this phone. Forget the machine and pair again.</string>
     <string name="sync_wrong_machine">The machine that answered is not the paired machine. Nothing was written.</string>
     <string name="sync_software_not_confirmed">PAPRelay cannot yet read this machine\'s software version. Nothing was written.</string>
-    <string name="sync_clock_unreliable">The machine\'s clock could not be read. Nothing was written.</string>
-    <string name="sync_clock_changed">The machine\'s clock was changed. PAPRelay cannot tell when the nights since the last synchronisation happened. It writes nothing until you decide.</string>
+    <string name="sync_clock_unreliable">The machine\'s clock cannot be trusted at the moment. PAPRelay will try again.</string>
+    <string name="sync_clock_changed">The machine\'s clock was changed. The times of the nights since the last synchronisation may be wrong. PAPRelay writes nothing more until you choose to use the machine\'s clock as it is now.</string>
     <string name="sync_connection_lost">The connection to the machine was lost. PAPRelay will try again.</string>
-    <string name="sync_data_not_understood">PAPRelay could not read the data from the machine. Nothing was written.</string>
+    <string name="sync_data_not_understood">PAPRelay could not read some of the data from the machine.</string>
     <string name="sync_hc_failed">Health Connect did not accept the data. PAPRelay will try again.</string>
-    <string name="sync_store_unreadable">PAPRelay cannot read its record of what it has written.</string>
+    <string name="sync_store_unreadable">PAPRelay cannot read its record of what it has written. Choose Start again. PAPRelay then writes every night again.</string>
+    <string name="sync_internal">PAPRelay had an internal error. It will try again.</string>
+    <string name="debug_no_sync">This test version does not synchronise. It only checks the connections.</string>
     <string name="action_stopping">Stopping…</string>
     <string name="action_use_this">Use this machine</string>
     <string name="action_open_settings">Open app settings</string>
@@ -105,6 +114,7 @@
     <string name="detail_hc_no_permission">PAPRelay is not allowed to write to Health Connect. Run the check again and allow it. If Android does not ask, open Health Connect, choose App permissions, then PAPRelay, and allow it there.</string>
     <string name="detail_hc_value_left">A test value was written but could not be removed. Delete it in Health Connect, under PAPRelay.</string>
     <string name="detail_hc_not_written">Health Connect did not store the test value.</string>
+    <string name="detail_hc_absent_refused">Health Connect refused to remove a value that was not there. PAPRelay cannot synchronise on this phone. Please save the report.</string>
     <string name="detail_bluetooth_off">Bluetooth is off.</string>
     <string name="detail_none_found">No machine was found. Put the machine in pairing mode. Make sure it is not paired with the myAir app.</string>
     <string name="detail_one_found">1 machine was found (%1$s).</string>
@@ -184,8 +194,8 @@
     <string name="forget_title">Forget this machine?</string>
     <string name="forget_body">PAPRelay deletes its pairing and the data it downloaded. The last report can still be saved until you close the app. Data already in Health Connect stays there.</string>
     <string name="export_failed">The report could not be saved.</string>
-
-    <string name="early_build_notice">This is an early version. It is not yet tested on a real machine.</string>
+    <string name="rewrite_title">Write everything again?</string>
+    <string name="rewrite_body">PAPRelay writes every night the machine still holds to Health Connect again. Use this if the data in Health Connect was deleted.</string>
 
     <!-- About -->
     <string name="about_title">About</string>
@@ -203,11 +213,11 @@
     <!-- Privacy screen, shown by Health Connect -->
     <string name="privacy_title">Privacy</string>
     <string name="privacy_heading_what">What PAPRelay does with your data</string>
-    <string name="privacy_what">PAPRelay reads therapy records from your machine over Bluetooth and stores them on this phone. It writes respiratory rate to Health Connect, and other types only if you turn them on.</string>
+    <string name="privacy_what">PAPRelay reads therapy records from your machine over Bluetooth and stores them on this phone. It writes respiratory rate to Health Connect. It does this when you ask, and about once an hour in the background when the machine is in range.</string>
     <string name="privacy_heading_where">Where your data goes</string>
     <string name="privacy_where">Your data goes nowhere else. PAPRelay has no internet permission, no accounts, no analytics and no advertising. Data leaves the app only through Health Connect and through files you choose to save.</string>
     <string name="privacy_heading_read">What PAPRelay reads from Health Connect</string>
-    <string name="privacy_read">PAPRelay reads nothing from other apps. It asks only for permission to write, and reads back only its own records to keep them correct.</string>
+    <string name="privacy_read">PAPRelay reads nothing from Health Connect. It asks only for permission to write.</string>
     <string name="privacy_heading_delete">Removing your data</string>
     <string name="privacy_delete">Uninstalling PAPRelay deletes everything it stored. Records it wrote to Health Connect can be removed in Health Connect, under App permissions, PAPRelay.</string>
 </resources>

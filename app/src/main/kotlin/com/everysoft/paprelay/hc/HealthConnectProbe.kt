@@ -19,7 +19,16 @@ import java.time.Instant
 import java.time.ZoneId
 
 /** Outcome of the Health Connect write test. */
-class ProbeResult(val written: Int, val removed: Boolean)
+class ProbeResult(
+    val written: Int,
+    val removed: Boolean,
+    /**
+     * Whether Health Connect accepts a request to remove a value that is not there. Synchronising
+     * depends on it: before a night is first written, anything an earlier installation may have
+     * left under the same names is removed, and usually there is nothing. Null if it was not tried.
+     */
+    val removingAbsentAccepted: Boolean?,
+)
 
 /** Health Connect did not answer within the time allowed. */
 class HealthConnectUnresponsiveException : java.io.IOException("Health Connect did not answer in time")
@@ -78,6 +87,7 @@ class HealthConnectProbe(private val context: Context) {
         )
         var written = 0
         var removed = false
+        var removingAbsentAccepted: Boolean? = null
         var refusal: Exception? = null
         // False while the write has neither succeeded nor been refused: given up on, it may still land.
         var writeSettled = false
@@ -107,6 +117,21 @@ class HealthConnectProbe(private val context: Context) {
                     delay(RETRY_PAUSE_MS)
                 }
             }
+            // The value is gone now. Removing it once more asks for something that is not there.
+            if (removed) {
+                removingAbsentAccepted = try {
+                    client.deleteRecords(
+                        RespiratoryRateRecord::class,
+                        recordIdsList = emptyList(),
+                        clientRecordIdsList = listOf(PROBE_ID, ABSENT_ID),
+                    )
+                    true
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    false
+                }
+            }
         }
         if (finished == null) {
             // The write may still land after being given up on, so try once more to remove it.
@@ -127,7 +152,7 @@ class HealthConnectProbe(private val context: Context) {
         }
         testValueMayRemain = !removed
         refusal?.let { throw it }
-        return ProbeResult(written, removed)
+        return ProbeResult(written, removed, removingAbsentAccepted)
     }
 
     /**
@@ -155,6 +180,9 @@ class HealthConnectProbe(private val context: Context) {
 
     private companion object {
         const val PROBE_ID = "paprelay/probe/write-test"
+
+        /** Never written: only ever asked to be removed. */
+        const val ABSENT_ID = "paprelay/probe/never-written"
         const val LIMIT_MS = 15_000L
         const val RETRY_PAUSE_MS = 500L
         const val RETRY_LIMIT_MS = 5_000L

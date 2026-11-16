@@ -22,6 +22,9 @@ import com.everysoft.paprelay.core.sync.LedgerEntry
 import com.everysoft.paprelay.core.sync.Reconcile
 import com.everysoft.paprelay.core.sync.SessionChange
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.security.spec.KeySpec
@@ -90,8 +93,13 @@ class SyncEngine(
     /** Called with each downloaded round, so that the bytes can be kept for a later version to decode. */
     private val keepRaw: suspend (SpoolName, SpoolRound) -> Unit = { _, _ -> },
     private val zone: () -> ZoneId = ZoneId::systemDefault,
+    /** A run that has not finished in this time is ended; what it has done so far stands. */
+    private val limitMs: Long = RUN_LIMIT_MS,
 ) {
     private val running = Mutex()
+
+    /** The last serial number a tag was worked out for, and the tag: working one out is slow by design. */
+    private var knownTag: Pair<String, String>? = null
 
     /** Runs one synchronisation, or returns null at once if one is already running. */
     suspend fun sync(): SyncReport? {
@@ -129,8 +137,10 @@ class SyncEngine(
         val outcome = try {
             connector.notReady()?.let { throw Stop(it) }
             sink.notReady()?.let { throw Stop(it) }
-            connector.withSession { session -> run(session, progress) }
-            if (progress.partial) SyncOutcome.PARTIAL else SyncOutcome.COMPLETE
+            // A link that stalls without breaking must not hold the machine, or this run, for ever.
+            // Whatever was finished before the limit stays finished; the next run takes up the rest.
+            val finished = withTimeoutOrNull(limitMs) { connector.withSession { session -> run(session, progress) } }
+            if (finished == null || progress.partial) SyncOutcome.PARTIAL else SyncOutcome.COMPLETE
         } catch (e: CancellationException) {
             throw e
         } catch (e: Stop) {
@@ -170,8 +180,13 @@ class SyncEngine(
         val firmware = Firmware.reportedByMachine(identity.applicationIdentifier)
         if (!firmware.layoutsConfirmed) throw Stop(SyncOutcome.SOFTWARE_NOT_CONFIRMED)
 
-        val tag = progress.state.machineTag ?: machineTag(identity.serialNumber).also {
-            progress.state = progress.state.with(machineTag = it)
+        val tag = knownTag?.takeIf { it.first == identity.serialNumber }?.second
+            ?: machineTag(identity.serialNumber).also { knownTag = identity.serialNumber to it }
+        if (progress.state.machineTag != tag) {
+            // Nothing is remembered yet, or what is remembered is another machine's (its record
+            // outlived the forgetting of it). That machine's nights stay in Health Connect, as
+            // forgetting promises; the record of them is of no use here, and this one starts afresh.
+            progress.state = SyncState.EMPTY.with(machineTag = tag, leakLimitLitresPerMinute = progress.state.leakLimitLitresPerMinute)
             store.write(progress.state)
         }
 
@@ -187,6 +202,7 @@ class SyncEngine(
         store.write(progress.state)
 
         val force = progress.state.rewriteRequested
+        var vouched = progress.state.vouchedSoftware == identity.applicationIdentifier
         val from = maxOf(EARLIEST_START_MS, progress.state.resumeFromMs?.let { it - OVERLAP_MS } ?: (machineNow.epochMs - FIRST_WINDOW_MS))
         var address: SpoolAddress = SpoolAddress.FromMachineTime(from)
         var rounds = 0
@@ -203,6 +219,8 @@ class SyncEngine(
             keepRaw(SpoolName.ONE_MINUTE, round)
             val log = MinuteDecoder.decode(round.data, firmware)
             for (entry in log.entries) {
+                // A stop asked for from outside is heard between sessions, never inside one.
+                currentCoroutineContext().ensureActive()
                 val record = when (entry) {
                     is RecordResult.Decoded -> entry.value
                     // Not understood: its minutes are unknown. The sessions after it are still
@@ -214,7 +232,21 @@ class SyncEngine(
                         continue
                     }
                 }
-                when (val plan = RespiratoryRatePlan.session(record, tag, progress.state.leakLimitLitresPerMinute)) {
+                val plan = RespiratoryRatePlan.session(record, tag, progress.state.leakLimitLitresPerMinute)
+                if (!vouched) {
+                    if (plan is SessionPlan.Planned && record.sampleCount >= VOUCH_SAMPLES) {
+                        vouched = true
+                        progress.state = progress.state.with(vouchedSoftware = identity.applicationIdentifier)
+                        store.write(progress.state)
+                    } else {
+                        // Too short to prove that this software's data is being read as it is meant. It
+                        // waits, like a night that cannot be read, until a long session has been.
+                        progress.partial = true
+                        troubled = true
+                        continue
+                    }
+                }
+                when (plan) {
                     is SessionPlan.Unplanned -> if (plan.minutesUnknown) {
                         progress.partial = true
                         troubled = true
@@ -293,6 +325,12 @@ class SyncEngine(
 
         /** How long the place to resume from waits behind a night that cannot be read. */
         const val HOLD_LIMIT_MS = 30 * DAY_MS
+
+        /** Sessions of at least this many minutes show that a software version's data is read correctly. */
+        const val VOUCH_SAMPLES = 30
+
+        /** Under the ten minutes the system allows a background run. */
+        const val RUN_LIMIT_MS = 8L * 60 * 1000
 
         /** A corrected time may be this far ahead of the phone's clock before it is refused. */
         const val FUTURE_ALLOWANCE_MS = 60_000L

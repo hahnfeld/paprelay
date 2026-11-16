@@ -29,6 +29,7 @@ import com.everysoft.paprelay.as11.SpoolAddress
 import com.everysoft.paprelay.as11.SpoolName
 import com.everysoft.paprelay.ble.BluetoothOffException
 import com.everysoft.paprelay.ble.GattLink
+import com.everysoft.paprelay.ble.MachineClaim
 import com.everysoft.paprelay.ble.MachineScanner
 import com.everysoft.paprelay.ble.NoAnswerException
 import com.everysoft.paprelay.ble.Sighting
@@ -127,6 +128,9 @@ class DeviceCheck(
     private val store: PairingStore,
     private val scanner: MachineScanner,
     private val healthConnect: HealthConnectProbe,
+    private val claim: MachineClaim,
+    /** Removes what synchronising remembers about the machine, when the machine is forgotten. */
+    private val forgetSync: suspend () -> Unit,
 ) {
     private val report = StringBuilder()
     private var job: Job? = null
@@ -174,6 +178,8 @@ class DeviceCheck(
         // A cancelled run is still unwinding until it completes; wait for that. And a run
         // must not begin on a pairing that is in the middle of being forgotten.
         if (job?.isCompleted == false || _forgetting.value) return
+        // The machine takes one connection at a time: a synchronisation that has it finishes first.
+        if (!claim.tryTake()) return
         _stopping.value = false
         _running.value = true
         // Atomic: a run stopped before it has been given a thread still reaches its clean-up.
@@ -195,6 +201,9 @@ class DeviceCheck(
             } finally {
                 _passkeyRequest.value = null
                 _machineChoice.value = null
+                // Given up before the screen hears that the run is over, so that whatever the
+                // screen starts next finds the machine free.
+                claim.release()
                 // "running" first, so the screen never shows a run that is over as still stopping.
                 // A Stop that arrives in the instant before the job completes can still set
                 // "stopping" again; nothing reads it while no run is shown, and start() clears it.
@@ -213,18 +222,23 @@ class DeviceCheck(
     }
 
     /**
-     * Removes the stored pairing and what the check downloaded. Ignored while
-     * a run is in progress; no run can start until it has finished.
+     * Removes the stored pairing, what the check downloaded and what synchronising
+     * remembers. Ignored while a run or a synchronisation is in progress; neither
+     * can start until it has finished.
      */
     @Synchronized
     fun forgetMachine() {
         if (job?.isCompleted == false || _forgetting.value) return
+        // Not under a synchronisation either: it is using the pairing this removes.
+        if (!claim.tryTake()) return
         _forgetting.value = true
         scope.launch {
             try {
                 store.clear()
                 clearData()
+                forgetSync()
             } finally {
+                claim.release()
                 _forgetting.value = false
             }
         }
@@ -263,9 +277,10 @@ class DeviceCheck(
                 note("  ${code(e)}")
                 throw CheckFailure(Message(R.string.error_hc_failed), onPhone = true)
             }
-            note("  wrote ${result.written}, removed ${result.removed}")
+            note("  wrote ${result.written}, removed ${result.removed}, removing what is not there accepted ${result.removingAbsentAccepted}")
             if (!result.removed) throw CheckFailure(Message(R.string.detail_hc_value_left), onPhone = true)
             if (result.written != 1) throw CheckFailure(Message(R.string.detail_hc_not_written), onPhone = true)
+            if (result.removingAbsentAccepted == false) throw CheckFailure(Message(R.string.detail_hc_absent_refused), onPhone = true)
             Message(R.string.detail_hc_ok)
         }
 

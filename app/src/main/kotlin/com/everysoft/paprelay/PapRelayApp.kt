@@ -3,6 +3,7 @@
 package com.everysoft.paprelay
 
 import android.app.Application
+import com.everysoft.paprelay.ble.MachineClaim
 import com.everysoft.paprelay.ble.MachineScanner
 import com.everysoft.paprelay.check.DeviceCheck
 import com.everysoft.paprelay.hc.HealthConnectProbe
@@ -22,20 +23,23 @@ class PapRelayApp : Application() {
     val pairingStore: PairingStore by lazy { PairingStore(this) }
     val healthConnect: HealthConnectProbe by lazy { HealthConnectProbe(this) }
     private val scanner: MachineScanner by lazy { MachineScanner(this) }
+    private val claim = MachineClaim()
     val deviceCheck: DeviceCheck by lazy {
-        DeviceCheck(this, scope, pairingStore, scanner, healthConnect)
+        DeviceCheck(this, scope, pairingStore, scanner, healthConnect, claim) { sync.forget() }
     }
     val sync: SyncRunner by lazy {
-        SyncRunner(this, scope, GattMachineConnector(this, scope, pairingStore, scanner), HealthConnectSink(this)) { deviceCheck.running.value }
+        SyncRunner(this, scope, GattMachineConnector(this, scope, pairingStore, scanner), HealthConnectSink(this), claim)
     }
 
     override fun onCreate() {
         super.onCreate()
         // Read once, off the main thread; screens observe the result.
         scope.launch {
-            // With a machine paired, the system is asked to run a synchronisation about once an hour.
-            if (pairingStore.load() is PairingState.Paired) sync.schedule()
+            val pairing = pairingStore.load()
             sync.load()
+            // Once the user has synchronised by hand, the system is asked to do it about once an
+            // hour. Asked again at every start, in case the system has dropped the request.
+            if (pairing is PairingState.Paired && sync.status.value.lastReport != null) sync.schedule()
         }
         // A check that was cut short may have left its test value in Health Connect.
         scope.launch { healthConnect.removeLeftover() }

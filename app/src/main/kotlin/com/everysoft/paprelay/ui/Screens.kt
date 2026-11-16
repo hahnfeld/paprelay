@@ -48,6 +48,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -83,6 +84,7 @@ import com.everysoft.paprelay.R
 import com.everysoft.paprelay.sync.SyncOutcome
 import com.everysoft.paprelay.sync.SyncStatus
 import android.text.format.DateUtils
+import kotlinx.coroutines.delay
 import com.everysoft.paprelay.check.CheckSteps
 import com.everysoft.paprelay.check.Message
 import com.everysoft.paprelay.check.Step
@@ -177,78 +179,152 @@ private fun Secondary(text: String, modifier: Modifier = Modifier) {
     )
 }
 
+/**
+ * The main screen: the picture, the machine, one sentence on how things stand, and one button.
+ * Everything for finding faults is on the device-check screen.
+ */
 @Composable
 fun HomeScreen(
     pairing: PairingState,
     steps: List<Step>,
-    running: Boolean,
-    hasReport: Boolean,
+    checkRunning: Boolean,
     busy: Boolean,
+    syncEnabled: Boolean,
     sync: SyncStatus,
-    onSync: () -> Unit,
-    onAcceptClock: () -> Unit,
-    stopping: Boolean,
     healthAllowed: Boolean,
     permissionRefused: Boolean,
+    onSync: () -> Unit,
+    onAcceptClock: () -> Unit,
+    onStartAgain: () -> Unit,
+    onPair: () -> Unit,
+    onOpenCheck: () -> Unit,
     onOpenSettings: () -> Unit,
-    onRunFull: () -> Unit,
-    onRunReconnect: () -> Unit,
-    onStop: () -> Unit,
-    onForget: () -> Unit,
-    onExport: () -> Unit,
     onAbout: () -> Unit,
 ) {
+    val paired = pairing is PairingState.Paired
     Page(
         title = stringResource(R.string.app_name),
         action = { TextButton(onClick = onAbout) { Text(stringResource(R.string.about_title)) } },
     ) {
-        // The picture comes first: it says what the app does and how far it has got.
-        FlowDiagram(
-            machineLink = machineLink(steps, pairing, running),
-            healthLink = healthLink(steps, healthAllowed),
-            // A failure that lies with the phone is marked on the phone, not on either link.
-            phoneFault = steps.any { it.state == StepState.FAILED && it.onPhone && it.id != CheckSteps.HEALTH },
-        )
-        Spacer(Modifier.height(28.dp))
-        when (pairing) {
-            PairingState.Loading -> Text(stringResource(R.string.machine_loading), style = MaterialTheme.typography.titleMedium)
-            PairingState.Absent -> {
-                Text(stringResource(R.string.machine_unpaired), style = MaterialTheme.typography.titleMedium)
-                Secondary(stringResource(R.string.machine_unpaired_hint), Modifier.padding(top = 4.dp))
-            }
-            PairingState.Unreadable -> {
-                Text(stringResource(R.string.machine_unreadable), style = MaterialTheme.typography.titleMedium)
-                Secondary(stringResource(R.string.machine_unreadable_hint), Modifier.padding(top = 4.dp))
-            }
-            PairingState.Unavailable -> {
-                Text(stringResource(R.string.machine_unavailable), style = MaterialTheme.typography.titleMedium)
-                Secondary(stringResource(R.string.machine_unavailable_hint), Modifier.padding(top = 4.dp))
-            }
-            is PairingState.Paired -> {
-                val serial = pairing.pairing.serialNumber
-                Text(
-                    if (serial != null) stringResource(R.string.machine_paired, serial.takeLast(4)) else stringResource(R.string.machine_paired_unknown),
-                    style = MaterialTheme.typography.titleMedium,
-                )
-            }
+        // The picture comes first: it says what the app does and how far it has got. While a check
+        // runs, or before anything has been synchronised, it shows the check; otherwise the last
+        // synchronisation.
+        val showsSync = syncEnabled && paired && !checkRunning && (sync.running || sync.lastReport != null || sync.storeUnreadable)
+        if (showsSync) {
+            val links = syncLinks(sync, healthAllowed)
+            FlowDiagram(machineLink = links.machine, healthLink = links.health, phoneFault = links.phoneFault)
+        } else {
+            FlowDiagram(
+                machineLink = machineLink(steps, pairing, checkRunning),
+                healthLink = healthLink(steps, healthAllowed),
+                // A failure that lies with the phone is marked on the phone, not on either link.
+                phoneFault = steps.any { it.state == StepState.FAILED && it.onPhone && it.id != CheckSteps.HEALTH },
+            )
         }
+        Spacer(Modifier.height(28.dp))
+        MachineLine(pairing)
 
-        if (pairing is PairingState.Paired) {
-            // Synchronising is what the app is for; the check below it is for finding faults.
-            Secondary(syncLine(sync), Modifier.padding(top = 4.dp))
-            Spacer(Modifier.height(16.dp))
+        if (paired && syncEnabled) {
+            Text(
+                syncLine(sync),
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.padding(top = 12.dp).semantics { liveRegion = LiveRegionMode.Polite },
+            )
+            lastCompleteLine(sync)?.let { Secondary(it, Modifier.padding(top = 4.dp)) }
+            Spacer(Modifier.height(20.dp))
+            // Wraps instead of clipping at large font sizes.
             FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onSync, enabled = !sync.running && !running && !busy) {
+                Button(onClick = onSync, enabled = !sync.running && !checkRunning && !busy) {
                     Text(stringResource(if (sync.running) R.string.sync_running else R.string.action_sync))
                 }
-                if (!sync.running && sync.lastReport?.outcome == SyncOutcome.CLOCK_CHANGED) {
-                    OutlinedButton(onClick = onAcceptClock) { Text(stringResource(R.string.action_accept_clock)) }
+                // Offered only when it is the way forward.
+                if (!sync.running && !checkRunning && !busy) {
+                    if (sync.storeUnreadable) {
+                        OutlinedButton(onClick = onStartAgain) { Text(stringResource(R.string.action_start_again)) }
+                    } else if (sync.lastReport?.outcome == SyncOutcome.CLOCK_CHANGED) {
+                        OutlinedButton(onClick = onAcceptClock) { Text(stringResource(R.string.action_accept_clock)) }
+                    }
+                }
+            }
+        } else {
+            if (paired) Secondary(stringResource(R.string.debug_no_sync), Modifier.padding(top = 12.dp))
+            Spacer(Modifier.height(20.dp))
+            if (paired) {
+                Button(onClick = onOpenCheck) { Text(stringResource(R.string.action_device_check)) }
+            } else {
+                // Pairing is the first part of the device check, which then proves the rest works.
+                Button(onClick = onPair, enabled = !busy && !checkRunning && pairing != PairingState.Loading) {
+                    Text(stringResource(R.string.action_pair))
                 }
             }
         }
 
+        if (permissionRefused && !checkRunning) {
+            Secondary(stringResource(R.string.permission_needed), Modifier.padding(top = 12.dp))
+            TextButton(onClick = onOpenSettings, modifier = Modifier.offset(x = (-12).dp)) {
+                Text(stringResource(R.string.action_open_settings))
+            }
+        }
+
+        if (paired && syncEnabled || !paired && (checkRunning || steps.any { it.state != StepState.PENDING })) {
+            Spacer(Modifier.height(24.dp))
+            // Text buttons carry 12 dp of padding; pulled out so the label sits on the text margin.
+            TextButton(onClick = onOpenCheck, modifier = Modifier.offset(x = (-12).dp)) {
+                Text(stringResource(R.string.action_device_check))
+            }
+        }
+    }
+}
+
+@Composable
+private fun MachineLine(pairing: PairingState) {
+    when (pairing) {
+        PairingState.Loading -> Text(stringResource(R.string.machine_loading), style = MaterialTheme.typography.titleMedium)
+        PairingState.Absent -> {
+            Text(stringResource(R.string.machine_unpaired), style = MaterialTheme.typography.titleMedium)
+            Secondary(stringResource(R.string.machine_unpaired_hint), Modifier.padding(top = 4.dp))
+        }
+        PairingState.Unreadable -> {
+            Text(stringResource(R.string.machine_unreadable), style = MaterialTheme.typography.titleMedium)
+            Secondary(stringResource(R.string.machine_unreadable_hint), Modifier.padding(top = 4.dp))
+        }
+        PairingState.Unavailable -> {
+            Text(stringResource(R.string.machine_unavailable), style = MaterialTheme.typography.titleMedium)
+            Secondary(stringResource(R.string.machine_unavailable_hint), Modifier.padding(top = 4.dp))
+        }
+        is PairingState.Paired -> {
+            val serial = pairing.pairing.serialNumber
+            Text(
+                if (serial != null) stringResource(R.string.machine_paired, serial.takeLast(4)) else stringResource(R.string.machine_paired_unknown),
+                style = MaterialTheme.typography.titleMedium,
+            )
+        }
+    }
+}
+
+/** The device check: for pairing, and for finding out what is wrong when something is. */
+@Composable
+fun CheckScreen(
+    pairing: PairingState,
+    steps: List<Step>,
+    running: Boolean,
+    stopping: Boolean,
+    hasReport: Boolean,
+    busy: Boolean,
+    syncEnabled: Boolean,
+    syncRunning: Boolean,
+    onRunFull: () -> Unit,
+    onRunReconnect: () -> Unit,
+    onStop: () -> Unit,
+    onExport: () -> Unit,
+    onRewrite: () -> Unit,
+    onForget: () -> Unit,
+    onBack: () -> Unit,
+) {
+    val paired = pairing is PairingState.Paired
+    Page(title = stringResource(R.string.action_device_check), onBack = onBack) {
+        MachineLine(pairing)
         Spacer(Modifier.height(20.dp))
-        // Wraps instead of clipping at large font sizes.
         FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (running) {
                 // Stopping can take a moment: a step that must not be cut short is finished first.
@@ -256,23 +332,12 @@ fun HomeScreen(
                     Text(stringResource(if (stopping) R.string.action_stopping else R.string.action_stop))
                 }
             } else {
-                // Held back while a pairing is being forgotten, so a check cannot start on it.
-                // Once a machine is paired the check is the lesser action, and looks it.
-                if (pairing is PairingState.Paired) {
-                    OutlinedButton(onClick = onRunFull, enabled = !busy && !sync.running) { Text(stringResource(R.string.action_run_check)) }
-                } else {
-                    Button(onClick = onRunFull, enabled = !busy && pairing != PairingState.Loading) { Text(stringResource(R.string.action_run_check)) }
+                // Held back while a pairing is being forgotten or the machine is in use, so a check cannot start on it.
+                val free = !busy && !syncRunning && pairing != PairingState.Loading
+                Button(onClick = onRunFull, enabled = free) { Text(stringResource(R.string.action_run_check)) }
+                if (paired) {
+                    OutlinedButton(onClick = onRunReconnect, enabled = free) { Text(stringResource(R.string.action_reconnect_check)) }
                 }
-                if (pairing is PairingState.Paired) {
-                    OutlinedButton(onClick = onRunReconnect, enabled = !busy && !sync.running) { Text(stringResource(R.string.action_reconnect_check)) }
-                }
-            }
-        }
-
-        if (permissionRefused && !running) {
-            Secondary(stringResource(R.string.permission_needed), Modifier.padding(top = 12.dp))
-            TextButton(onClick = onOpenSettings, modifier = Modifier.offset(x = (-12).dp)) {
-                Text(stringResource(R.string.action_open_settings))
             }
         }
 
@@ -296,28 +361,45 @@ fun HomeScreen(
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         }
 
+        val idle = !running && !busy && !syncRunning
         val canExport = hasReport && !running
+        val canRewrite = paired && syncEnabled
         // Offered whenever something is stored, readable or not, so there is always a way to start over.
-        val canForget = pairing is PairingState.Paired || pairing == PairingState.Unreadable || pairing == PairingState.Unavailable
-        if (canExport || canForget) {
-            Spacer(Modifier.height(8.dp))
-            // Text buttons carry 12 dp of padding; pull them out so their labels sit on the text margins.
-            FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                if (canExport) {
-                    TextButton(onClick = onExport, modifier = Modifier.offset(x = (-12).dp)) {
-                        Text(stringResource(R.string.action_export))
-                    }
-                }
+        val canForget = paired || pairing == PairingState.Unreadable || pairing == PairingState.Unavailable
+        if (canExport || canRewrite || canForget) {
+            Spacer(Modifier.height(16.dp))
+            // Text buttons carry 12 dp of padding; pulled out so their labels sit on the text margin.
+            Column(Modifier.offset(x = (-12).dp)) {
+                if (canExport) TextButton(onClick = onExport) { Text(stringResource(R.string.action_export)) }
+                if (canRewrite) TextButton(onClick = onRewrite, enabled = idle) { Text(stringResource(R.string.action_rewrite)) }
                 if (canForget) {
-                    TextButton(onClick = onForget, enabled = !running && !busy, modifier = Modifier.offset(x = if (canExport) 12.dp else (-12).dp)) {
-                        Text(stringResource(R.string.action_forget), color = MaterialTheme.colorScheme.error)
+                    TextButton(onClick = onForget, enabled = idle) {
+                        Text(stringResource(R.string.action_forget), color = if (idle) MaterialTheme.colorScheme.error else Color.Unspecified)
                     }
                 }
             }
         }
+    }
+}
 
-        Spacer(Modifier.height(24.dp))
-        Secondary(stringResource(R.string.early_build_notice))
+/** How the two legs of the picture stand after a synchronisation, or during one. */
+private class SyncLinks(val machine: LinkState, val health: LinkState, val phoneFault: Boolean)
+
+private fun syncLinks(sync: SyncStatus, healthAllowed: Boolean): SyncLinks {
+    val idleHealth = if (healthAllowed) LinkState.READY else LinkState.NONE
+    if (sync.running) return SyncLinks(LinkState.ACTIVE, idleHealth, phoneFault = false)
+    if (sync.storeUnreadable) return SyncLinks(LinkState.READY, idleHealth, phoneFault = true)
+    return when (sync.lastReport?.outcome) {
+        SyncOutcome.COMPLETE, SyncOutcome.PARTIAL -> SyncLinks(LinkState.OK, LinkState.OK, phoneFault = false)
+        // Out of range is the ordinary state of a phone that is not at home; nothing is wrong.
+        SyncOutcome.MACHINE_AWAY, null -> SyncLinks(LinkState.READY, idleHealth, phoneFault = false)
+        SyncOutcome.BLUETOOTH_OFF, SyncOutcome.BLUETOOTH_NOT_ALLOWED, SyncOutcome.INTERNAL -> SyncLinks(LinkState.READY, idleHealth, phoneFault = true)
+        SyncOutcome.HEALTH_CONNECT_NOT_ALLOWED -> SyncLinks(LinkState.READY, LinkState.NONE, phoneFault = false)
+        SyncOutcome.HEALTH_CONNECT_UNAVAILABLE, SyncOutcome.HEALTH_CONNECT_FAILED -> SyncLinks(LinkState.READY, LinkState.FAILED, phoneFault = false)
+        SyncOutcome.NOT_PAIRED -> SyncLinks(LinkState.NONE, idleHealth, phoneFault = false)
+        SyncOutcome.PAIRING_REJECTED, SyncOutcome.WRONG_MACHINE, SyncOutcome.SOFTWARE_NOT_CONFIRMED, SyncOutcome.CLOCK_UNRELIABLE,
+        SyncOutcome.CLOCK_CHANGED, SyncOutcome.CONNECTION_LOST, SyncOutcome.DATA_NOT_UNDERSTOOD,
+        -> SyncLinks(LinkState.FAILED, idleHealth, phoneFault = false)
     }
 }
 
@@ -575,31 +657,54 @@ fun ConfirmDialog(
     @StringRes confirm: Int,
     onConfirm: () -> Unit,
     onCancel: () -> Unit,
+    /** True for an action that removes something; its button is then drawn as a warning. */
+    destructive: Boolean = true,
 ) {
     AlertDialog(
         onDismissRequest = onCancel,
         title = { Text(stringResource(title)) },
         text = { Text(stringResource(body), style = MaterialTheme.typography.bodyMedium) },
         confirmButton = {
-            TextButton(onClick = onConfirm) { Text(stringResource(confirm), color = MaterialTheme.colorScheme.error) }
+            TextButton(onClick = onConfirm) {
+                Text(stringResource(confirm), color = if (destructive) MaterialTheme.colorScheme.error else Color.Unspecified)
+            }
         },
         dismissButton = { TextButton(onClick = onCancel) { Text(stringResource(R.string.action_cancel)) } },
     )
 }
 
+/** The time now, renewed twice a minute, so that "5 minutes ago" does not stand still on an open screen. */
+@Composable
+private fun currentTime(): Long {
+    val now by produceState(System.currentTimeMillis()) {
+        while (true) {
+            delay(30_000)
+            value = System.currentTimeMillis()
+        }
+    }
+    return now
+}
+
+@Composable
+private fun ago(atMs: Long, now: Long): String =
+    DateUtils.getRelativeTimeSpanString(atMs, maxOf(now, atMs), DateUtils.MINUTE_IN_MILLIS).toString()
+
 /** One sentence on how synchronising stands. */
 @Composable
 private fun syncLine(sync: SyncStatus): String {
     val report = sync.lastReport
+    val now = currentTime()
     return when {
         sync.running -> stringResource(R.string.sync_running)
         sync.storeUnreadable -> stringResource(R.string.sync_store_unreadable)
         report == null -> stringResource(R.string.sync_never)
         else -> when (report.outcome) {
-            SyncOutcome.COMPLETE -> stringResource(
-                R.string.sync_complete,
-                DateUtils.getRelativeTimeSpanString(report.atMs, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString(),
-            )
+            SyncOutcome.COMPLETE ->
+                if (now - report.atMs < DateUtils.MINUTE_IN_MILLIS) {
+                    stringResource(R.string.sync_complete_now)
+                } else {
+                    stringResource(R.string.sync_complete, ago(report.atMs, now))
+                }
             SyncOutcome.PARTIAL -> stringResource(R.string.sync_partial)
             SyncOutcome.MACHINE_AWAY -> stringResource(R.string.sync_machine_away)
             SyncOutcome.BLUETOOTH_OFF -> stringResource(R.string.detail_bluetooth_off)
@@ -615,7 +720,15 @@ private fun syncLine(sync: SyncStatus): String {
             SyncOutcome.CONNECTION_LOST -> stringResource(R.string.sync_connection_lost)
             SyncOutcome.DATA_NOT_UNDERSTOOD -> stringResource(R.string.sync_data_not_understood)
             SyncOutcome.HEALTH_CONNECT_FAILED -> stringResource(R.string.sync_hc_failed)
-            SyncOutcome.INTERNAL -> stringResource(R.string.error_internal)
+            SyncOutcome.INTERNAL -> stringResource(R.string.sync_internal)
         }
     }
+}
+
+/** When everything was last in step, said only while the latest attempt did not get that far. */
+@Composable
+private fun lastCompleteLine(sync: SyncStatus): String? {
+    val at = sync.lastCompleteAtMs ?: return null
+    if (sync.running || sync.storeUnreadable || sync.lastReport?.outcome == SyncOutcome.COMPLETE) return null
+    return stringResource(R.string.sync_last_complete, ago(at, currentTime()))
 }

@@ -100,6 +100,10 @@ class ClockBaseline(val offsetMs: Long, val machineMs: Long)
  * @property clock the machine's clock at the last synchronisation that measured it.
  * @property rewriteRequested true when every session is to be written again whatever the
  *   ledger says, until one synchronisation has completed.
+ * @property vouchedSoftware the machine software, by its full identifier, from which a long
+ *   session has been read cleanly. Until there is one, short sessions are not written: a
+ *   few minutes can be read "successfully" from a layout that is not the expected one, and
+ *   a long session cannot.
  */
 class SyncState(
     val machineTag: String?,
@@ -110,6 +114,7 @@ class SyncState(
     val leakLimitLitresPerMinute: Int?,
     val clock: ClockBaseline?,
     val rewriteRequested: Boolean,
+    val vouchedSoftware: String? = null,
 ) {
     fun with(
         machineTag: String? = this.machineTag,
@@ -120,7 +125,8 @@ class SyncState(
         leakLimitLitresPerMinute: Int? = this.leakLimitLitresPerMinute,
         clock: ClockBaseline? = this.clock,
         rewriteRequested: Boolean = this.rewriteRequested,
-    ) = SyncState(machineTag, ledger, resumeFromMs, lastReport, lastCompleteAtMs, leakLimitLitresPerMinute, clock, rewriteRequested)
+        vouchedSoftware: String? = this.vouchedSoftware,
+    ) = SyncState(machineTag, ledger, resumeFromMs, lastReport, lastCompleteAtMs, leakLimitLitresPerMinute, clock, rewriteRequested, vouchedSoftware)
 
     /**
      * With another leak rule. Every night is then looked at again, not only the recent ones,
@@ -129,7 +135,8 @@ class SyncState(
     fun withLeakLimit(litresPerMinute: Int?): SyncState = with(leakLimitLitresPerMinute = litresPerMinute).fromTheStart()
 
     /** With every session to be read again from as far back as the machine holds. */
-    fun fromTheStart(): SyncState = SyncState(machineTag, ledger, null, lastReport, lastCompleteAtMs, leakLimitLitresPerMinute, clock, rewriteRequested)
+    fun fromTheStart(): SyncState =
+        SyncState(machineTag, ledger, null, lastReport, lastCompleteAtMs, leakLimitLitresPerMinute, clock, rewriteRequested, vouchedSoftware)
 
     companion object {
         val EMPTY = SyncState(null, emptyMap(), null, null, null, null, null, false)
@@ -144,8 +151,8 @@ class SyncStateUnreadableException(cause: Throwable) : IOException("the synchron
  * change: a crash leaves either the old state or the new one, never a mixture.
  *
  * Losing this file is survivable (record ids come from the machine's own time
- * stamps, so everything is simply written again over itself), but a state that
- * cannot be read is reported, not replaced, so that damage is not papered over.
+ * stamps, so each night is found again, cleared and written afresh), but a state
+ * that cannot be read is reported, not replaced, so that damage is not papered over.
  */
 class SyncStore(private val file: File) {
     /** @throws SyncStateUnreadableException if the file exists and is not a state this version wrote. */
@@ -199,6 +206,7 @@ class SyncStore(private val file: File) {
                 )
             }
             if (state.rewriteRequested) put("rewriteRequested", true)
+            state.vouchedSoftware?.let { put("vouchedSoftware", it) }
             state.lastReport?.let { report ->
                 put(
                     "lastReport",
@@ -267,6 +275,9 @@ class SyncStore(private val file: File) {
                 },
                 clock = (json["clock"] as? JsonObject)?.let { ClockBaseline(it.getValue("offsetMs").jsonPrimitive.long, it.getValue("machineMs").jsonPrimitive.long) },
                 rewriteRequested = (json["rewriteRequested"] as? JsonPrimitive)?.content == "true",
+                vouchedSoftware = (json["vouchedSoftware"] as? JsonPrimitive)?.content?.also {
+                    require(it.length <= MAX_IDENTIFIER) { "not a software identifier" }
+                },
             )
         }
 
@@ -303,5 +314,6 @@ class SyncStore(private val file: File) {
         /** A week of minutes: far more than a session can hold, and a bound on what a damaged file can ask for. */
         private const val MAX_MINUTES = 7 * 24 * 60
         private const val MAX_LEAK_LIMIT = 1_000L
+        private const val MAX_IDENTIFIER = 128
     }
 }

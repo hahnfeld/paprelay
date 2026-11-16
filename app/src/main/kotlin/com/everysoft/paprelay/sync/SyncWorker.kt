@@ -6,6 +6,7 @@ import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.everysoft.paprelay.PapRelayApp
+import com.everysoft.paprelay.pairing.PairingState
 
 /**
  * The hourly background run. It always reports success to the system: a machine that is
@@ -15,7 +16,11 @@ import com.everysoft.paprelay.PapRelayApp
 class SyncWorker(context: Context, parameters: WorkerParameters) : CoroutineWorker(context, parameters) {
     override suspend fun doWork(): Result {
         val app = applicationContext as PapRelayApp
-        app.pairingStore.current()
+        // With no machine there is nothing to do, now or in an hour.
+        if (app.pairingStore.current() == PairingState.Absent) {
+            app.sync.unschedule()
+            return Result.success()
+        }
         app.sync.runOnce()
         return Result.success()
     }

@@ -61,7 +61,9 @@ private fun Root(app: PapRelayApp) {
     val passkeyRequest by check.passkeyRequest.collectAsState()
     val machineChoice by check.machineChoice.collectAsState()
     var showAbout by rememberSaveable { mutableStateOf(false) }
+    var showCheck by rememberSaveable { mutableStateOf(false) }
     var confirmForget by rememberSaveable { mutableStateOf(false) }
+    var confirmRewrite by rememberSaveable { mutableStateOf(false) }
     var pendingFull by rememberSaveable { mutableStateOf(true) }
     // What the permissions being asked for are wanted for: a device check, or a synchronisation.
     var pendingSync by rememberSaveable { mutableStateOf(false) }
@@ -83,10 +85,8 @@ private fun Root(app: PapRelayApp) {
             }
         }
     }
-    // On first showing, and again whenever a check finishes.
-    LaunchedEffect(running) { if (!running) refreshHealth() }
-    // Once a machine is paired, the hourly background run is asked for; asking again changes nothing.
-    LaunchedEffect(pairing) { if (pairing is PairingState.Paired) app.sync.schedule() }
+    // On first showing, and again whenever a check or a synchronisation finishes.
+    LaunchedEffect(running, sync.running) { if (!running && !sync.running) refreshHealth() }
     val uiScope = rememberCoroutineScope()
 
     // The user may grant the permission in system settings and come back.
@@ -165,33 +165,54 @@ private fun Root(app: PapRelayApp) {
         bluetoothPermission.launch(BLUETOOTH_PERMISSIONS)
     }
 
-    BackHandler(enabled = showAbout) { showAbout = false }
+    BackHandler(enabled = showAbout || showCheck) {
+        if (showAbout) showAbout = false else showCheck = false
+    }
 
     if (showAbout) {
         AboutScreen(onBack = { showAbout = false })
+    } else if (showCheck) {
+        CheckScreen(
+            pairing = pairing,
+            steps = steps,
+            running = running,
+            stopping = stopping,
+            hasReport = check.hasReport(),
+            busy = forgetting,
+            syncEnabled = app.sync.enabled,
+            syncRunning = sync.running,
+            onRunFull = { request(full = true) },
+            onRunReconnect = { request(full = false) },
+            onStop = { check.cancel() },
+            onExport = { export.launch("paprelay-device-check.txt") },
+            onRewrite = { confirmRewrite = true },
+            onForget = { confirmForget = true },
+            onBack = { showCheck = false },
+        )
     } else {
         HomeScreen(
             pairing = pairing,
             steps = steps,
-            running = running,
-            hasReport = check.hasReport(),
+            checkRunning = running,
             busy = forgetting,
+            syncEnabled = app.sync.enabled,
             sync = sync,
-            onSync = { request(full = false, forSync = true) },
-            onAcceptClock = { uiScope.launch { app.sync.acceptMachineClock() } },
-            stopping = stopping,
             healthAllowed = healthAllowed,
             permissionRefused = permissionRefused,
+            onSync = { request(full = false, forSync = true) },
+            onAcceptClock = { app.sync.acceptMachineClock() },
+            onStartAgain = { app.sync.startAgain() },
+            onPair = {
+                // The steps are worth watching while the machine is paired for the first time.
+                showCheck = true
+                request(full = true)
+            },
+            onOpenCheck = { showCheck = true },
             onOpenSettings = {
                 context.startActivity(
                     Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)),
                 )
             },
-            onRunFull = { request(full = true) },
-            onRunReconnect = { request(full = false) },
-            onStop = { check.cancel() },
-            onForget = { confirmForget = true },
-            onExport = { export.launch("paprelay-device-check.txt") },
             onAbout = { showAbout = true },
         )
     }
@@ -219,12 +240,25 @@ private fun Root(app: PapRelayApp) {
             confirm = R.string.action_forget,
             onConfirm = {
                 confirmForget = false
+                // Removes the pairing, and with it what synchronising remembers and its hourly run.
                 check.forgetMachine()
-                // With no machine there is nothing to synchronise, and its record goes with it.
-                app.sync.unschedule()
-                uiScope.launch { app.sync.forget() }
             },
             onCancel = { confirmForget = false },
+        )
+    }
+
+    if (confirmRewrite) {
+        ConfirmDialog(
+            title = R.string.rewrite_title,
+            body = R.string.rewrite_body,
+            confirm = R.string.action_rewrite,
+            onConfirm = {
+                confirmRewrite = false
+                showCheck = false
+                app.sync.rewriteEverything()
+            },
+            onCancel = { confirmRewrite = false },
+            destructive = false,
         )
     }
 }

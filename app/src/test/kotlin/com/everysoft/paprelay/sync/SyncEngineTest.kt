@@ -537,6 +537,128 @@ class SyncEngineTest {
     }
 
     @Test
+    fun `short sessions wait until a long one has shown that this software is read correctly`() = runTest {
+        val nap = Night(machineNow - 70 * hour, rates(12))
+        val later = Night(machineNow - 60 * hour, rates(SyncEngine.VOUCH_SAMPLES - 1, base = 44))
+        machine.nights = listOf(nap, later)
+        // Only short ones: nothing is written, and the place is held so that they are read again.
+        val held = engine.sync()!!
+        assertEquals(SyncOutcome.PARTIAL, held.outcome)
+        assertEquals(0, held.sessions)
+        assertTrue(health.records.isEmpty())
+        assertNull(store.read().vouchedSoftware)
+
+        // A long session arrives after them. It is written, and vouches for the software.
+        phoneNow += hour
+        val long = first
+        machine.nights = listOf(nap, later, long)
+        val partly = engine.sync()!!
+        assertEquals(SyncOutcome.PARTIAL, partly.outcome)
+        assertHolds(listOf(long))
+        assertEquals(software, store.read().vouchedSoftware)
+
+        // The next run takes up the short ones that were waiting.
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertHolds(listOf(nap, later, long))
+
+        // Two days on, a short session is written without waiting: the software is vouched for.
+        phoneNow += 48 * hour
+        val brief = Night(machineNow - 2 * hour, rates(10, base = 56))
+        machine.nights = listOf(nap, later, long, brief)
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertHolds(listOf(nap, later, long, brief))
+
+        // Another build of the software has to earn it again, from a long session it can show.
+        phoneNow += hour
+        machine.applicationIdentifier = "SW04600.19.8.8.0.0123abc"
+        val another = Night(machineNow - 30 * 60_000L, rates(10, base = 60))
+        machine.nights = listOf(nap, later, long, brief, another)
+        assertEquals(SyncOutcome.PARTIAL, engine.sync()!!.outcome)
+        assertHolds(listOf(nap, later, long, brief))
+        phoneNow += 10 * hour
+        val night = Night(machineNow - 5 * hour, rates(240, base = 50))
+        machine.nights = listOf(nap, later, long, brief, another, night)
+        engine.sync()
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertHolds(listOf(nap, later, long, brief, another, night))
+        assertEquals("SW04600.19.8.8.0.0123abc", store.read().vouchedSoftware)
+    }
+
+    @Test
+    fun `a record kept for another machine is not used for this one`() = runTest {
+        // Another machine was synchronised, and its record outlived the forgetting of it.
+        val other = SyncEngine(Machine().also { it.serialNumber = "23219999999"; it.pairedSerial = null; it.nights = listOf(second) }, health, store, nowMs = { phoneNow })
+        assertEquals(SyncOutcome.COMPLETE, other.sync()!!.outcome)
+        val others = health.records.keys.toSet()
+        assertEquals(203, others.size)
+        store.write(store.read().withLeakLimit(24))
+
+        phoneNow += hour
+        machine.nights = listOf(first)
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        val state = store.read()
+        assertEquals(tag, state.machineTag)
+        assertTrue(state.ledger.values.all { it.machineTag == tag })
+        // The setting is the user's, not the machine's, and stays.
+        assertEquals(24, state.leakLimitLitresPerMinute)
+        // The other machine's nights stay in Health Connect, as forgetting it promises.
+        assertTrue(health.records.keys.containsAll(others))
+        assertEquals(others.size + 123, health.records.size)
+    }
+
+    @Test
+    fun `after a reinstall, what the earlier installation left is cleared and written afresh`() = runTest {
+        val leaky = Night(machineNow - 50 * hour, rates(123), leaks = IntArray(123) { if (it in 40..59) 30 else 2 })
+        val other = second
+        machine.nights = listOf(leaky, other)
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertHolds(listOf(leaky, other))
+        // The app is removed and installed again: its record is gone, Health Connect's is not, and
+        // what is there carries versions above anything this phone's clock would now give.
+        File(directory, "sync.json").delete()
+        for ((id, held) in health.records.toMap()) health.records[id] = health.Held(Long.MAX_VALUE - 5, held.rate + 1, held.time)
+
+        // This time with the leak rule on, so some of what is there is no longer wanted at all.
+        store.write(SyncState.EMPTY.withLeakLimit(24))
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertHolds(listOf(leaky, other), leakLimit = 24)
+        assertTrue(health.records.values.all { it.version <= phoneNow })
+    }
+
+    @Test
+    fun `a run that does not finish in time is ended, and keeps what it had done`() = runTest {
+        val never = CompletableDeferred<Unit>()
+        val stalling = object : MachineConnector by machine {
+            override suspend fun <T> withSession(block: suspend (MachineSession) -> T): T = machine.withSession { session ->
+                block(
+                    object : MachineSession by session {
+                        // The second round never comes: the link is up and silent.
+                        override suspend fun pull(log: SpoolName, from: SpoolAddress): SpoolRound {
+                            if (from is SpoolAddress.Continuation) never.await()
+                            return session.pull(log, from)
+                        }
+                    },
+                )
+            }
+        }
+        val nights = (1..4).map { Night(machineNow - (5 - it) * 24 * hour, rates(40 + it)) }
+        machine.nights = nights
+        machine.perRound = 2
+        val limited = SyncEngine(stalling, health, store, nowMs = { phoneNow }, limitMs = 60_000)
+        val report = limited.sync()!!
+        assertEquals(SyncOutcome.PARTIAL, report.outcome)
+        assertHolds(nights.take(2))
+        assertNull(store.read().lastCompleteAtMs)
+        // The next run, on a link that works, finishes the job.
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertHolds(nights)
+    }
+
+    @Test
     fun `a machine's tag is the same every time, differs between machines, and is not its serial`() {
         assertEquals(tag, SyncEngine.machineTag(serial))
         assertTrue(Regex("m-[0-9a-f]{16}").matches(tag))
