@@ -36,6 +36,12 @@ enum class SyncOutcome {
 
     BLUETOOTH_OFF,
     BLUETOOTH_NOT_ALLOWED,
+
+    /**
+     * The phone's own clock disagrees with the time its network gives it. Every time written
+     * is worked out from the phone's clock, and is kept for good, so nothing is written.
+     */
+    PHONE_CLOCK_WRONG,
     HEALTH_CONNECT_NOT_ALLOWED,
     HEALTH_CONNECT_UNAVAILABLE,
 
@@ -115,6 +121,8 @@ class SyncState(
     val clock: ClockBaseline?,
     val rewriteRequested: Boolean,
     val vouchedSoftware: String? = null,
+    /** The rules ([com.everysoft.paprelay.core.sync.SessionReadings.RULES_VERSION]) the nights behind [resumeFromMs] were last looked at under. */
+    val rulesVersion: Int? = null,
 ) {
     fun with(
         machineTag: String? = this.machineTag,
@@ -126,7 +134,8 @@ class SyncState(
         clock: ClockBaseline? = this.clock,
         rewriteRequested: Boolean = this.rewriteRequested,
         vouchedSoftware: String? = this.vouchedSoftware,
-    ) = SyncState(machineTag, ledger, resumeFromMs, lastReport, lastCompleteAtMs, leakLimitLitresPerMinute, clock, rewriteRequested, vouchedSoftware)
+        rulesVersion: Int? = this.rulesVersion,
+    ) = SyncState(machineTag, ledger, resumeFromMs, lastReport, lastCompleteAtMs, leakLimitLitresPerMinute, clock, rewriteRequested, vouchedSoftware, rulesVersion)
 
     /**
      * With another leak rule. Every night is then looked at again, not only the recent ones,
@@ -136,7 +145,7 @@ class SyncState(
 
     /** With every session to be read again from as far back as the machine holds. */
     fun fromTheStart(): SyncState =
-        SyncState(machineTag, ledger, null, lastReport, lastCompleteAtMs, leakLimitLitresPerMinute, clock, rewriteRequested, vouchedSoftware)
+        SyncState(machineTag, ledger, null, lastReport, lastCompleteAtMs, leakLimitLitresPerMinute, clock, rewriteRequested, vouchedSoftware, rulesVersion)
 
     companion object {
         val EMPTY = SyncState(null, emptyMap(), null, null, null, null, null, false)
@@ -180,6 +189,10 @@ class SyncStore(private val file: File) {
             channel.force(true)
         }
         Files.move(temporary.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        // The new name is on disk only once its directory is. Without this a power cut could bring
+        // the previous state back, and with it a ledger that knows nothing of a write already made.
+        // Not every file system lets a directory be opened for this; where it does not, nothing more can be done.
+        runCatching { FileChannel.open(directory.toPath(), StandardOpenOption.READ).use { it.force(true) } }
     }
 
     fun delete() {
@@ -207,6 +220,7 @@ class SyncStore(private val file: File) {
             }
             if (state.rewriteRequested) put("rewriteRequested", true)
             state.vouchedSoftware?.let { put("vouchedSoftware", it) }
+            state.rulesVersion?.let { put("rulesVersion", it) }
             state.lastReport?.let { report ->
                 put(
                     "lastReport",
@@ -278,6 +292,7 @@ class SyncStore(private val file: File) {
                 vouchedSoftware = (json["vouchedSoftware"] as? JsonPrimitive)?.content?.also {
                     require(it.length <= MAX_IDENTIFIER) { "not a software identifier" }
                 },
+                rulesVersion = (json["rulesVersion"] as? JsonPrimitive)?.long?.toInt(),
             )
         }
 

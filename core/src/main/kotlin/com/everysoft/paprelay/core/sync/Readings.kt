@@ -91,7 +91,8 @@ public class SessionReadings(
         /**
          * Raised whenever the way a reading is derived from the machine's data changes (a decoding
          * correction, a different rule for what is passed on), so that sessions already written
-         * are recognised as out of step and written again.
+         * are recognised as out of step and written again. (The app notices the change and
+         * reads every night again, not only the recent ones.)
          */
         public const val RULES_VERSION: Int = 1
         private val TAG = Regex("[A-Za-z0-9-]{4,32}")

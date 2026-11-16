@@ -20,6 +20,7 @@ import com.everysoft.paprelay.core.ClockOffset
 import com.everysoft.paprelay.core.MachineTime
 import com.everysoft.paprelay.core.sync.LedgerEntry
 import com.everysoft.paprelay.core.sync.Reconcile
+import com.everysoft.paprelay.core.sync.SessionReadings
 import com.everysoft.paprelay.core.sync.SessionChange
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
@@ -95,6 +96,8 @@ class SyncEngine(
     private val zone: () -> ZoneId = ZoneId::systemDefault,
     /** A run that has not finished in this time is ended; what it has done so far stands. */
     private val limitMs: Long = RUN_LIMIT_MS,
+    /** True when the phone's clock is known to be wrong. Every time written is worked out from it. */
+    private val phoneClockWrong: () -> Boolean = { false },
 ) {
     private val running = Mutex()
 
@@ -137,6 +140,7 @@ class SyncEngine(
         val outcome = try {
             connector.notReady()?.let { throw Stop(it) }
             sink.notReady()?.let { throw Stop(it) }
+            if (phoneClockWrong()) throw Stop(SyncOutcome.PHONE_CLOCK_WRONG)
             // A link that stalls without breaking must not hold the machine, or this run, for ever.
             // Whatever was finished before the limit stays finished; the next run takes up the rest.
             val finished = withTimeoutOrNull(limitMs) { connector.withSession { session -> run(session, progress) } }
@@ -189,6 +193,12 @@ class SyncEngine(
             progress.state = SyncState.EMPTY.with(machineTag = tag, leakLimitLitresPerMinute = progress.state.leakLimitLitresPerMinute)
             store.write(progress.state)
         }
+        if (progress.state.rulesVersion != SessionReadings.RULES_VERSION) {
+            // The rules for what a reading is have changed since the nights behind the resume point
+            // were looked at (or this is the first run). All of them are looked at again.
+            progress.state = progress.state.fromTheStart().with(rulesVersion = SessionReadings.RULES_VERSION)
+            store.write(progress.state)
+        }
 
         val (machineNow, offset) = measureClock(session)
         // A clock that has been set since the last run puts the nights recorded in between out
@@ -206,6 +216,7 @@ class SyncEngine(
         val from = maxOf(EARLIEST_START_MS, progress.state.resumeFromMs?.let { it - OVERLAP_MS } ?: (machineNow.epochMs - FIRST_WINDOW_MS))
         var address: SpoolAddress = SpoolAddress.FromMachineTime(from)
         var rounds = 0
+        var emptyRounds = 0
         // The start of the newest session read, and of the last one read before anything went wrong.
         var newest: Long? = null
         var lastBeforeTrouble: Long? = null
@@ -218,6 +229,13 @@ class SyncEngine(
             val round = session.pull(SpoolName.ONE_MINUTE, address)
             keepRaw(SpoolName.ONE_MINUTE, round)
             val log = MinuteDecoder.decode(round.data, firmware)
+            // A machine that keeps promising more and sending nothing is not followed for ever.
+            if (log.entries.isNotEmpty()) {
+                emptyRounds = 0
+            } else if (++emptyRounds > MAX_EMPTY_ROUNDS) {
+                progress.partial = true
+                break
+            }
             for (entry in log.entries) {
                 // A stop asked for from outside is heard between sessions, never inside one.
                 currentCoroutineContext().ensureActive()
@@ -231,6 +249,15 @@ class SyncEngine(
                         troubled = true
                         continue
                     }
+                }
+                if (machineNow.epochMs - record.lastMinuteEnd.epochMs in -FUTURE_ALLOWANCE_MS until SETTLE_MS) {
+                    // Its last minute has only just been recorded: the session may still be going on.
+                    // It is left until it has ended, so that a night is written once, whole, and
+                    // nothing depends on how the machine presents a record it is still adding to.
+                    // The next run starts at it again.
+                    newest = record.firstMinuteEnd.epochMs
+                    if (!troubled) lastBeforeTrouble = newest
+                    continue
                 }
                 val plan = RespiratoryRatePlan.session(record, tag, progress.state.leakLimitLitresPerMinute)
                 if (!vouched) {
@@ -330,6 +357,12 @@ class SyncEngine(
 
         /** Sessions of at least this many minutes show that a software version's data is read correctly. */
         const val VOUCH_SAMPLES = 30
+
+        /** A session whose last minute is more recent than this may still be in progress, and waits. */
+        const val SETTLE_MS = 10L * 60 * 1000
+
+        /** How many rounds in a row may bring nothing while the machine says there is more. */
+        const val MAX_EMPTY_ROUNDS = 20
 
         /** Under the ten minutes the system allows a background run. */
         const val RUN_LIMIT_MS = 8L * 60 * 1000

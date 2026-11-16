@@ -3,6 +3,7 @@
 package com.everysoft.paprelay.sync
 
 import android.content.Context
+import android.os.SystemClock
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
@@ -19,7 +20,9 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.time.DateTimeException
 import java.util.concurrent.TimeUnit
+import kotlin.math.abs
 
 /** What the screen needs to know about synchronising. */
 class SyncStatus(
@@ -47,7 +50,11 @@ class SyncRunner(
     private val claim: MachineClaim,
 ) {
     private val store = SyncStore(File(context.noBackupFilesDir, "sync.json"))
-    private val engine = SyncEngine(connector, sink, store, System::currentTimeMillis, ::keepRaw)
+    private val engine = SyncEngine(connector, sink, store, System::currentTimeMillis, ::keepRaw, phoneClockWrong = ::phoneClockWrong)
+
+    /** The report of the latest run in this process: shown even if it could not be stored. */
+    @Volatile
+    private var latest: SyncReport? = null
 
     private val _status = MutableStateFlow(SyncStatus(running = false, lastReport = null, lastCompleteAtMs = null, storeUnreadable = false))
     val status: StateFlow<SyncStatus> = _status
@@ -74,7 +81,7 @@ class SyncRunner(
         if (!enabled || !claim.tryTake()) return null
         setRunning(true)
         try {
-            return engine.sync()
+            return engine.sync()?.also { latest = it }
         } finally {
             // In this order, and at once: the screen must never show a run that holds nothing,
             // nor offer a button while the machine is still taken.
@@ -84,10 +91,14 @@ class SyncRunner(
         }
     }
 
-    /** The user accepts the machine's clock as it now is, after it was found to have been changed. */
+    /**
+     * The user accepts the machine's clock as it now is, after it was found to have been changed.
+     * Everything is then looked at again from the start: a clock that was set back has put its
+     * new nights before the place the last run had reached.
+     */
     fun acceptMachineClock() {
         scope.launch {
-            change { it.with(clock = null) }
+            change { it.with(clock = null).fromTheStart() }
             runOnce()
         }
     }
@@ -107,6 +118,7 @@ class SyncRunner(
     fun startAgain() {
         scope.launch {
             engine.whileIdle { withContext(Dispatchers.IO) { store.delete() } }
+            latest = null
             refresh()
             runOnce()
         }
@@ -127,6 +139,7 @@ class SyncRunner(
                 File(context.filesDir, RAW_DIRECTORY).deleteRecursively()
             }
         }
+        latest = null
         refresh()
     }
 
@@ -154,7 +167,19 @@ class SyncRunner(
     /** Reads the stored report again. Whether a run is in progress is not its affair. */
     private suspend fun refresh() {
         val state = withContext(Dispatchers.IO) { runCatching { store.read() } }
-        _status.update { SyncStatus(it.running, state.getOrNull()?.lastReport, state.getOrNull()?.lastCompleteAtMs, storeUnreadable = state.isFailure) }
+        // A run that could not store its report has still happened, and is what the screen should say.
+        val report = listOfNotNull(state.getOrNull()?.lastReport, latest).maxByOrNull { it.atMs }
+        _status.update { SyncStatus(it.running, report, state.getOrNull()?.lastCompleteAtMs, storeUnreadable = state.isFailure) }
+    }
+
+    /**
+     * Whether the phone's clock is known to be wrong: compared with the time the phone has from
+     * its network, when it has one. With none to compare with, the clock is taken as it is.
+     */
+    private fun phoneClockWrong(): Boolean = try {
+        abs(SystemClock.currentNetworkTimeClock().millis() - System.currentTimeMillis()) > PHONE_CLOCK_TOLERANCE_MS
+    } catch (e: DateTimeException) {
+        false
     }
 
     /**
@@ -178,5 +203,6 @@ class SyncRunner(
         const val WORK_NAME = "sync"
         const val RAW_DIRECTORY = "raw"
         const val MAX_RAW_FILES = 400
+        const val PHONE_CLOCK_TOLERANCE_MS = 30_000L
     }
 }

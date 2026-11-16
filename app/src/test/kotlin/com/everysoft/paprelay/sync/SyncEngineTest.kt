@@ -14,6 +14,7 @@ import com.everysoft.paprelay.as11.decode.riceBlock
 import com.everysoft.paprelay.ble.BluetoothOffException
 import com.everysoft.paprelay.ble.NoAnswerException
 import com.everysoft.paprelay.core.sync.SessionChange
+import com.everysoft.paprelay.core.sync.SessionReadings
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
@@ -75,6 +76,7 @@ class SyncEngineTest {
         var roundTripMs = 40L
         var perRound = 100
         var failPullAfterRounds: Int? = null
+        var emptyForEver = false
         val starts = ArrayList<Long>()
         var connections = 0
         private var reads = 0
@@ -104,6 +106,7 @@ class SyncEngineTest {
             assertEquals(SpoolName.ONE_MINUTE, log)
             failPullAfterRounds?.let { if (pulls >= it) throw As11TransportException("link lost") }
             pulls++
+            if (emptyForEver) return SpoolRound(ByteArray(0), ByteArray(32), JsonObject(mapOf("again" to JsonPrimitive(pulls))))
             val (wanted, offset) = when (from) {
                 is SpoolAddress.FromMachineTime -> {
                     starts += from.machineEpochMs
@@ -687,6 +690,165 @@ class SyncEngineTest {
         phoneNow += hour
         assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
         assertHolds(nights)
+    }
+
+    @Test
+    fun `a session that may still be going on waits until it has ended, and is then written once`() = runTest {
+        val started = machineNow - 3 * hour
+        val earlier = first
+        // Its last minute was recorded two minutes ago: the mask is probably still on.
+        machine.nights = listOf(earlier, Night(started, rates(178)))
+        val during = engine.sync()!!
+        assertEquals(SyncOutcome.COMPLETE, during.outcome)
+        assertEquals(1, during.sessions)
+        assertHolds(listOf(earlier))
+        assertEquals(started, store.read().resumeFromMs)
+
+        // An hour on it is 200 minutes long and ended forty minutes ago.
+        phoneNow += hour
+        val whole = Night(started, rates(200))
+        machine.nights = listOf(earlier, whole)
+        val report = engine.sync()!!
+        assertEquals(SyncOutcome.COMPLETE, report.outcome)
+        assertEquals(200, report.readingsWritten)
+        assertHolds(listOf(earlier, whole))
+    }
+
+    @Test
+    fun `nothing is written while the phone's own clock is known to be wrong`() = runTest {
+        var wrong = true
+        val careful = SyncEngine(machine, health, store, nowMs = { phoneNow }, phoneClockWrong = { wrong })
+        machine.nights = listOf(first)
+        assertEquals(SyncOutcome.PHONE_CLOCK_WRONG, careful.sync()!!.outcome)
+        assertEquals(0, machine.connections)
+        assertTrue(health.records.isEmpty())
+        wrong = false
+        assertEquals(SyncOutcome.COMPLETE, careful.sync()!!.outcome)
+    }
+
+    @Test
+    fun `a machine that keeps promising more and sends nothing is not followed for ever`() = runTest {
+        machine.emptyForEver = true
+        val report = engine.sync()!!
+        assertEquals(SyncOutcome.PARTIAL, report.outcome)
+        assertEquals(SyncEngine.MAX_EMPTY_ROUNDS + 1, kept.size)
+    }
+
+    @Test
+    fun `the record says a write is under way before Health Connect hears of it`() = runTest {
+        machine.nights = listOf(first, second)
+        val seen = ArrayList<Boolean>()
+        val watching = object : HealthSink by health {
+            override suspend fun apply(change: SessionChange) {
+                // What is on disk at this moment is all that survives if the app dies here.
+                val entry = store.read().ledger[change.intent.key]
+                seen += entry?.pendingMinutes == change.intent.pendingMinutes && entry?.version == change.intent.version
+                health.apply(change)
+            }
+        }
+        assertEquals(SyncOutcome.COMPLETE, SyncEngine(machine, watching, store, nowMs = { phoneNow }).sync()!!.outcome)
+        assertEquals(listOf(true, true), seen)
+        assertTrue(store.read().ledger.values.all { it.pendingMinutes == null })
+    }
+
+    @Test
+    fun `a run stopped from outside stops, says so to its caller, and leaves the record ready for the next`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val slow = object : HealthSink by health {
+            override suspend fun apply(change: SessionChange) {
+                health.apply(change)
+                gate.await()
+            }
+        }
+        machine.nights = listOf(first, second)
+        val stopped = SyncEngine(machine, slow, store, nowMs = { phoneNow })
+        val running = async { runCatching { stopped.sync() } }
+        testScheduler.runCurrent()
+        running.cancel()
+        testScheduler.runCurrent()
+        assertTrue(running.isCancelled)
+        // No report of a run that did not end; the session it was in is marked as begun.
+        val left = store.read()
+        assertNull(left.lastReport)
+        assertTrue(left.ledger.values.single().pendingMinutes != null)
+        // The engine is free again, and the next run finishes the job.
+        gate.complete(Unit)
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, stopped.sync()!!.outcome)
+        assertHolds(machine.nights)
+    }
+
+    @Test
+    fun `a change to the record waits for a run in progress`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val slow = object : MachineConnector by machine {
+            override suspend fun <T> withSession(block: suspend (MachineSession) -> T): T {
+                gate.await()
+                return machine.withSession(block)
+            }
+        }
+        val busy = SyncEngine(slow, health, store, nowMs = { phoneNow })
+        machine.nights = listOf(first)
+        val running = async { busy.sync() }
+        testScheduler.runCurrent()
+        var changed = false
+        val change = async { busy.whileIdle { changed = true } }
+        testScheduler.runCurrent()
+        assertTrue(!changed)
+        gate.complete(Unit)
+        running.await()
+        change.await()
+        assertTrue(changed)
+    }
+
+    @Test
+    fun `how much the machine's clock may wander depends on how long it has been`() = runTest {
+        machine.nights = listOf(first)
+        engine.sync()
+        // Forty seconds in ten days is a clock that runs a little fast.
+        phoneNow += 10 * 24 * hour
+        machineAhead += 40_000
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        // Forty seconds in one day is a clock that somebody set.
+        phoneNow += 24 * hour
+        machineAhead += 40_000
+        assertEquals(SyncOutcome.CLOCK_CHANGED, engine.sync()!!.outcome)
+    }
+
+    @Test
+    fun `once a clock that was set back is accepted, the nights it put behind the resume point are found`() = runTest {
+        val before = first
+        machine.nights = listOf(before)
+        engine.sync()
+        // The machine's clock is set back two days, and a night is recorded under it. Its stamps
+        // lie before the night already dealt with.
+        phoneNow += 30 * hour
+        machineAhead -= 48 * hour
+        val under = Night(machineNow - 8 * hour, rates(95, base = 46))
+        machine.nights = listOf(under, before).sortedBy { it.firstMinuteEnd }
+        assertEquals(SyncOutcome.CLOCK_CHANGED, engine.sync()!!.outcome)
+        // The user accepts the clock as it is now.
+        store.write(store.read().with(clock = null).fromTheStart())
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertEquals(123 + 95, health.records.size)
+        assertEquals(Instant.ofEpochMilli(under.firstMinuteEnd - machineAhead), health.records.getValue("rr-$tag-${under.firstMinuteEnd}").time)
+    }
+
+    @Test
+    fun `when the rules for a reading change, every night is looked at again`() = runTest {
+        val old = Night(machineNow - 20 * 24 * hour, rates(70))
+        val recent = first
+        machine.nights = listOf(old, recent)
+        engine.sync()
+        assertEquals(SessionReadings.RULES_VERSION, store.read().rulesVersion)
+        // As an earlier version of the app would have left it: other rules, and the old night's
+        // records lost from Health Connect and from the record.
+        val state = store.read()
+        store.write(state.with(rulesVersion = SessionReadings.RULES_VERSION - 1, ledger = state.ledger.filterValues { it.firstMinuteEnd.epochMs != old.firstMinuteEnd }))
+        health.records.keys.removeAll { it.endsWith("-${old.firstMinuteEnd}") }
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertHolds(listOf(old, recent))
     }
 
     @Test

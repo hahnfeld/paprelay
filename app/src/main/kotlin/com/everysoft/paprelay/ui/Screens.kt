@@ -393,7 +393,8 @@ private fun syncLinks(sync: SyncStatus, healthAllowed: Boolean): SyncLinks {
         SyncOutcome.COMPLETE, SyncOutcome.PARTIAL -> SyncLinks(LinkState.OK, LinkState.OK, phoneFault = false)
         // Out of range is the ordinary state of a phone that is not at home; nothing is wrong.
         SyncOutcome.MACHINE_AWAY, null -> SyncLinks(LinkState.READY, idleHealth, phoneFault = false)
-        SyncOutcome.BLUETOOTH_OFF, SyncOutcome.BLUETOOTH_NOT_ALLOWED, SyncOutcome.INTERNAL -> SyncLinks(LinkState.READY, idleHealth, phoneFault = true)
+        SyncOutcome.BLUETOOTH_OFF, SyncOutcome.BLUETOOTH_NOT_ALLOWED, SyncOutcome.PHONE_CLOCK_WRONG, SyncOutcome.INTERNAL,
+        -> SyncLinks(LinkState.READY, idleHealth, phoneFault = true)
         SyncOutcome.HEALTH_CONNECT_NOT_ALLOWED -> SyncLinks(LinkState.READY, LinkState.NONE, phoneFault = false)
         SyncOutcome.HEALTH_CONNECT_UNAVAILABLE, SyncOutcome.HEALTH_CONNECT_FAILED -> SyncLinks(LinkState.READY, LinkState.FAILED, phoneFault = false)
         SyncOutcome.NOT_PAIRED -> SyncLinks(LinkState.NONE, idleHealth, phoneFault = false)
@@ -709,6 +710,7 @@ private fun syncLine(sync: SyncStatus): String {
             SyncOutcome.MACHINE_AWAY -> stringResource(R.string.sync_machine_away)
             SyncOutcome.BLUETOOTH_OFF -> stringResource(R.string.detail_bluetooth_off)
             SyncOutcome.BLUETOOTH_NOT_ALLOWED -> stringResource(R.string.sync_bluetooth_not_allowed)
+            SyncOutcome.PHONE_CLOCK_WRONG -> stringResource(R.string.sync_phone_clock_wrong)
             SyncOutcome.HEALTH_CONNECT_NOT_ALLOWED -> stringResource(R.string.sync_hc_not_allowed)
             SyncOutcome.HEALTH_CONNECT_UNAVAILABLE -> stringResource(R.string.detail_hc_unavailable)
             SyncOutcome.PAIRING_REJECTED -> stringResource(R.string.sync_pairing_rejected)
