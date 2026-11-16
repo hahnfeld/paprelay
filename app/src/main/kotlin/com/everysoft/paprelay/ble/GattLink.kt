@@ -255,7 +255,7 @@ class GattLink private constructor(
 
                 try {
                     withTimeoutOrNull(connectTimeoutMs) { callback.connected.await() }
-                        ?: throw As11TransportException("the machine did not answer")
+                        ?: throw NoAnswerException("the machine did not answer")
                 } catch (e: As11TransportException) {
                     if (callback.connectFailureStatus == GATT_ERROR) throw RetryableConnectFailure(e)
                     throw e

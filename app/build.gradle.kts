@@ -4,6 +4,11 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+val commit = providers.exec {
+    commandLine("git", "rev-parse", "--short", "HEAD")
+    isIgnoreExitValue = true
+}.standardOutput.asText
+
 android {
     namespace = "com.everysoft.paprelay"
     compileSdk {
@@ -26,7 +31,8 @@ android {
         }
         debug {
             applicationIdSuffix = ".debug"
-            versionNameSuffix = "-debug"
+            // The commit, so that a report says which build wrote it.
+            versionNameSuffix = "-debug+" + (commit.orNull?.trim()?.ifEmpty { null } ?: "unknown")
         }
     }
 

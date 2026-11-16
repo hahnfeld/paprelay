@@ -100,8 +100,19 @@ class AdvertisementTest {
         // A long (extended) advertisement is described up to the length of an ordinary one, and no further.
         val long = flags + field(0xFF, ByteArray(200) { 0x41 })
         val described = Advertisement.redactedHex(long)
-        assertEquals("020106" + "C9FF" + "xx".repeat(62 - 5) + "(+${long.size - 62} bytes)", described)
+        assertEquals("020106" + "xx".repeat(62 - 3) + "(+${long.size - 62} bytes)", described)
+        // A structure of ordinary length inside a long payload is still walked.
+        val longer = flags + field(0xFF, ByteArray(20) { 0x41 }) + field(0xFF, ByteArray(60) { 0x42 })
+        assertEquals("020106" + "15FF" + "xx".repeat(20) + "xx".repeat(62 - 25) + "(+${longer.size - 62} bytes)", Advertisement.redactedHex(longer))
         assertFalse(described.contains("41"))
+
+        // A name one byte longer than its structure admits: the last digit is left over on its own,
+        // and a byte with nothing after it is not shown, whatever it is.
+        val short = byteArrayOf(0x0D, 0x09) + "ResMed 123456".toByteArray()
+        assertEquals("020106" + "0D09" + "xx".repeat(12) + "xx", Advertisement.redactedHex(flags + short))
+        // Followed by a scan response, the stray digit sits where a header would be; it is not shown either.
+        val withResponse = Advertisement.redactedHex(flags + short + field(0x03, byteArrayOf(0x56, 0xFD.toByte())))
+        assertFalse(withResponse.contains("36"), withResponse)
 
         // And so is a structure that runs off the end.
         assertEquals("020106" + "0909" + "xx".repeat(3), Advertisement.redactedHex(flags + byteArrayOf(0x09, 0x09, 0x52, 0x65, 0x73)))

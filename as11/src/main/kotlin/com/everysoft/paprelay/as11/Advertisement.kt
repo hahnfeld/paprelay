@@ -102,12 +102,15 @@ public class Advertisement internal constructor(
                 // A type no advertisement uses means the walk has lost its place, usually because
                 // an earlier structure lied about its length; what looks like a header is then
                 // somebody's data, so not even that is shown.
-                if (length != 0 && at + 1 < payload.size && (payload[at + 1].toInt() and 0xFF) !in KNOWN_TYPES) {
+                val lostPlace = length > MAX_STRUCTURE_LENGTH || // longer than an ordinary advertisement can hold
+                    at + 1 >= payload.size || // a last byte with nothing after it: not a header at all
+                    (payload[at + 1].toInt() and 0xFF) !in KNOWN_TYPES
+                if (length != 0 && lostPlace) {
                     blank(payload.size - at)
                     break
                 }
                 hex(payload[at])
-                if (length == 0 || at + 1 >= payload.size) {
+                if (length == 0) {
                     blank(payload.size - at - 1)
                     break
                 }
@@ -142,6 +145,7 @@ public class Advertisement internal constructor(
         private const val TYPE_TX_POWER = 0x0A
         private const val MAX_SHOWN_UUID_BYTES = 8
         private const val MAX_DESCRIBED_BYTES = 62
+        private const val MAX_STRUCTURE_LENGTH = 0x1F
         private val SHOWN_TYPES = setOf(TYPE_FLAGS, TYPE_UUID16_INCOMPLETE, TYPE_UUID16_COMPLETE, TYPE_TX_POWER)
         private const val TYPE_LE_ADDRESS = 0x1B
 

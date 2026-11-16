@@ -30,6 +30,7 @@ import com.everysoft.paprelay.as11.SpoolName
 import com.everysoft.paprelay.ble.BluetoothOffException
 import com.everysoft.paprelay.ble.GattLink
 import com.everysoft.paprelay.ble.MachineScanner
+import com.everysoft.paprelay.ble.NoAnswerException
 import com.everysoft.paprelay.ble.Sighting
 import com.everysoft.paprelay.hc.HealthConnectProbe
 import com.everysoft.paprelay.hc.HealthConnectUnresponsiveException
@@ -348,7 +349,8 @@ class DeviceCheck(
                     if (mine == null) {
                         // Not a failure: a paired machine has been seen to accept a direct connection
                         // while no scan could hear it. The next step finds out.
-                        looked = mainScanRan || filtered != null
+                        // The filtered scan alone is too short a look to conclude the machine is away.
+                        looked = mainScanRan
                         note(
                             if (mainScanRan) {
                                 "  paired machine not heard in a scan; ${found.size} other AirSense-like device(s) in range"
@@ -359,7 +361,9 @@ class DeviceCheck(
                         throw Observation(Message(R.string.detail_paired_not_seen))
                     }
                     // In a building with several machines the report must say which line is this one.
-                    note("  paired machine heard${if (inScan >= 0) " (machine ${inScan + 1} above)" else ""}: looks like a machine=${mine.advertisement.looksLikeAirSense}")
+                    note("  paired machine heard${if (inScan in 0 until MAX_LISTED) " (machine ${inScan + 1} above)" else ""}: looks like a machine=${mine.advertisement.looksLikeAirSense}")
+                    // Beyond the lines listed above, it has not been described yet.
+                    if (inScan >= MAX_LISTED) note("  paired machine: ${describe(mine)}")
                     target = mine.device
                     Message(R.string.detail_paired_found, signal(mine.rssi))
                 } else {
@@ -442,7 +446,13 @@ class DeviceCheck(
                         null
                     }
                 }
-                note("  paired machine ${if (seen != null) "seen advertising" else "not seen advertising; trying a direct connection"}")
+                note(
+                    "  paired machine " + when {
+                        seen != null -> "seen advertising"
+                        looked -> "not seen advertising; trying a direct connection"
+                        else -> "not looked for, as no scan could run; trying a direct connection"
+                    },
+                )
                 val device = seen ?: scanner.deviceByAddress(paired.address)
                     ?: throw CheckFailure(Message(R.string.detail_bluetooth_off), onPhone = true)
                 val opened = try {
@@ -450,8 +460,9 @@ class DeviceCheck(
                     // if it is simply not there the wait is wasted, so it is kept short. That is only
                     // fair when a scan actually looked for it.
                     GattLink.open(context, device, if (seen != null || !looked) CONNECT_MS else UNSEEN_CONNECT_MS)
-                } catch (e: As11TransportException) {
-                    // Bluetooth going off is its own story, not a machine out of range.
+                } catch (e: NoAnswerException) {
+                    // Nothing answered a machine no scan had heard: most likely it is not there.
+                    // Any other failure means something did answer, and is reported as itself.
                     if (seen != null || !looked || phoneBluetoothOff(e)) throw e
                     note("  ${code(e)}")
                     throw CheckFailure(Message(R.string.detail_not_in_range))

@@ -104,7 +104,7 @@
     <string name="detail_not_paired">No machine is paired.</string>
     <string name="detail_not_attempted">This step was not tried.</string>
     <string name="detail_not_in_reconnect">This step is not part of a connection check.</string>
-    <string name="detail_not_in_range">The machine is not in range.</string>
+    <string name="detail_not_in_range">The machine did not answer. It may be out of range.</string>
     <string name="detail_session_ok">The connection is encrypted. The machine confirmed it.</string>
     <string name="detail_no_session">There is no secure connection.</string>
     <string name="detail_no_serial">The machine did not report a serial number.</string>

@@ -104,12 +104,14 @@ class MachineScanner(context: Context) {
             else -> null
         }
         // Not only the original kind of advertisement: a machine may use the extended kind,
-        // which the default settings would never deliver. The radio band is left at its
-        // default: asking for every band halves the listening on the usual one, and fails
-        // silently on a phone that lacks the long-range one.
+        // which the default settings would never deliver. Once that is asked for, the default
+        // is to listen on the long-range band as well, which takes listening time from the
+        // usual one and is not there on every phone; the usual band is named, since extended
+        // advertisements are announced on it too.
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .setLegacy(false)
+            .setPhy(BluetoothDevice.PHY_LE_1M)
             .build()
         scanner.startScan(filters, settings, callback)
         val outcome = try {
