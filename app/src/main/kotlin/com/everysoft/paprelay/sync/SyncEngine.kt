@@ -274,11 +274,13 @@ class SyncEngine(
             address = SpoolAddress.Continuation(round.next ?: break)
         }
         // Where the next run begins: at the newest session (it may still be in progress and grow),
-        // or before the first thing that went wrong. A hold that has lasted too long gives way,
-        // or one night that can never be read would have every run re-read months of history.
-        val held = if (troubled) lastBeforeTrouble ?: from else null
+        // or, if something could not be dealt with, before it, so that it is read again. How far
+        // before is bounded: never more than the hold limit back from now. A night that still
+        // cannot be read when it is that old stops being asked for, or every run would read
+        // months of history again for its sake. (Where the trouble came before any session that
+        // could be read, there is no telling how old it is, and the bound alone decides.)
         val resume = when {
-            held != null && machineNow.epochMs - held <= HOLD_LIMIT_MS -> held
+            troubled -> minOf(maxOf(lastBeforeTrouble ?: Long.MIN_VALUE, machineNow.epochMs - HOLD_LIMIT_MS), newest ?: Long.MAX_VALUE)
             else -> newest
         }
         progress.state = progress.state.with(
@@ -323,7 +325,7 @@ class SyncEngine(
         const val DRIFT_PER_DAY_MS = 3_000L
         const val DAY_MS = 24L * 60 * 60 * 1000
 
-        /** How long the place to resume from waits behind a night that cannot be read. */
+        /** How far back the place to resume from is kept for the sake of a night that cannot be read. */
         const val HOLD_LIMIT_MS = 30 * DAY_MS
 
         /** Sessions of at least this many minutes show that a software version's data is read correctly. */

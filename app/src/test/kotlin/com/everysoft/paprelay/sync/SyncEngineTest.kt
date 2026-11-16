@@ -315,7 +315,38 @@ class SyncEngineTest {
         assertEquals(SyncOutcome.PARTIAL, engine.sync()!!.outcome)
         assertHolds(listOf(old, recent))
         // Not at the old night: every later run would otherwise re-read forty days for nothing.
+        assertEquals(machineNow + 20 - SyncEngine.HOLD_LIMIT_MS, store.read().resumeFromMs)
+        // The next run no longer sees it, and has nothing to complain of.
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
         assertEquals(recent.firstMinuteEnd, store.read().resumeFromMs)
+    }
+
+    @Test
+    fun `a night that cannot be read is asked for again even when nothing readable came before it`() = runTest {
+        val broken = Night(machineNow - 30 * hour, rates(90), kind = 2)
+        val after = Night(machineNow - 6 * hour, rates(101))
+        machine.nights = listOf(broken, after)
+        assertEquals(SyncOutcome.PARTIAL, engine.sync()!!.outcome)
+        assertHolds(listOf(after))
+        // Still not readable an hour later: still said, and not passed over.
+        phoneNow += hour
+        assertEquals(SyncOutcome.PARTIAL, engine.sync()!!.outcome)
+        assertNull(store.read().lastCompleteAtMs)
+        // Once it can be read, it is.
+        val mended = Night(broken.firstMinuteEnd, broken.rates)
+        machine.nights = listOf(mended, after)
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertHolds(listOf(mended, after))
+
+        // And a machine none of whose nights can be read is not reported as in step either.
+        val lone = Night(machineNow - 2 * hour, rates(50), kind = 2)
+        machine.nights = listOf(mended, after, lone)
+        phoneNow += hour
+        assertEquals(SyncOutcome.PARTIAL, engine.sync()!!.outcome)
+        phoneNow += hour
+        assertEquals(SyncOutcome.PARTIAL, engine.sync()!!.outcome)
     }
 
     @Test
