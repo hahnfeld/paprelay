@@ -53,7 +53,17 @@ class HealthConnectProbe(private val context: Context) {
         exclusive.withLock { writeAndRemoveLocked() }
     }
 
+    /**
+     * True if the last [writeAndRemove] could not confirm that its test value is
+     * gone. It is then removed by [removeLeftover] at the next app start, or by
+     * the next check. Cleared when a new attempt begins.
+     */
+    @Volatile
+    var testValueMayRemain: Boolean = false
+        private set
+
     private suspend fun writeAndRemoveLocked(): ProbeResult {
+        testValueMayRemain = false
         val client = HealthConnectClient.getOrCreate(context)
         val now = Instant.now()
         val record = RespiratoryRateRecord(
@@ -69,13 +79,17 @@ class HealthConnectProbe(private val context: Context) {
         var written = 0
         var removed = false
         var refusal: Exception? = null
+        // False while the write has neither succeeded nor been refused: given up on, it may still land.
+        var writeSettled = false
         val finished = withTimeoutOrNull(LIMIT_MS) {
             try {
                 written = client.insertRecords(listOf(record)).recordIdsList.size
+                writeSettled = true
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 refusal = e
+                writeSettled = true
             }
             // Removed even after a failed write: the failure may have been in the reply, not the write.
             for (attempt in 1..2) {
@@ -97,18 +111,21 @@ class HealthConnectProbe(private val context: Context) {
         if (finished == null) {
             // The write may still land after being given up on, so try once more to remove it.
             // If this fails too, the next successful check removes it: the record id is fixed.
-            withTimeoutOrNull(RETRY_LIMIT_MS) {
+            val retried = withTimeoutOrNull(RETRY_LIMIT_MS) {
                 runCatching {
                     client.deleteRecords(
                         RespiratoryRateRecord::class,
                         recordIdsList = emptyList(),
                         clientRecordIdsList = listOf(PROBE_ID),
                     )
-                }
+                }.isSuccess
             }
+            // A removal that succeeded proves nothing if the write was still on its way.
+            testValueMayRemain = retried != true || !writeSettled
             // If the write had already been refused, that is the more useful thing to report.
             throw refusal ?: HealthConnectUnresponsiveException()
         }
+        testValueMayRemain = !removed
         refusal?.let { throw it }
         return ProbeResult(written, removed)
     }

@@ -210,7 +210,8 @@ private fun Caption(@StringRes text: Int) {
         style = MaterialTheme.typography.labelMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         textAlign = TextAlign.Center,
-        maxLines = 2,
+        // Three, so that a name of three words in another language still fits when it must wrap.
+        maxLines = 3,
         overflow = TextOverflow.Ellipsis,
     )
 }

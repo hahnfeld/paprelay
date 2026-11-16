@@ -219,6 +219,7 @@ class GattLink private constructor(
                 attempt(context, device, connectTimeoutMs, attemptNumber = 1)
             } catch (e: RetryableConnectFailure) {
                 delay(RETRY_PAUSE_MS)
+                if (adapter.isEnabled != true) throw BluetoothOffException("Bluetooth was turned off")
                 try {
                     attempt(context, device, connectTimeoutMs, attemptNumber = 2)
                 } catch (again: RetryableConnectFailure) {
@@ -254,7 +255,7 @@ class GattLink private constructor(
 
                 try {
                     withTimeoutOrNull(connectTimeoutMs) { callback.connected.await() }
-                        ?: throw As11TransportException("the machine did not answer")
+                        ?: throw NoAnswerException("the machine did not answer")
                 } catch (e: As11TransportException) {
                     if (callback.connectFailureStatus == GATT_ERROR) throw RetryableConnectFailure(e)
                     throw e

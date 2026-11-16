@@ -30,6 +30,7 @@ import com.everysoft.paprelay.as11.SpoolName
 import com.everysoft.paprelay.ble.BluetoothOffException
 import com.everysoft.paprelay.ble.GattLink
 import com.everysoft.paprelay.ble.MachineScanner
+import com.everysoft.paprelay.ble.NoAnswerException
 import com.everysoft.paprelay.ble.Sighting
 import com.everysoft.paprelay.hc.HealthConnectProbe
 import com.everysoft.paprelay.hc.HealthConnectUnresponsiveException
@@ -40,6 +41,8 @@ import com.everysoft.paprelay.pairing.PairingStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -171,8 +174,11 @@ class DeviceCheck(
         // A cancelled run is still unwinding until it completes; wait for that. And a run
         // must not begin on a pairing that is in the middle of being forgotten.
         if (job?.isCompleted == false || _forgetting.value) return
+        _stopping.value = false
         _running.value = true
-        job = scope.launch {
+        // Atomic: a run stopped before it has been given a thread still reaches its clean-up.
+        @OptIn(DelicateCoroutinesApi::class)
+        job = scope.launch(start = CoroutineStart.ATOMIC) {
             try {
                 _steps.value = template()
                 synchronized(report) {
@@ -189,8 +195,11 @@ class DeviceCheck(
             } finally {
                 _passkeyRequest.value = null
                 _machineChoice.value = null
-                _stopping.value = false
+                // "running" first, so the screen never shows a run that is over as still stopping.
+                // A Stop that arrives in the instant before the job completes can still set
+                // "stopping" again; nothing reads it while no run is shown, and start() clears it.
                 _running.value = false
+                _stopping.value = false
             }
         }
     }
@@ -243,8 +252,14 @@ class DeviceCheck(
             if (!allowed) throw CheckFailure(Message(R.string.detail_hc_no_permission), onPhone = true)
             val result = try {
                 healthConnect.writeAndRemove()
-            } catch (e: android.os.RemoteException) {
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (healthConnect.testValueMayRemain) {
+                    note("  the test value may still be in Health Connect; PAPRelay removes it the next time the app starts or a check runs")
+                }
                 // Health Connect's own "something went wrong inside" arrives as this, with no code.
+                if (e !is android.os.RemoteException) throw e
                 note("  ${code(e)}")
                 throw CheckFailure(Message(R.string.error_hc_failed), onPhone = true)
             }
@@ -279,32 +294,76 @@ class DeviceCheck(
         var target: BluetoothDevice? = null
         // True once a full check has scanned for an already-paired machine; `target` then says whether it was seen.
         var scannedForPaired = false
+        // False if every attempt to scan for the paired machine was refused, so that nothing is known about it.
+        var looked = true
         if (full) {
             val alreadyPaired = (state as? PairingState.Paired)?.pairing
             val scanned = step(SCAN) {
                 if (!scanner.bluetoothEnabled) throw CheckFailure(Message(R.string.detail_bluetooth_off), onPhone = true)
-                val found = scanner.scan(SCAN_MS, platformFilter = false)
-                found.forEachIndexed { index, sighting -> note("  machine ${index + 1}: ${describe(sighting)}") }
-                // Whether the system's own scan filter can see this machine decides how
-                // background discovery has to work. Recorded in the report only.
+                // For a paired machine the scan ends the moment its address is heard, and whatever it
+                // sends is recorded: once paired, a machine need not announce itself the way it
+                // does while it waits to be paired.
+                val heard = try {
+                    scanner.scan(
+                        if (alreadyPaired != null) PAIRED_SCAN_MS else SCAN_MS,
+                        platformFilter = false,
+                        stopAtAddress = alreadyPaired?.address,
+                    )
+                } catch (e: As11TransportException) {
+                    // Without a pairing there is nothing to do but report it. With one, a scan that
+                    // could not run (Android refuses too many in a short time) is only a missed
+                    // look: the connection that follows needs no scan. Bluetooth being off is not that.
+                    if (alreadyPaired == null || phoneBluetoothOff(e)) throw e
+                    note("  scan could not run: ${code(e)}")
+                    null
+                }
+                val mainScanRan = heard != null
+                val found = heard.orEmpty()
+                found.take(MAX_LISTED).forEachIndexed { index, sighting -> note("  machine ${index + 1}: ${describe(sighting)}") }
+                if (found.size > MAX_LISTED) note("  and ${found.size - MAX_LISTED} more, not listed")
+                // Whether the system's own scan filters can see this machine decides how background
+                // discovery has to work: by service while unpaired, by address once paired.
+                // Recorded in the report only.
                 val filtered = try {
-                    scanner.scan(FILTER_SCAN_MS, platformFilter = true).size
+                    if (alreadyPaired != null) {
+                        scanner.scan(FILTER_SCAN_MS, platformFilter = false, stopAtAddress = alreadyPaired.address, addressFilter = true)
+                    } else {
+                        scanner.scan(FILTER_SCAN_MS, platformFilter = true)
+                    }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
+                    if (phoneBluetoothOff(e)) throw e
                     null
                 }
-                note("  system scan filter: ${filtered?.let { "saw $it machine(s)" } ?: "could not run"}")
+                note("  system ${if (alreadyPaired != null) "address" else "service"} filter: ${filtered?.let { "saw ${it.size} machine(s)" } ?: "could not run"}")
 
                 if (alreadyPaired != null) {
                     // Nothing to choose: the question is only whether the paired machine is there.
                     scannedForPaired = true
-                    val mine = found.firstOrNull { it.device.address.equals(alreadyPaired.address, ignoreCase = true) }
+                    val inScan = found.indexOfFirst { it.device.address.equals(alreadyPaired.address, ignoreCase = true) }
+                    // Heard by either scan is heard; the filtered one's sighting is as good as the other's.
+                    val mine = found.getOrNull(inScan)
+                        ?: filtered?.firstOrNull { it.device.address.equals(alreadyPaired.address, ignoreCase = true) }
+                            ?.also { note("  paired machine, by the address filter only: ${describe(it)}") }
                     if (mine == null) {
-                        // Tells "out of range" apart from "its address changed".
-                        note("  paired machine not seen; ${found.size} other AirSense-like device(s) in range")
+                        // Not a failure: a paired machine has been seen to accept a direct connection
+                        // while no scan could hear it. The next step finds out.
+                        // The filtered scan alone is too short a look to conclude the machine is away.
+                        looked = mainScanRan
+                        note(
+                            if (mainScanRan) {
+                                "  paired machine not heard in a scan; ${found.size} other AirSense-like device(s) in range"
+                            } else {
+                                "  paired machine not heard; the scan could not run, so nothing is known about what is in range"
+                            },
+                        )
                         throw Observation(Message(R.string.detail_paired_not_seen))
                     }
+                    // In a building with several machines the report must say which line is this one.
+                    note("  paired machine heard${if (inScan in 0 until MAX_LISTED) " (machine ${inScan + 1} above)" else ""}: looks like a machine=${mine.advertisement.looksLikeAirSense}")
+                    // Beyond the lines listed above, it has not been described yet.
+                    if (inScan >= MAX_LISTED) note("  paired machine: ${describe(mine)}")
                     target = mine.device
                     Message(R.string.detail_paired_found, signal(mine.rssi))
                 } else {
@@ -376,17 +435,35 @@ class DeviceCheck(
                 val seen: BluetoothDevice? = when {
                     target != null -> target
                     scannedForPaired -> null
-                    else -> scanner.scan(SCAN_MS, platformFilter = false, stopAtAddress = paired.address)
-                        .firstOrNull { it.device.address.equals(paired.address, ignoreCase = true) }?.device
+                    else -> try {
+                        scanner.scan(SCAN_MS, platformFilter = false, stopAtAddress = paired.address)
+                            .firstOrNull { it.device.address.equals(paired.address, ignoreCase = true) }?.device
+                    } catch (e: As11TransportException) {
+                        // A scan that could not run is a missed look; the connection needs none.
+                        if (phoneBluetoothOff(e)) throw e
+                        note("  scan could not run: ${code(e)}")
+                        looked = false
+                        null
+                    }
                 }
-                note("  paired machine ${if (seen != null) "seen advertising" else "not seen advertising; trying a direct connection"}")
+                note(
+                    "  paired machine " + when {
+                        seen != null -> "seen advertising"
+                        looked -> "not seen advertising; trying a direct connection"
+                        else -> "not looked for, as no scan could run; trying a direct connection"
+                    },
+                )
                 val device = seen ?: scanner.deviceByAddress(paired.address)
                     ?: throw CheckFailure(Message(R.string.detail_bluetooth_off), onPhone = true)
                 val opened = try {
-                    // A machine that is not advertising cannot be connected to, so do not wait long for it.
-                    GattLink.open(context, device, if (seen != null) CONNECT_MS else UNSEEN_CONNECT_MS)
-                } catch (e: As11TransportException) {
-                    if (seen != null) throw e
+                    // A machine no scan has heard may still answer (a paired one has been seen to), but
+                    // if it is simply not there the wait is wasted, so it is kept short. That is only
+                    // fair when a scan actually looked for it.
+                    GattLink.open(context, device, if (seen != null || !looked) CONNECT_MS else UNSEEN_CONNECT_MS)
+                } catch (e: NoAnswerException) {
+                    // Nothing answered a machine no scan had heard: most likely it is not there.
+                    // Any other failure means something did answer, and is reported as itself.
+                    if (seen != null || !looked || phoneBluetoothOff(e)) throw e
                     note("  ${code(e)}")
                     throw CheckFailure(Message(R.string.detail_not_in_range))
                 }
@@ -438,7 +515,12 @@ class DeviceCheck(
                 }
             }
 
-            step(DOWNLOAD) {
+            if (session.terminated.isCompleted) {
+                // The connection has ended. If an earlier step failed it has said why; if the link
+                // dropped between steps nothing has, so the reason is written down here.
+                note("  not downloaded; the connection ended: ${code(session.terminated.await())}")
+                skip(DOWNLOAD, Message(R.string.detail_no_session))
+            } else step(DOWNLOAD) {
                 val directory = withContext(Dispatchers.IO) {
                     dataDirectory().apply {
                         deleteRecursively() // never mix rounds from different runs
@@ -474,6 +556,8 @@ class DeviceCheck(
                         throw e
                     } catch (e: Exception) {
                         // One log failing must not hide whether the others work.
+                        // With Bluetooth off there is nothing more to learn log by log; the step says so.
+                        if (phoneBluetoothOff(e)) throw e
                         note("  ${spool.wireName}: FAILED ${code(e)}")
                         if (!isPhoneSide(e)) machineFault = true
                         if (session.terminated.isCompleted) {
@@ -520,10 +604,13 @@ class DeviceCheck(
 
     private fun describe(s: Sighting): String =
         "rssi ${s.rssi} name=${if (s.advertisement.localName != null) "present" else "absent"} " +
-            "truncated=${s.advertisement.truncated} uuids=${s.advertisement.serviceUuids16.map { it.toString(16) }} " +
-            "platformName=${s.platformSawName} platformService=${s.platformSawService}" +
+            // Not the list itself: a payload can dress anything up as a list of service numbers.
+            "truncated=${s.advertisement.truncated} machineService=${MACHINE_SERVICE in s.advertisement.serviceUuids16} " +
+            "serviceCount=${s.advertisement.serviceUuids16.size} " +
+            "platformName=${s.platformSawName} platformService=${s.platformSawService} " +
+            "connectable=${s.connectable} legacy=${s.legacy}" +
             (if (Build.VERSION.SDK_INT >= 35) " addressType=${s.device.addressType}" else "") +
-            " adv=${s.redactedHex}"
+            " adv=${s.redactedHex.ifEmpty { "(none)" }}"
 
     /** Runs one step. Returns true if it passed, false if it failed or only made an observation. */
     private suspend fun step(id: String, body: suspend () -> Message): Boolean {
@@ -544,9 +631,26 @@ class DeviceCheck(
             true
         } catch (e: Exception) {
             note("  ${code(e)}")
-            set(id, StepState.FAILED, explain(e), onPhone = isPhoneSide(e))
+            if (phoneBluetoothOff(e)) {
+                set(id, StepState.FAILED, Message(R.string.detail_bluetooth_off), onPhone = true)
+            } else {
+                set(id, StepState.FAILED, explain(e), onPhone = isPhoneSide(e))
+            }
             false
         }
+    }
+
+    /**
+     * Whether Bluetooth being off on this phone explains a failure. The radio's own
+     * report of a lost link can arrive before the notice that Bluetooth was switched
+     * off, so a link failure with Bluetooth now off is counted too.
+     */
+    private fun phoneBluetoothOff(e: Throwable): Boolean {
+        if (bluetoothOff(e)) return true
+        val linkFailure = generateSequence(e) { it.cause?.takeIf { cause -> cause !== it } }
+            .take(MAX_CAUSE_DEPTH)
+            .any { it is As11TransportException || it is As11TimeoutException }
+        return linkFailure && !scanner.bluetoothEnabled
     }
 
     /** Whether a failure lies with this phone and not with the machine or the link to it. */
@@ -607,7 +711,14 @@ class DeviceCheck(
         const val DOWNLOAD = CheckSteps.DOWNLOAD
 
         const val SCAN_MS = 8_000L
-        const val FILTER_SCAN_MS = 5_000L
+
+        /** The machine's 16-bit service number, and how many sightings a report lists. */
+        const val MACHINE_SERVICE = 0xFD56
+        const val MAX_LISTED = 8
+
+        /** Shorter: nothing has to be chosen, and the connection attempt that follows is the real test. */
+        const val PAIRED_SCAN_MS = 5_000L
+        const val FILTER_SCAN_MS = 4_000L
         const val CONNECT_MS = 20_000L
         const val UNSEEN_CONNECT_MS = 6_000L
         const val RECONNECT_PAUSE_MS = 6_000L
@@ -674,7 +785,7 @@ class DeviceCheck(
             else -> healthConnectError(e)?.let {
                 // Its "not permitted" is the one fault the user can put right, so it keeps its own advice.
                 if (it.errorCode == android.health.connect.HealthConnectException.ERROR_SECURITY) {
-                    Message(R.string.error_permission)
+                    Message(R.string.detail_hc_no_permission)
                 } else {
                     Message(R.string.error_hc_reported, it.errorCode)
                 }

@@ -18,8 +18,9 @@ Health Connect test value, which it removes again.
 
 ## Run it
 
-Open PAPRelay and choose **Run device check**. Grant the Bluetooth permission
-and the Health Connect permission when asked. When the machine shows a
+Open PAPRelay and choose **Run device check**. When asked, allow PAPRelay to
+find nearby devices (Android's name for the Bluetooth permission) and to write
+to Health Connect. When the machine shows a
 four-digit code, type it in.
 
 When it finishes, choose **Save report** and save the file. The report holds
@@ -30,14 +31,13 @@ advertised name.
 
 | Step | Question it answers | If it fails |
 |---|---|---|
-| Health Connect accepts writes | Can a build installed outside Google Play write to Health Connect? | Nothing else matters until this works; the app would need Play distribution. |
-| Machine is in range | Does the machine's malformed advertisement survive Android's scanner? | Pairing by address only. |
-| System scan filter | Can the system filter scans for this machine? | Noted, not a failure. Background discovery would have to scan unfiltered. |
-| Pairing | Does the key exchange work from Android? | Compare the Bluetooth log with the reference client's sequence. |
-| Encrypted session | Does the machine accept a new connection and prove itself? | See "Reconnect checks" below. |
-| Machine identity | Is this the machine that was paired? | The check stops; nothing is downloaded. |
+| Health Connect | Can a build installed outside Google Play write to Health Connect? | Nothing else matters until this works; the app would need Play distribution. |
+| Find the machine | Does the machine's malformed advertisement survive Android's scanner? Can the system filter scans for it? | Not found: pairing by address only. Filter not usable: noted, not a failure; background discovery would have to scan unfiltered. |
+| Pair | Does the key exchange work from Android? | Compare the Bluetooth log with the reference client's sequence. |
+| Connect securely | Does the machine accept a new connection and prove itself? | See "Reconnect checks" below. |
+| Confirm the machine | Is this the machine that was paired? | The check stops; nothing is downloaded. |
 | Machine clock | How far has the machine's clock drifted? | Informational. |
-| Stored data downloads and verifies | Are all four logs reachable, and does every round pass its hash? | A log that is unreachable changes what can be written to Health Connect. |
+| Download saved data | Are all four logs reachable, and does every round pass its hash? | A log that is unreachable changes what can be written to Health Connect. |
 
 ## Reconnect checks
 
