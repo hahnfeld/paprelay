@@ -79,13 +79,17 @@ class HealthConnectProbe(private val context: Context) {
         var written = 0
         var removed = false
         var refusal: Exception? = null
+        // False while the write has neither succeeded nor been refused: given up on, it may still land.
+        var writeSettled = false
         val finished = withTimeoutOrNull(LIMIT_MS) {
             try {
                 written = client.insertRecords(listOf(record)).recordIdsList.size
+                writeSettled = true
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 refusal = e
+                writeSettled = true
             }
             // Removed even after a failed write: the failure may have been in the reply, not the write.
             for (attempt in 1..2) {
@@ -116,7 +120,8 @@ class HealthConnectProbe(private val context: Context) {
                     )
                 }.isSuccess
             }
-            testValueMayRemain = retried != true
+            // A removal that succeeded proves nothing if the write was still on its way.
+            testValueMayRemain = retried != true || !writeSettled
             // If the write had already been refused, that is the more useful thing to report.
             throw refusal ?: HealthConnectUnresponsiveException()
         }

@@ -41,6 +41,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -175,6 +176,7 @@ class DeviceCheck(
         _stopping.value = false
         _running.value = true
         // Atomic: a run stopped before it has been given a thread still reaches its clean-up.
+        @OptIn(DelicateCoroutinesApi::class)
         job = scope.launch(start = CoroutineStart.ATOMIC) {
             try {
                 _steps.value = template()
@@ -192,8 +194,9 @@ class DeviceCheck(
             } finally {
                 _passkeyRequest.value = null
                 _machineChoice.value = null
-                // In this order, a Stop that arrives during clean-up cannot leave "stopping" set
-                // on a run that is no longer shown as running; start() clears it in any case.
+                // "running" first, so the screen never shows a run that is over as still stopping.
+                // A Stop that arrives in the instant before the job completes can still set
+                // "stopping" again; nothing reads it while no run is shown, and start() clears it.
                 _running.value = false
                 _stopping.value = false
             }
@@ -252,7 +255,7 @@ class DeviceCheck(
                 throw e
             } catch (e: Exception) {
                 if (healthConnect.testValueMayRemain) {
-                    note("  the test value may still be in Health Connect; PAPRelay removes it at its next start or check")
+                    note("  the test value may still be in Health Connect; PAPRelay removes it the next time the app starts or a check runs")
                 }
                 // Health Connect's own "something went wrong inside" arrives as this, with no code.
                 if (e !is android.os.RemoteException) throw e
@@ -294,28 +297,42 @@ class DeviceCheck(
             val alreadyPaired = (state as? PairingState.Paired)?.pairing
             val scanned = step(SCAN) {
                 if (!scanner.bluetoothEnabled) throw CheckFailure(Message(R.string.detail_bluetooth_off), onPhone = true)
-                val found = scanner.scan(SCAN_MS, platformFilter = false)
+                // For a paired machine the scan ends the moment its address is heard, and whatever it
+                // sends is recorded: once paired, a machine need not announce itself the way it
+                // does while it waits to be paired.
+                val found = scanner.scan(
+                    if (alreadyPaired != null) PAIRED_SCAN_MS else SCAN_MS,
+                    platformFilter = false,
+                    stopAtAddress = alreadyPaired?.address,
+                )
                 found.forEachIndexed { index, sighting -> note("  machine ${index + 1}: ${describe(sighting)}") }
-                // Whether the system's own scan filter can see this machine decides how
-                // background discovery has to work. Recorded in the report only.
+                // Whether the system's own scan filters can see this machine decides how background
+                // discovery has to work: by service while unpaired, by address once paired.
+                // Recorded in the report only.
                 val filtered = try {
-                    scanner.scan(FILTER_SCAN_MS, platformFilter = true).size
+                    if (alreadyPaired != null) {
+                        scanner.scan(FILTER_SCAN_MS, platformFilter = false, stopAtAddress = alreadyPaired.address, addressFilter = true).size
+                    } else {
+                        scanner.scan(FILTER_SCAN_MS, platformFilter = true).size
+                    }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
                     null
                 }
-                note("  system scan filter: ${filtered?.let { "saw $it machine(s)" } ?: "could not run"}")
+                note("  system ${if (alreadyPaired != null) "address" else "service"} filter: ${filtered?.let { "saw $it machine(s)" } ?: "could not run"}")
 
                 if (alreadyPaired != null) {
                     // Nothing to choose: the question is only whether the paired machine is there.
                     scannedForPaired = true
                     val mine = found.firstOrNull { it.device.address.equals(alreadyPaired.address, ignoreCase = true) }
                     if (mine == null) {
-                        // Tells "out of range" apart from "its address changed".
-                        note("  paired machine not seen; ${found.size} other AirSense-like device(s) in range")
+                        // Not a failure: a paired machine has been seen to accept a direct connection
+                        // while no scan could hear it. The next step finds out.
+                        note("  paired machine not heard in a scan; ${found.size} other AirSense-like device(s) in range")
                         throw Observation(Message(R.string.detail_paired_not_seen))
                     }
+                    note("  paired machine heard: looks like a machine=${mine.advertisement.looksLikeAirSense}")
                     target = mine.device
                     Message(R.string.detail_paired_found, signal(mine.rssi))
                 } else {
@@ -451,8 +468,9 @@ class DeviceCheck(
             }
 
             if (session.terminated.isCompleted) {
-                // The connection ended in an earlier step, which has said why. Trying again here
-                // would only report the same thing a second time.
+                // The connection has ended. If an earlier step failed it has said why; if the link
+                // dropped between steps nothing has, so the reason is written down here.
+                note("  not downloaded; the connection ended: ${code(session.terminated.await())}")
                 skip(DOWNLOAD, Message(R.string.detail_no_session))
             } else step(DOWNLOAD) {
                 val directory = withContext(Dispatchers.IO) {
@@ -490,9 +508,9 @@ class DeviceCheck(
                         throw e
                     } catch (e: Exception) {
                         // One log failing must not hide whether the others work.
-                        note("  ${spool.wireName}: FAILED ${code(e)}")
-                        // With Bluetooth off there is nothing more to learn log by log; say so plainly.
+                        // With Bluetooth off there is nothing more to learn log by log; the step says so.
                         if (phoneBluetoothOff(e)) throw e
+                        note("  ${spool.wireName}: FAILED ${code(e)}")
                         if (!isPhoneSide(e)) machineFault = true
                         if (session.terminated.isCompleted) {
                             note("  the connection ended; later logs were not attempted")
@@ -539,7 +557,8 @@ class DeviceCheck(
     private fun describe(s: Sighting): String =
         "rssi ${s.rssi} name=${if (s.advertisement.localName != null) "present" else "absent"} " +
             "truncated=${s.advertisement.truncated} uuids=${s.advertisement.serviceUuids16.map { it.toString(16) }} " +
-            "platformName=${s.platformSawName} platformService=${s.platformSawService}" +
+            "platformName=${s.platformSawName} platformService=${s.platformSawService} " +
+            "connectable=${s.connectable} legacy=${s.legacy}" +
             (if (Build.VERSION.SDK_INT >= 35) " addressType=${s.device.addressType}" else "") +
             " adv=${s.redactedHex}"
 
@@ -576,8 +595,13 @@ class DeviceCheck(
      * report of a lost link can arrive before the notice that Bluetooth was switched
      * off, so a link failure with Bluetooth now off is counted too.
      */
-    private fun phoneBluetoothOff(e: Throwable): Boolean =
-        bluetoothOff(e) || ((e is As11TransportException || e is As11TimeoutException) && !scanner.bluetoothEnabled)
+    private fun phoneBluetoothOff(e: Throwable): Boolean {
+        if (bluetoothOff(e)) return true
+        val linkFailure = generateSequence(e) { it.cause?.takeIf { cause -> cause !== it } }
+            .take(MAX_CAUSE_DEPTH)
+            .any { it is As11TransportException || it is As11TimeoutException }
+        return linkFailure && !scanner.bluetoothEnabled
+    }
 
     /** Whether a failure lies with this phone and not with the machine or the link to it. */
     private fun isPhoneSide(e: Throwable): Boolean = bluetoothOff(e) || when (e) {
@@ -637,7 +661,10 @@ class DeviceCheck(
         const val DOWNLOAD = CheckSteps.DOWNLOAD
 
         const val SCAN_MS = 8_000L
-        const val FILTER_SCAN_MS = 5_000L
+
+        /** Shorter: nothing has to be chosen, and the connection attempt that follows is the real test. */
+        const val PAIRED_SCAN_MS = 5_000L
+        const val FILTER_SCAN_MS = 4_000L
         const val CONNECT_MS = 20_000L
         const val UNSEEN_CONNECT_MS = 6_000L
         const val RECONNECT_PAUSE_MS = 6_000L
