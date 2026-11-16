@@ -130,8 +130,9 @@ class DeviceCheck(
     private val scanner: MachineScanner,
     private val healthConnect: HealthConnectProbe,
     private val healthRecords: HealthRecords,
-    /** Whether anything is switched on to be written to Health Connect. */
-    private val healthWanted: () -> Boolean,
+    /** Whether each is switched on to be written to Health Connect: the nights as health records, and respiratory rate. */
+    private val recordsWanted: () -> Boolean,
+    private val vitalsWanted: () -> Boolean,
     private val claim: MachineClaim,
     /** Removes what synchronising remembers about the machine, when the machine is forgotten. */
     private val forgetSync: suspend () -> Unit,
@@ -265,36 +266,38 @@ class DeviceCheck(
 
     private suspend fun execute(full: Boolean) {
         step(HEALTH) {
-            if (!healthConnect.available) throw CheckFailure(Message(R.string.detail_hc_unavailable), onPhone = true)
-            val vitals = withTimeoutOrNull(HEALTH_ANSWER_MS) { healthConnect.hasPermission() }
-                ?: throw HealthConnectUnresponsiveException()
             // Two things can be written: each night's figures as health records, where the phone keeps
-            // them, and respiratory rate. Whichever PAPRelay is allowed is proved; with neither, nothing can be.
-            val records = healthRecords.supported
-            val recordsAllowed = records && healthRecords.allowed
-            if (!vitals && !recordsAllowed) {
-                // Nothing switched on to go there is not a fault; something switched on and not allowed is.
-                if (!healthWanted()) throw Observation(Message(R.string.detail_hc_nothing))
-                throw CheckFailure(Message(R.string.detail_hc_no_permission), onPhone = true)
-            }
-            if (recordsAllowed) {
-                val accepted = try {
+            // them, and respiratory rate. What is switched on is proved; what is switched off is left alone.
+            val wantRecords = recordsWanted() && healthRecords.supported
+            val wantVitals = vitalsWanted()
+            if (!wantRecords && !wantVitals) throw Observation(Message(R.string.detail_hc_nothing))
+            if (!healthConnect.available) throw CheckFailure(Message(R.string.detail_hc_unavailable), onPhone = true)
+            if (wantRecords) {
+                if (!healthRecords.allowed) throw CheckFailure(Message(R.string.detail_records_not_allowed), onPhone = true)
+                val probe = try {
                     healthRecords.probe()
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
                     note("  health records: ${code(e)}")
-                    throw CheckFailure(Message(R.string.error_hc_failed), onPhone = true)
+                    val silent = generateSequence<Throwable>(e) { it.cause?.takeIf { cause -> cause !== it } }.take(MAX_CAUSE_DEPTH)
+                        .any { it is HealthConnectUnresponsiveException }
+                    throw CheckFailure(Message(if (silent) R.string.error_hc_unresponsive else R.string.error_hc_failed), onPhone = true)
                 }
-                note("  health records: test record accepted $accepted")
-                if (!accepted) throw CheckFailure(Message(R.string.detail_records_refused), onPhone = true)
+                // The reason, when there is one, is Health Connect's word about a made-up night: nothing of the user's.
+                note("  health records: trial night accepted ${probe.accepted}, removed ${probe.removed}" + (probe.reason?.let { " (${printable(it, limit = 300)})" } ?: ""))
+                if (!probe.accepted) throw CheckFailure(Message(R.string.detail_records_refused), onPhone = true)
+                if (!probe.removed) throw CheckFailure(Message(R.string.detail_hc_value_left), onPhone = true)
             } else {
-                note("  health records: " + if (records) "not allowed, so not tried" else "not on this phone")
+                note("  health records: " + if (healthRecords.supported) "switched off" else "not on this phone")
             }
-            if (!vitals) {
-                note("  respiratory rate: not allowed, so not tried")
+            if (!wantVitals) {
+                note("  respiratory rate: switched off")
                 return@step Message(R.string.detail_hc_ok)
             }
+            val vitals = withTimeoutOrNull(HEALTH_ANSWER_MS) { healthConnect.hasPermission() }
+                ?: throw HealthConnectUnresponsiveException()
+            if (!vitals) throw CheckFailure(Message(R.string.detail_hc_no_permission), onPhone = true)
             val result = try {
                 healthConnect.writeAndRemove()
             } catch (e: CancellationException) {

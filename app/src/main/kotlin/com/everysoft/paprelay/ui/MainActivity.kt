@@ -36,6 +36,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.everysoft.paprelay.PapRelayApp
 import com.everysoft.paprelay.R
+import com.everysoft.paprelay.sync.NightFile
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -83,8 +84,12 @@ private fun Root(app: PapRelayApp) {
     // can show that leg as ready; and whether it was asked and still does not, so the way to its
     // settings can be shown.
     var healthAllowed by rememberSaveable { mutableStateOf(false) }
+    var healthMissing by rememberSaveable { mutableStateOf(false) }
     var healthRefused by rememberSaveable { mutableStateOf(false) }
     var recordsAllowed by rememberSaveable { mutableStateOf(false) }
+    var respiratoryAllowed by rememberSaveable { mutableStateOf(false) }
+    // A choice the user tried to switch on and Health Connect did not allow: it stays off, and the row says why.
+    var refusedChoice by rememberSaveable { mutableStateOf("") }
     // Whether Android would pause the app, and with it synchronising, if it is not opened for months.
     var pausesWhenUnused by rememberSaveable { mutableStateOf(false) }
     val recordsSupported = remember { app.healthRecords.supported }
@@ -101,9 +106,12 @@ private fun Root(app: PapRelayApp) {
 
     fun refreshHealth() {
         val needed = wanted()
-        healthAllowed = needed.isNotEmpty() && missing(needed).isEmpty()
+        healthMissing = missing(needed).isNotEmpty()
+        healthAllowed = needed.isNotEmpty() && !healthMissing
         recordsAllowed = recordsSupported && app.healthRecords.allowed
-        if (missing(needed).isEmpty()) healthRefused = false
+        respiratoryAllowed = missing(setOf(app.healthConnect.writePermission)).isEmpty()
+        if (!healthMissing) healthRefused = false
+        if (refusedChoice == PENDING_RECORDS && recordsAllowed || refusedChoice == PENDING_RESPIRATORY && respiratoryAllowed) refusedChoice = ""
     }
     // On first showing, and again whenever a check or a synchronisation finishes or a choice changes.
     LaunchedEffect(running, sync.running, sync.respiratoryRate, sync.healthRecords) { if (!running && !sync.running) refreshHealth() }
@@ -139,9 +147,11 @@ private fun Root(app: PapRelayApp) {
         when (pending) {
             PENDING_CHECK -> check.start(true)
             PENDING_RECONNECT -> check.start(false)
-            // Switching it on stores the choice and starts a run of its own.
-            PENDING_RECORDS -> app.sync.setHealthRecords(true)
-            PENDING_RESPIRATORY -> app.sync.setRespiratoryRate(true)
+            // A choice is switched on only once Health Connect allows what it needs: one that is on
+            // and cannot write would only stand there saying so. Switching it on stores it and starts a run.
+            PENDING_RECORDS -> if (app.healthRecords.allowed) app.sync.setHealthRecords(true) else refusedChoice = PENDING_RECORDS
+            PENDING_RESPIRATORY ->
+                if (missing(setOf(app.healthConnect.writePermission)).isEmpty()) app.sync.setRespiratoryRate(true) else refusedChoice = PENDING_RESPIRATORY
             else -> app.sync.syncNow()
         }
     }
@@ -156,9 +166,10 @@ private fun Root(app: PapRelayApp) {
     val healthPermission = rememberLauncherForActivityResult(
         PermissionController.createRequestPermissionResultContract(),
     ) {
-        // After two refusals Android no longer asks, and the request comes straight back.
-        healthRefused = missing(wantedForPending()).isNotEmpty()
         refreshHealth()
+        // After two refusals Android no longer asks, and the request comes straight back: from then
+        // on the way is through Health Connect's own settings.
+        healthRefused = missing(wantedForPending()).isNotEmpty()
         // Whatever was asked for reports a missing grant itself.
         proceed()
     }
@@ -196,9 +207,9 @@ private fun Root(app: PapRelayApp) {
         }
     }
 
-    // The system's own folder picker: PAPRelay sees only the folder the user hands it.
-    val folder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        if (uri != null) app.sync.setExportFolder(uri)
+    // The system's own "save as" screen: PAPRelay sees only the one file the user makes for it there.
+    val file = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(NightFile.MIME)) { uri ->
+        if (uri != null) app.sync.setExportFile(uri)
     }
 
     /** Asks for whatever permissions [action] needs, then carries it out. */
@@ -244,12 +255,22 @@ private fun Root(app: PapRelayApp) {
         PAGE_NIGHTS -> NightsScreen(nights = nights, onShare = share, onBack = { page = PAGE_HOME })
         PAGE_CHOICES -> ChoicesScreen(
             sync = sync,
+            hasNights = nights.any { it.complete },
             recordsSupported = recordsSupported,
-            recordsAllowed = recordsAllowed,
-            onRecords = { on -> if (on) request(PENDING_RECORDS) else app.sync.setHealthRecords(false) },
-            onRespiratoryRate = { on -> if (on) request(PENDING_RESPIRATORY) else app.sync.setRespiratoryRate(false) },
-            onChooseFolder = { folder.launch(null) },
-            onNoFolder = { app.sync.setExportFolder(null) },
+            // Switched on and not allowed (the permission was taken away), or just tried and refused.
+            recordsBlocked = recordsSupported && (sync.healthRecords && !recordsAllowed || refusedChoice == PENDING_RECORDS),
+            respiratoryBlocked = sync.respiratoryRate && !respiratoryAllowed || refusedChoice == PENDING_RESPIRATORY,
+            onRecords = { on ->
+                refusedChoice = ""
+                if (on) request(PENDING_RECORDS) else app.sync.setHealthRecords(false)
+            },
+            onRespiratoryRate = { on ->
+                refusedChoice = ""
+                if (on) request(PENDING_RESPIRATORY) else app.sync.setRespiratoryRate(false)
+            },
+            onOpenHealthConnect = openHealthConnect,
+            onChooseFile = { file.launch(NightFile.SUGGESTED_NAME) },
+            onNoFile = { app.sync.setExportFile(null) },
             onShare = share,
             onBack = { page = PAGE_HOME },
         )
@@ -285,10 +306,12 @@ private fun Root(app: PapRelayApp) {
             sync = sync,
             nights = nights,
             healthAllowed = healthAllowed,
+            healthMissing = healthMissing,
             healthRefused = healthRefused,
             permissionRefused = permissionRefused,
             pausesWhenUnused = pausesWhenUnused,
             onSync = { request(PENDING_SYNC) },
+            onAllowHealth = { request(PENDING_SYNC) },
             onAcceptClock = { confirmClock = true },
             onStartAgain = { app.sync.startAgain() },
             onPair = {

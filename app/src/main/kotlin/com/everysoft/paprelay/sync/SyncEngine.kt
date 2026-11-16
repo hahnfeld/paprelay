@@ -33,6 +33,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.security.spec.KeySpec
+import java.time.LocalDate
 import java.time.ZoneId
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.PBEKeySpec
@@ -83,10 +84,21 @@ interface HealthSink {
     suspend fun apply(change: SessionChange)
 }
 
+/** Whether a night's figures can be written to the phone's health records. */
+enum class RecordsState { READY, NOT_SUPPORTED, NOT_ALLOWED }
+
 /** Where each night's figures go as health records, on a phone that keeps them. */
 interface NightRecords {
-    /** True if the phone has health records and PAPRelay is allowed to write to them. */
-    suspend fun ready(): Boolean
+    suspend fun state(): RecordsState
+
+    /**
+     * Makes ready to write, once at the start of a run.
+     *
+     * @return true if nothing of PAPRelay's was there: its place in the health records had to be
+     *   made afresh, so whatever was written before is gone and must be written again.
+     * @throws HealthSinkException if the health records could not be reached.
+     */
+    suspend fun open(): Boolean
 
     /**
      * Stores [resources], each replacing whatever was stored under its id before, and removes
@@ -153,13 +165,10 @@ class SyncEngine(
      * What stands in the way of a run before it has begun (Bluetooth off, a missing permission,
      * no pairing, a wrong phone clock), or null. Asks nothing of the machine.
      */
-    suspend fun blockedBy(): SyncOutcome? {
-        connector.notReady()?.let { return it }
-        // Health Connect stands in the way only of what is switched on to go there.
-        val respiratoryRate = runCatching { store.read().respiratoryRate }.getOrDefault(false)
-        if (respiratoryRate) sink.notReady()?.let { return it }
-        return if (phoneClockWrong()) SyncOutcome.PHONE_CLOCK_WRONG else null
-    }
+    suspend fun blockedBy(): SyncOutcome? =
+        // Health Connect is not asked here: what cannot be written there is said at the end of a
+        // run, after the nights have been brought to the phone, which needs nothing of it.
+        connector.notReady() ?: if (phoneClockWrong()) SyncOutcome.PHONE_CLOCK_WRONG else null
 
     private class Stop(val outcome: SyncOutcome) : Exception()
 
@@ -268,28 +277,21 @@ class SyncEngine(
                 vouchedSoftware = null,
             )
         }
-        store.write(progress.state)
-
-        // The nights first. They are whole days by the machine's own calendar, so they need no
-        // clock correction and nothing that follows can hold them up; and they are what matters most.
-        val recordsFailure = nights(session, firmware, tag, machineNow, progress)
-
-        if (!progress.state.respiratoryRate) {
-            // Nothing is written minute by minute. The clock is noted, so that switching that on
-            // later starts from how the clock stands then; and a request to write everything again
-            // has been met by the nights.
-            progress.state = progress.state.with(clock = ClockBaseline(offset.millis, machineNow.epochMs), rewriteRequested = false)
-            store.write(progress.state)
-            recordsFailure?.let { throw it }
-            return
-        }
-        if (clockChanged) throw Stop(SyncOutcome.CLOCK_CHANGED)
         if (progress.state.rewriteRequested) {
-            // Everything is to be written again: Health Connect's data may have been cleared, so the
-            // ledger's word that a session is in step counts for nothing. Every entry is marked as
-            // begun and not confirmed, which is exactly what makes a session be written again, and
-            // reading starts from the beginning. From here on it is an ordinary run: what it gets
-            // through is confirmed and stays so, and what it does not is still marked next time.
+            // Everything is to be written again: what was passed on may have been cleared, so the
+            // word that it is in step counts for nothing. It is taken back here, once, for both
+            // kinds of record and whichever of them is switched on at the moment; from here on
+            // this is an ordinary run. What it gets through is confirmed and stays so, and what
+            // it does not is still marked next time.
+            // The nights first, so that dying between the two only has this done again.
+            nights?.let { nightStore ->
+                val kept = readNights(nightStore)
+                if (kept.byDate.values.any { it.recorded != null }) {
+                    nightStore.write(Nights(kept.machineTag, kept.byDate.mapValues { (_, stored) -> StoredNight(stored.night, null) }))
+                }
+            }
+            // Every ledger entry is marked as begun and not confirmed, which is exactly what makes a
+            // session be written again, and reading starts from the beginning.
             val marked = progress.state.ledger.mapValues { (_, entry) ->
                 LedgerEntry(
                     entry.machineTag, entry.firstMinuteEnd, entry.minutes, entry.fingerprint, entry.clockOffset, entry.zone, entry.version,
@@ -298,6 +300,22 @@ class SyncEngine(
             }
             progress.state = progress.state.with(ledger = marked, rewriteRequested = false).fromTheStart()
         }
+        store.write(progress.state)
+
+        // The nights first. They are whole days by the machine's own calendar, so they need no
+        // clock correction and nothing that follows can hold them up; and they are what matters most.
+        val recordsFailure = nights(session, firmware, tag, machineNow, progress)
+
+        if (!progress.state.respiratoryRate) {
+            // Nothing is written minute by minute. The machine's clock as last noted while it was
+            // is left as it is, so that a clock set in the meantime is still noticed if it is switched on.
+            recordsFailure?.let { throw it }
+            return
+        }
+        // What stands in the way of the respiratory rate (Health Connect missing, or not allowing it) is said
+        // now that the nights are in: it is no reason to keep those from the phone.
+        sink.notReady()?.let { throw Stop(it) }
+        if (clockChanged) throw Stop(SyncOutcome.CLOCK_CHANGED)
         progress.state = progress.state.with(clock = ClockBaseline(offset.millis, machineNow.epochMs))
         store.write(progress.state)
 
@@ -474,10 +492,17 @@ class SyncEngine(
      */
     private suspend fun nights(session: MachineSession, firmware: Firmware, tag: String, machineNow: MachineTime, progress: Progress): HealthSinkException? {
         val nightStore = nights ?: return null
-        val onDisk = nightStore.read()
-        // Another machine's nights are not this one's: they go, and the list starts afresh.
-        val byDate = LinkedHashMap(if (onDisk.machineTag == tag) onDisk.byDate else emptyMap())
+        val onDisk = readNights(nightStore)
+        if (onDisk.machineTag != null && onDisk.machineTag != tag) {
+            // Another machine's nights are not this one's. They are put aside, not thrown away, and the list starts afresh.
+            nightStore.setAside(PREVIOUS)
+        }
+        val before = if (onDisk.machineTag == tag) onDisk.byDate else emptyMap()
+        val byDate = LinkedHashMap(before)
         var changed = onDisk.machineTag != tag
+        // What this download has already given for a date: the start of its day, and when the machine wrote it.
+        val given = HashMap<LocalDate, Pair<Long, Long?>>()
+        val disputed = HashSet<LocalDate>()
         // From a little before the end of the newest finished night: the machine may still amend a day it has closed.
         val newestEnd = byDate.values.filter { it.night.complete }.maxOfOrNull { it.night.end.toInstant().toEpochMilli() }
         val from = maxOf(EARLIEST_START_MS, newestEnd?.let { it - NIGHT_OVERLAP_MS } ?: (machineNow.epochMs - FIRST_WINDOW_MS))
@@ -506,20 +531,36 @@ class SyncEngine(
                         continue
                     }
                 }
-                // A record that cannot stand as a night (its day still being written, say) is passed over.
-                val night = NightPlan.night(record, machineNow) ?: continue
-                val before = byDate[night.date]
-                if (before == null || before.night.fingerprint() != night.fingerprint()) {
-                    byDate[night.date] = StoredNight(night, before?.recorded)
+                val night = NightPlan.night(record, machineNow)
+                if (night == null) {
+                    // A record that cannot stand as a night. For a day still being written that is to
+                    // be expected; for one that has ended, a night is missing and the run says so.
+                    if (record.periodEnd <= machineNow) progress.partial = true
+                    continue
+                }
+                if (night.date in disputed) continue
+                val earlier = given[night.date]
+                if (earlier != null && earlier.first != record.periodStart.epochMs) {
+                    // Two different days claim one date: the machine's clock or zone was set. Which of
+                    // them the date belongs to cannot be told, so neither is believed, and what was
+                    // kept for it before stays as it was.
+                    disputed += night.date
+                    val kept = before[night.date]
+                    if (kept != null) byDate[night.date] = kept else byDate.remove(night.date)
+                    progress.partial = true
+                    continue
+                }
+                // The same day twice: the record the machine wrote later stands.
+                val stamp = record.recordTimestamp?.epochMs
+                if (earlier != null && (stamp ?: Long.MIN_VALUE) < (earlier.second ?: Long.MIN_VALUE)) continue
+                given[night.date] = record.periodStart.epochMs to stamp
+                val held = byDate[night.date]
+                if (held == null || held.night.fingerprint() != night.fingerprint()) {
+                    byDate[night.date] = StoredNight(night, held?.recorded)
                     changed = true
                 }
             }
             address = SpoolAddress.Continuation(round.next ?: break)
-        }
-        if (progress.state.rewriteRequested && byDate.values.any { it.recorded != null }) {
-            // Everything is to be written again: what was recorded before counts for nothing.
-            for ((date, stored) in byDate.toMap()) byDate[date] = StoredNight(stored.night, null)
-            changed = true
         }
         // The oldest go when there are more than anyone will look at.
         while (byDate.size > MAX_NIGHTS) {
@@ -529,19 +570,35 @@ class SyncEngine(
         if (changed) nightStore.write(Nights(tag, byDate))
 
         val records = records ?: return null
-        if (!progress.state.healthRecords || !records.ready()) return null
+        if (!progress.state.healthRecords) return null
+        when (records.state()) {
+            RecordsState.NOT_SUPPORTED -> return null
+            // Switched on and not allowed: the nights are on the phone, and the run says what is missing.
+            RecordsState.NOT_ALLOWED -> return HealthSinkException(notAllowed = true)
+            RecordsState.READY -> Unit
+        }
         var unsaved = 0
         return try {
+            if (records.open() && byDate.values.any { it.recorded != null }) {
+                // PAPRelay's place in the health records was not there and has been made afresh: the
+                // user removed it, or Health Connect's data was cleared. Nothing recorded before is
+                // there now, whatever is remembered here.
+                for ((date, stored) in byDate.toMap()) byDate[date] = StoredNight(stored.night, null)
+                unsaved = SAVE_EVERY_NIGHTS
+            }
             for (date in byDate.keys.sorted()) {
                 currentCoroutineContext().ensureActive()
                 val stored = byDate.getValue(date)
-                val print = stored.night.fingerprint()
-                if (!stored.night.complete || stored.recorded == print) continue
+                // What was written, and in which form: a change in either means writing it again.
+                val mark = "${FhirObservations.FORMAT}:${stored.night.fingerprint()}"
+                if (!stored.night.complete || stored.recorded == mark) continue
                 val resources = FhirObservations.forNight(stored.night, tag)
-                // A figure the night had when it was last recorded and has no longer must not linger.
-                val gone = if (stored.recorded == null) emptyList() else FhirObservations.idsFor(stored.night, tag) - resources.map { it.id }.toSet()
+                // Whatever the night could have had before and has no longer must not linger. Asked for
+                // every time, known to be there or not: what was recorded before may be forgotten here
+                // (a rewrite, a lost file) and still be there.
+                val gone = FhirObservations.idsFor(stored.night, tag) - resources.map { it.id }.toSet()
                 records.write(resources, gone)
-                byDate[date] = StoredNight(stored.night, print)
+                byDate[date] = StoredNight(stored.night, mark)
                 progress.written += resources.size
                 if (++unsaved >= SAVE_EVERY_NIGHTS) {
                     nightStore.write(Nights(tag, byDate))
@@ -554,6 +611,14 @@ class SyncEngine(
         } finally {
             if (unsaved > 0) runCatching { nightStore.write(Nights(tag, byDate)) }
         }
+    }
+
+    /** The nights as kept. A file that cannot be read is put aside under another name, and the list starts afresh. */
+    private fun readNights(nightStore: NightStore): Nights = try {
+        nightStore.read()
+    } catch (e: NightsUnreadableException) {
+        nightStore.setAside(DAMAGED)
+        Nights.EMPTY
     }
 
     private fun storeEntry(progress: Progress, key: String, entry: LedgerEntry?) {
@@ -593,6 +658,10 @@ class SyncEngine(
 
         /** How far back the place to resume from is kept for the sake of a night that cannot be read. */
         const val HOLD_LIMIT_MS = 30 * DAY_MS
+
+        /** The names nights are put aside under. */
+        const val DAMAGED = "damaged"
+        const val PREVIOUS = "previous"
 
         /** How far before the newest finished night the summaries are asked for again. */
         const val NIGHT_OVERLAP_MS = 3 * DAY_MS

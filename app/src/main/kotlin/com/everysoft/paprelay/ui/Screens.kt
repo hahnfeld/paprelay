@@ -7,6 +7,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -25,6 +27,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -69,6 +73,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
@@ -86,10 +91,11 @@ import com.everysoft.paprelay.R
 import com.everysoft.paprelay.core.nights.Night
 import com.everysoft.paprelay.core.nights.NightFigure
 import java.time.format.DateTimeFormatter
-import java.time.format.FormatStyle
 import com.everysoft.paprelay.sync.SyncOutcome
 import com.everysoft.paprelay.sync.SyncStatus
+import android.text.format.DateFormat
 import android.text.format.DateUtils
+import java.util.Locale
 import kotlinx.coroutines.delay
 import com.everysoft.paprelay.check.CheckSteps
 import com.everysoft.paprelay.check.Message
@@ -199,10 +205,12 @@ fun HomeScreen(
     sync: SyncStatus,
     nights: List<Night>,
     healthAllowed: Boolean,
+    healthMissing: Boolean,
     healthRefused: Boolean,
     permissionRefused: Boolean,
     pausesWhenUnused: Boolean,
     onSync: () -> Unit,
+    onAllowHealth: () -> Unit,
     onAcceptClock: () -> Unit,
     onStartAgain: () -> Unit,
     onPair: () -> Unit,
@@ -270,13 +278,20 @@ fun HomeScreen(
                             OutlinedButton(onClick = onAcceptClock) { Text(stringResource(R.string.action_accept_clock)) }
                         outcome == SyncOutcome.BLUETOOTH_NOT_ALLOWED ->
                             OutlinedButton(onClick = onOpenSettings) { Text(stringResource(R.string.action_open_settings)) }
-                        outcome == SyncOutcome.HEALTH_CONNECT_NOT_ALLOWED || healthRefused ->
+                        // Something is switched on to go to Health Connect and is not allowed there. Asking is
+                        // tried first; once Android has stopped asking, the way is through Health Connect itself.
+                        healthMissing && healthRefused ->
                             OutlinedButton(onClick = onOpenHealthConnect) { Text(stringResource(R.string.action_open_health)) }
+                        healthMissing -> OutlinedButton(onClick = onAllowHealth) { Text(stringResource(R.string.action_allow_health)) }
                     }
                 }
             }
-            if (healthRefused && sync.lastReport?.outcome != SyncOutcome.HEALTH_CONNECT_NOT_ALLOWED) {
+            // Said whenever it is so, whatever the last run found: a run made before now knows nothing of it.
+            if (healthMissing && sync.lastReport?.outcome != SyncOutcome.HEALTH_CONNECT_NOT_ALLOWED) {
                 Secondary(stringResource(R.string.sync_hc_not_allowed), Modifier.padding(top = 12.dp))
+            }
+            if (sync.exportFile != null && sync.exportFailed) {
+                Secondary(stringResource(R.string.choice_file_failed), Modifier.padding(top = 12.dp))
             }
         } else {
             if (paired) Secondary(stringResource(R.string.debug_no_sync), Modifier.padding(top = 12.dp))
@@ -325,43 +340,91 @@ fun HomeScreen(
 
 /**
  * One night in two lines: how long, the index that matters most, and the two figures usually
- * looked at next. Said in numbers and symbols, which need no translating.
+ * looked at next. Said in numbers and symbols, which need no translating; a screen reader is
+ * given the same in words.
  */
 @Composable
 private fun NightSummary(night: Night, prominent: Boolean) {
-    val date = remember(night.date) { DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).format(night.date) }
-    Column(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}) {
-        Secondary(stringResource(R.string.night_of, date))
+    val date = remember(night.date) { dayFormatter().format(night.date) }
+    val heading = stringResource(R.string.night_of, date)
+    val headline = if (prominent) MaterialTheme.typography.titleLarge else MaterialTheme.typography.bodyLarge
+    // Whole numbers are put in as text, so that they keep the digits the decimals beside them have.
+    val hours = (night.usageMinutes / 60).toString()
+    val minutes = (night.usageMinutes % 60).toString()
+    val ahi = night.value(NightFigure.AHI)?.toPlainString()
+    val leak = night.value(NightFigure.LEAK_95)?.toPlainString()
+    val pressure = night.value(NightFigure.THERAPY_PRESSURE_95)?.toPlainString()
+    val spoken = if (night.usageMinutes == 0) {
+        heading + ". " + stringResource(R.string.night_none)
+    } else {
+        listOfNotNull(
+            heading,
+            stringResource(R.string.night_usage_spoken, hours, minutes),
+            ahi?.let { stringResource(R.string.night_ahi_spoken, it) },
+            leak?.let { stringResource(R.string.night_leak_spoken, it) },
+            pressure?.let { stringResource(R.string.night_pressure_spoken, it) },
+        ).joinToString(". ")
+    }
+    Column(Modifier.fillMaxWidth().clearAndSetSemantics { contentDescription = spoken }) {
+        Secondary(heading)
         if (night.usageMinutes == 0) {
-            Text(stringResource(R.string.night_none), style = if (prominent) MaterialTheme.typography.titleLarge else MaterialTheme.typography.bodyLarge)
+            Text(stringResource(R.string.night_none), style = headline)
             return@Column
         }
-        val usage = stringResource(R.string.night_usage, night.usageMinutes / 60, night.usageMinutes % 60)
-        val ahi = night.value(NightFigure.AHI)?.let { stringResource(R.string.night_ahi, it.toPlainString()) }
         Text(
-            listOfNotNull(usage, ahi).joinToString(" · "),
-            style = if (prominent) MaterialTheme.typography.titleLarge else MaterialTheme.typography.bodyLarge,
+            listOfNotNull(stringResource(R.string.night_usage, hours, minutes), ahi?.let { stringResource(R.string.night_ahi, it) }).joinToString(" · "),
+            style = headline,
         )
-        val leak = night.value(NightFigure.LEAK_95)?.let { stringResource(R.string.night_leak, it.toPlainString()) }
-        val pressure = night.value(NightFigure.PRESSURE_95)?.let { stringResource(R.string.night_pressure, it.toPlainString()) }
-        if (leak != null || pressure != null) Secondary(listOfNotNull(leak, pressure).joinToString(" · "), Modifier.padding(top = 2.dp))
+        val details = listOfNotNull(leak?.let { stringResource(R.string.night_leak, it) }, pressure?.let { stringResource(R.string.night_pressure, it) })
+        if (details.isNotEmpty()) Secondary(details.joinToString(" · "), Modifier.padding(top = 2.dp))
     }
 }
 
-/** Every night kept on the phone, newest first. */
+/** A date with its weekday, in the phone's language and its usual order: "Sat, 14 Nov 2026". */
+private fun dayFormatter(): DateTimeFormatter {
+    val locale = Locale.getDefault()
+    return DateTimeFormatter.ofPattern(DateFormat.getBestDateTimePattern(locale, "yMMMEd"), locale)
+}
+
+/**
+ * Every night kept on the phone, newest first. Built row by row as it is scrolled: there can
+ * be three years of them.
+ */
 @Composable
 fun NightsScreen(nights: List<Night>, onShare: () -> Unit, onBack: () -> Unit) {
-    Page(
-        title = stringResource(R.string.nights_title),
-        onBack = onBack,
-        action = { TextButton(onClick = onShare) { Text(stringResource(R.string.action_share)) } },
-    ) {
-        Secondary(stringResource(R.string.nights_note))
-        Spacer(Modifier.height(12.dp))
-        val finished = nights.filter { it.complete }
-        finished.forEachIndexed { index, night ->
-            if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            Box(Modifier.padding(vertical = 12.dp)) { NightSummary(night, prominent = false) }
+    val finished = remember(nights) { nights.filter { it.complete } }
+    Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxSize()) {
+        Box(
+            Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)),
+            contentAlignment = Alignment.TopCenter,
+        ) {
+            LazyColumn(
+                Modifier.widthIn(max = 560.dp).fillMaxSize(),
+                contentPadding = PaddingValues(
+                    start = 24.dp,
+                    end = 24.dp,
+                    bottom = 32.dp + WindowInsets.safeDrawing.asPaddingValues().calculateBottomPadding(),
+                ),
+            ) {
+                item {
+                    Row(Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 28.dp), verticalAlignment = Alignment.CenterVertically) {
+                        BackButton(onBack)
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            stringResource(R.string.nights_title),
+                            style = MaterialTheme.typography.headlineSmall,
+                            modifier = Modifier.weight(1f).semantics { heading() },
+                        )
+                        if (finished.isNotEmpty()) TextButton(onClick = onShare) { Text(stringResource(R.string.action_share)) }
+                    }
+                    Secondary(stringResource(R.string.nights_note))
+                    Spacer(Modifier.height(12.dp))
+                }
+                itemsIndexed(finished, key = { _, night -> night.date.toEpochDay() }) { index, night ->
+                    if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    Box(Modifier.padding(vertical = 12.dp)) { NightSummary(night, prominent = false) }
+                }
+            }
         }
     }
 }
@@ -370,40 +433,43 @@ fun NightsScreen(nights: List<Night>, onShare: () -> Unit, onBack: () -> Unit) {
 @Composable
 fun ChoicesScreen(
     sync: SyncStatus,
+    hasNights: Boolean,
     recordsSupported: Boolean,
-    recordsAllowed: Boolean,
+    recordsBlocked: Boolean,
+    respiratoryBlocked: Boolean,
     onRecords: (Boolean) -> Unit,
     onRespiratoryRate: (Boolean) -> Unit,
-    onChooseFolder: () -> Unit,
-    onNoFolder: () -> Unit,
+    onOpenHealthConnect: () -> Unit,
+    onChooseFile: () -> Unit,
+    onNoFile: () -> Unit,
     onShare: () -> Unit,
     onBack: () -> Unit,
 ) {
     Page(title = stringResource(R.string.choices_title), onBack = onBack) {
+        // A choice is stored once the run in progress has finished, so it is not offered during one.
+        if (sync.running) Secondary(stringResource(R.string.sync_running), Modifier.padding(bottom = 8.dp))
         Choice(
             title = R.string.choice_records,
             body = if (recordsSupported) R.string.choice_records_body else R.string.choice_records_unsupported,
             checked = recordsSupported && sync.healthRecords,
-            enabled = recordsSupported,
+            enabled = recordsSupported && !sync.running,
             onChange = onRecords,
         )
-        if (recordsSupported && sync.healthRecords && !recordsAllowed) {
-            Text(
-                stringResource(R.string.choice_records_not_allowed),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.padding(bottom = 8.dp),
-            )
-        }
+        if (recordsBlocked) NotAllowed(onOpenHealthConnect)
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Choice(R.string.choice_respiratory, R.string.choice_respiratory_body, sync.respiratoryRate, enabled = true, onChange = onRespiratoryRate)
+        Choice(R.string.choice_respiratory, R.string.choice_respiratory_body, sync.respiratoryRate, enabled = !sync.running, onChange = onRespiratoryRate)
+        if (respiratoryBlocked) NotAllowed(onOpenHealthConnect)
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Column(Modifier.fillMaxWidth().padding(vertical = 14.dp)) {
             Text(stringResource(R.string.choice_file), style = MaterialTheme.typography.bodyLarge)
             Secondary(stringResource(R.string.choice_file_body), Modifier.padding(top = 2.dp))
-            if (sync.exportFolder != null) {
+            if (sync.exportFile != null) {
                 Text(
-                    stringResource(if (sync.exportFailed) R.string.choice_file_failed else R.string.choice_file_on),
+                    when {
+                        sync.exportFailed -> stringResource(R.string.choice_file_failed)
+                        sync.exportName != null -> stringResource(R.string.choice_file_named, sync.exportName)
+                        else -> stringResource(R.string.choice_file_on)
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = if (sync.exportFailed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.padding(top = 6.dp),
@@ -411,16 +477,29 @@ fun ChoicesScreen(
             }
             Spacer(Modifier.height(8.dp))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onChooseFolder) {
-                    Text(stringResource(if (sync.exportFolder == null) R.string.action_choose_folder else R.string.action_other_folder))
+                OutlinedButton(onClick = onChooseFile, enabled = !sync.running) {
+                    Text(stringResource(if (sync.exportFile == null) R.string.action_choose_file else R.string.action_other_file))
                 }
-                if (sync.exportFolder != null) TextButton(onClick = onNoFolder) { Text(stringResource(R.string.action_no_folder)) }
+                if (sync.exportFile != null) TextButton(onClick = onNoFile, enabled = !sync.running) { Text(stringResource(R.string.action_no_file)) }
             }
         }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Spacer(Modifier.height(8.dp))
-        TextButton(onClick = onShare, modifier = Modifier.offset(x = (-12).dp)) { Text(stringResource(R.string.action_share_nights)) }
+        if (hasNights) {
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = onShare, modifier = Modifier.offset(x = (-12).dp)) { Text(stringResource(R.string.action_share_nights)) }
+        }
     }
+}
+
+/** Under a choice that Health Connect does not allow: what is wrong, and the way to put it right. */
+@Composable
+private fun NotAllowed(onOpenHealthConnect: () -> Unit) {
+    Text(
+        stringResource(R.string.sync_hc_not_allowed),
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.error,
+    )
+    TextButton(onClick = onOpenHealthConnect, modifier = Modifier.offset(x = (-12).dp)) { Text(stringResource(R.string.action_open_health)) }
 }
 
 /** A choice with a switch: the whole row answers to a tap, and is read out as one thing. */
@@ -576,7 +655,8 @@ private fun syncLinks(sync: SyncStatus, healthAllowed: Boolean): SyncLinks {
     if (sync.running) return SyncLinks(LinkState.ACTIVE, idleHealth, phoneFault = false)
     if (sync.storeUnreadable) return SyncLinks(LinkState.READY, idleHealth, phoneFault = true)
     return when (sync.lastReport?.outcome) {
-        SyncOutcome.COMPLETE -> SyncLinks(LinkState.OK, LinkState.OK, phoneFault = false)
+        // The Health Connect leg is ticked only when something is switched on to go there and is allowed to.
+        SyncOutcome.COMPLETE -> SyncLinks(LinkState.OK, if (healthAllowed) LinkState.OK else LinkState.NONE, phoneFault = false)
         // Under way, with nothing wrong: no ticks until everything is across. And out of range is
         // the ordinary state of a phone that is not at home.
         SyncOutcome.PARTIAL, SyncOutcome.MACHINE_AWAY, null -> SyncLinks(LinkState.READY, idleHealth, phoneFault = false)

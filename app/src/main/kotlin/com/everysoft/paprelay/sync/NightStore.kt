@@ -26,9 +26,9 @@ import java.time.LocalDate
 /**
  * A night as kept on the phone.
  *
- * @property recorded the [Night.fingerprint] of what was last written to the phone's health
- *   records for this night, or null if nothing has been. A night whose fingerprint differs
- *   is written again.
+ * @property recorded what was last written to the phone's health records for this night: the
+ *   format of the records and the night's [Night.fingerprint], or null if nothing has been.
+ *   A night for which either differs is written again.
  */
 class StoredNight(val night: Night, val recorded: String?)
 
@@ -42,14 +42,19 @@ class Nights(val machineTag: String?, val byDate: Map<LocalDate, StoredNight>) {
     }
 }
 
+/** The file of nights exists and is not one this version can read. */
+class NightsUnreadableException(cause: Throwable) : IOException("the nights cannot be read", cause)
+
 /**
  * Keeps the nights in one small file, replaced whole and atomically.
  *
- * Unlike the record of what was written to Health Connect, this is only a copy of what the
- * machine holds: if the file is lost or cannot be read it is simply built again from the
- * next download, so a damaged file is treated as an empty one.
+ * This is a copy of what the machine holds, and can be built again from the next download
+ * as far back as the machine remembers. A file that cannot be read is therefore not a
+ * disaster, but it is not the same as no file: it is reported, and [setAside] keeps it
+ * under another name instead of writing over it.
  */
 class NightStore(private val file: File) {
+    /** @throws NightsUnreadableException if the file exists and is not one this version wrote. */
     fun read(): Nights {
         if (!file.exists()) return Nights.EMPTY
         return try {
@@ -57,7 +62,19 @@ class NightStore(private val file: File) {
         } catch (e: IOException) {
             throw e
         } catch (e: Exception) {
-            Nights.EMPTY
+            throw NightsUnreadableException(e)
+        }
+    }
+
+    /**
+     * Moves the file out of the way under a name ending in [suffix], replacing an older one set
+     * aside the same way: for a file that cannot be read, or the nights of a machine that has
+     * been replaced. They are no longer shown, and are not thrown away.
+     */
+    fun setAside(suffix: String) {
+        if (!file.exists()) return
+        runCatching {
+            Files.move(file.toPath(), File(file.absoluteFile.parentFile, "${file.name}.$suffix").toPath(), StandardCopyOption.REPLACE_EXISTING)
         }
     }
 
@@ -101,6 +118,7 @@ class NightStore(private val file: File) {
                                 put("zone", night.zoneOffsetMinutes)
                                 put("usage", night.usageMinutes)
                                 put("sessions", night.sessions)
+                                if (night.hours != 24) put("hours", night.hours)
                                 if (!night.complete) put("running", true)
                                 put("figures", buildJsonObject { for ((figure, value) in night.hundredths) put(figure.key, value) })
                                 stored.recorded?.let { put("recorded", it) }
@@ -130,6 +148,7 @@ class NightStore(private val file: File) {
                     sessions = entry.getValue("sessions").jsonPrimitive.int,
                     hundredths = figures,
                     complete = (entry["running"] as? JsonPrimitive)?.content != "true",
+                    hours = (entry["hours"] as? JsonPrimitive)?.int ?: 24,
                 )
                 val recorded = (entry["recorded"] as? JsonPrimitive)?.content?.also { require(FINGERPRINT.matches(it)) { "not a fingerprint" } }
                 require(byDate.put(night.date, StoredNight(night, recorded)) == null) { "a night is listed twice" }
@@ -137,6 +156,7 @@ class NightStore(private val file: File) {
             return Nights((json["machineTag"] as? JsonPrimitive)?.content, byDate)
         }
 
-        private val FINGERPRINT = Regex("[0-9a-f]{64}")
+        /** The format of the records it was written in, then the night's fingerprint. */
+        private val FINGERPRINT = Regex("[0-9]{1,6}:[0-9a-f]{64}")
     }
 }

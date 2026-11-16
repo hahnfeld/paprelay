@@ -9,13 +9,14 @@ import java.time.OffsetDateTime
 import java.time.ZoneOffset
 
 /** What a night's figure is measured in. [ucum] is its code in the Unified Code for Units of Measure. */
-public enum class NightUnit(public val symbol: String, public val ucum: String) {
-    EVENTS_PER_HOUR("events/h", "{events}/h"),
-    LITRES_PER_MINUTE("L/min", "L/min"),
-    CM_H2O("cmH2O", "cm[H2O]"),
-    BREATHS_PER_MINUTE("breaths/min", "{breaths}/min"),
-    LITRES("L", "L"),
-    HOURS("h", "h"),
+public enum class NightUnit(public val symbol: String, public val ucum: String, public val columnSuffix: String) {
+    EVENTS_PER_HOUR("events/h", "{events}/h", "events_per_hour"),
+    LITRES_PER_MINUTE("L/min", "L/min", "l_per_min"),
+    CM_H2O("cmH2O", "cm[H2O]", "cmh2o"),
+    BREATHS_PER_MINUTE("breaths/min", "{breaths}/min", "breaths_per_min"),
+    LITRES("L", "L", "l"),
+    HOURS("h", "h", "hours"),
+    MINUTES("min", "min", "minutes"),
 }
 
 /**
@@ -24,29 +25,42 @@ public enum class NightUnit(public val symbol: String, public val ucum: String) 
  * Every one is the machine's figure, passed on: nothing here is worked out by PAPRelay
  * except a change of unit (leak from litres per second to litres per minute, which is exact).
  *
- * @property key a short stable name, used in files and in record ids. Never changed once released.
+ * The indices are what a therapy machine can know: events it detected from airflow, per hour
+ * that it was in use. They are not the indices of a sleep study, which are scored by other
+ * rules and counted per hour of sleep; the labels say so, and no sleep-study code is attached.
+ *
+ * @property key a short stable name, used in files and in records. Never changed once released.
  * @property label what it is, in plain English, for files and records read by other programs.
- * @property loinc its LOINC code where one fits exactly, or null. The machine's obstructive and
- *   central apnoea indices have none: LOINC's "obstructive apnea hypopnea index" is another measure.
+ * @property maxHundredths the most it can plausibly be, in hundredths of its unit. A stored value
+ *   beyond it is a misreading, not a measurement, and is left out.
  */
-public enum class NightFigure(public val key: String, public val label: String, public val unit: NightUnit, public val loinc: String?) {
-    AHI("ahi", "Apnea-hypopnea index", NightUnit.EVENTS_PER_HOUR, "69990-0"),
-    APNEA_INDEX("apnea-index", "Apnea index", NightUnit.EVENTS_PER_HOUR, "90562-0"),
-    HYPOPNEA_INDEX("hypopnea-index", "Hypopnea index", NightUnit.EVENTS_PER_HOUR, "90561-2"),
-    OBSTRUCTIVE_APNEA_INDEX("obstructive-apnea-index", "Obstructive apnea index", NightUnit.EVENTS_PER_HOUR, null),
-    CENTRAL_APNEA_INDEX("central-apnea-index", "Central apnea index", NightUnit.EVENTS_PER_HOUR, null),
-    UNCLASSIFIED_APNEA_INDEX("unclassified-apnea-index", "Unclassified apnea index", NightUnit.EVENTS_PER_HOUR, null),
-    RERA_INDEX("rera-index", "Respiratory effort-related arousal index", NightUnit.EVENTS_PER_HOUR, "90565-3"),
-    LEAK_MEDIAN("leak-median", "Mask leak, median", NightUnit.LITRES_PER_MINUTE, null),
-    LEAK_95("leak-95th", "Mask leak, 95th percentile", NightUnit.LITRES_PER_MINUTE, null),
-    LEAK_MAX("leak-max", "Mask leak, maximum", NightUnit.LITRES_PER_MINUTE, null),
-    PRESSURE_MEDIAN("pressure-median", "Mask pressure, median", NightUnit.CM_H2O, null),
-    PRESSURE_95("pressure-95th", "Mask pressure, 95th percentile", NightUnit.CM_H2O, null),
-    PRESSURE_MAX("pressure-max", "Mask pressure, maximum", NightUnit.CM_H2O, null),
-    RESPIRATORY_RATE_MEDIAN("respiratory-rate-median", "Respiratory rate during therapy, median", NightUnit.BREATHS_PER_MINUTE, null),
-    TIDAL_VOLUME_MEDIAN("tidal-volume-median", "Tidal volume, median", NightUnit.LITRES, null),
-    MINUTE_VENTILATION_MEDIAN("minute-ventilation-median", "Minute ventilation, median", NightUnit.LITRES_PER_MINUTE, null),
+public enum class NightFigure(public val key: String, public val label: String, public val unit: NightUnit, public val maxHundredths: Long) {
+    AHI("ahi", "Residual apnea-hypopnea index on CPAP therapy, as the machine reports it (events per hour of use)", NightUnit.EVENTS_PER_HOUR, 20_000),
+    APNEA_INDEX("apnea-index", "Residual apnea index on CPAP therapy (events per hour of use)", NightUnit.EVENTS_PER_HOUR, 20_000),
+    HYPOPNEA_INDEX("hypopnea-index", "Residual hypopnea index on CPAP therapy (events per hour of use)", NightUnit.EVENTS_PER_HOUR, 20_000),
+    OBSTRUCTIVE_APNEA_INDEX("obstructive-apnea-index", "Residual obstructive apnea index on CPAP therapy (events per hour of use)", NightUnit.EVENTS_PER_HOUR, 20_000),
+    CENTRAL_APNEA_INDEX("central-apnea-index", "Residual central (clear-airway) apnea index on CPAP therapy (events per hour of use)", NightUnit.EVENTS_PER_HOUR, 20_000),
+    UNCLASSIFIED_APNEA_INDEX("unclassified-apnea-index", "Residual unclassified apnea index on CPAP therapy (events per hour of use)", NightUnit.EVENTS_PER_HOUR, 20_000),
+    RERA_INDEX("rera-index", "Respiratory effort-related arousal index as the machine estimates it (events per hour of use)", NightUnit.EVENTS_PER_HOUR, 20_000),
+    LEAK_MEDIAN("leak-median", "Mask leak, median", NightUnit.LITRES_PER_MINUTE, 20_000),
+    LEAK_95("leak-95th", "Mask leak, 95th percentile", NightUnit.LITRES_PER_MINUTE, 20_000),
+    LEAK_MAX("leak-max", "Mask leak, maximum", NightUnit.LITRES_PER_MINUTE, 20_000),
+    THERAPY_PRESSURE_MEDIAN("therapy-pressure-median", "Therapy pressure (inspiratory), median", NightUnit.CM_H2O, 4_000),
+    THERAPY_PRESSURE_95("therapy-pressure-95th", "Therapy pressure (inspiratory), 95th percentile", NightUnit.CM_H2O, 4_000),
+    THERAPY_PRESSURE_MAX("therapy-pressure-max", "Therapy pressure (inspiratory), maximum", NightUnit.CM_H2O, 4_000),
+    EXPIRATORY_PRESSURE_MEDIAN("expiratory-pressure-median", "Expiratory pressure, median", NightUnit.CM_H2O, 4_000),
+    EXPIRATORY_PRESSURE_95("expiratory-pressure-95th", "Expiratory pressure, 95th percentile", NightUnit.CM_H2O, 4_000),
+    EXPIRATORY_PRESSURE_MAX("expiratory-pressure-max", "Expiratory pressure, maximum", NightUnit.CM_H2O, 4_000),
+    MASK_PRESSURE_MEDIAN("mask-pressure-median", "Mean mask pressure, median", NightUnit.CM_H2O, 4_000),
+    MASK_PRESSURE_95("mask-pressure-95th", "Mean mask pressure, 95th percentile", NightUnit.CM_H2O, 4_000),
+    MASK_PRESSURE_MAX("mask-pressure-max", "Mean mask pressure, maximum", NightUnit.CM_H2O, 4_000),
+    RESPIRATORY_RATE_MEDIAN("respiratory-rate-median", "Respiratory rate during therapy, median", NightUnit.BREATHS_PER_MINUTE, 9_000),
+    TIDAL_VOLUME_MEDIAN("tidal-volume-median", "Tidal volume during therapy, median", NightUnit.LITRES, 500),
+    MINUTE_VENTILATION_MEDIAN("minute-ventilation-median", "Minute ventilation during therapy, median", NightUnit.LITRES_PER_MINUTE, 6_000),
     ;
+
+    /** The figure's name as a table column, with its unit: `leak_95th_l_per_min`. */
+    public val column: String get() = key.replace('-', '_') + "_" + unit.columnSuffix
 
     public companion object {
         private val byKey = entries.associateBy { it.key }
@@ -60,7 +74,8 @@ public enum class NightFigure(public val key: String, public val label: String, 
  *
  * @property date the calendar date, by the machine's clock, on which the day began: the
  *   evening of the night. A night from the 14th into the 15th is the 14th.
- * @property zoneOffsetMinutes how far the machine's local time was from UTC.
+ * @property zoneOffsetMinutes how far the machine's local time was from UTC when the day began.
+ * @property hours how long the day was: 24, or 23 or 25 where the clocks changed during it.
  * @property usageMinutes minutes of therapy in the day. Zero for a day the machine was not used,
  *   which is kept: that there was no therapy is itself worth knowing.
  * @property sessions how many times the mask went on.
@@ -76,24 +91,26 @@ public class Night(
     public val sessions: Int,
     hundredths: Map<NightFigure, Long>,
     public val complete: Boolean,
+    public val hours: Int = 24,
 ) {
     public val hundredths: Map<NightFigure, Long> = java.util.Collections.unmodifiableMap(java.util.EnumMap<NightFigure, Long>(NightFigure::class.java).apply { putAll(hundredths) })
 
     init {
         require(zoneOffsetMinutes in -MAX_ZONE_OFFSET..MAX_ZONE_OFFSET) { "not a zone offset" }
-        require(usageMinutes in 0..MAX_USAGE_MINUTES) { "not a day's usage" }
+        require(hours in 23..25) { "not a day's length" }
+        require(usageMinutes in 0..hours * 60) { "not a day's usage" }
         require(sessions in 0..MAX_SESSIONS) { "not a day's sessions" }
-        require(this.hundredths.values.all { it in 0..MAX_HUNDREDTHS }) { "a figure out of range" }
+        require(this.hundredths.all { (figure, value) -> value in 0..figure.maxHundredths }) { "a figure out of range" }
     }
 
-    /** The machine's local noon that begins the day, and the one that ends it. */
+    /** The machine's local noon that begins the day, and the moment it ends. */
     public val start: OffsetDateTime get() = LocalDateTime.of(date, NOON).atOffset(ZoneOffset.ofTotalSeconds(zoneOffsetMinutes * 60))
-    public val end: OffsetDateTime get() = start.plusDays(1)
+    public val end: OffsetDateTime get() = start.plusHours(hours.toLong())
 
     /** A figure as an exact decimal in its unit, or null if the night does not have it. */
     public fun value(figure: NightFigure): BigDecimal? = hundredths[figure]?.let(::decimal)
 
-    /** Hours of therapy, to two places. (Kept as minutes; this is for showing and passing on.) */
+    /** Hours of therapy, rounded to two places, for reading. [usageMinutes] is the exact figure. */
     public val usageHours: BigDecimal get() = BigDecimal(usageMinutes).divide(BigDecimal(60), 2, java.math.RoundingMode.HALF_UP).let(::plain)
 
     /**
@@ -103,7 +120,8 @@ public class Night(
     public fun fingerprint(): String {
         val digest = java.security.MessageDigest.getInstance("SHA-256")
         val text = buildString {
-            append(date).append(';').append(zoneOffsetMinutes).append(';').append(usageMinutes).append(';').append(sessions).append(';').append(complete)
+            append(date).append(';').append(zoneOffsetMinutes).append(';').append(hours).append(';')
+            append(usageMinutes).append(';').append(sessions).append(';').append(complete)
             for ((figure, value) in hundredths) append(';').append(figure.key).append('=').append(value)
         }
         return digest.digest(text.toByteArray(Charsets.US_ASCII)).joinToString("") { "%02x".format(it) }
@@ -114,11 +132,7 @@ public class Night(
 
     public companion object {
         public const val MAX_ZONE_OFFSET: Int = 18 * 60
-        public const val MAX_USAGE_MINUTES: Int = 25 * 60
         public const val MAX_SESSIONS: Int = 500
-
-        /** A million of any unit here is far beyond anything a night can hold. */
-        public const val MAX_HUNDREDTHS: Long = 100_000_000L
         private val NOON = java.time.LocalTime.NOON
         private val HUNDRED = BigDecimal(100)
 

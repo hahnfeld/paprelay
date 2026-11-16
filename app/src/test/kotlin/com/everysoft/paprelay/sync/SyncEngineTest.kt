@@ -552,8 +552,9 @@ class SyncEngineTest {
             assertEquals(outcome, store.read().lastReport!!.outcome)
             unchanged()
         }
-        // None of these got as far as a session: the one connection is the first run's.
-        assertEquals(1, machine.connections)
+        // Only the last got as far as a session: Health Connect not allowing the respiratory rate is
+        // found out after the nights have been fetched, which need nothing of it. The others never connected.
+        assertEquals(2, machine.connections)
     }
 
     @Test

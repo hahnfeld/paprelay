@@ -140,4 +140,35 @@ class SyncStoreTest {
         // Which minutes have a record, a fingerprint, counts and times of synchronising: nothing more.
         assertTrue("breaths" !in text && "rate" !in text && "serial" !in text, text)
     }
+
+    @Test
+    fun `the choices are kept, and a state from before they were choices goes on as it was`() {
+        val file = File(Files.createTempDirectory("paprelay-choices").toFile(), "sync.json")
+        val store = SyncStore(file)
+        store.write(SyncState.EMPTY.with(respiratoryRate = true, healthRecords = false, exportFile = "content://somewhere/file"))
+        val back = store.read()
+        assertTrue(back.respiratoryRate)
+        assertTrue(!back.healthRecords)
+        assertEquals("content://somewhere/file", back.exportFile)
+        // Forgetting the machine keeps what the user chose and nothing else.
+        val cleared = back.with(machineTag = "m-4f2a9c", resumeFromMs = 5, rewriteRequested = true).cleared()
+        assertTrue(cleared.respiratoryRate && !cleared.healthRecords && cleared.exportFile == "content://somewhere/file")
+        assertNull(cleared.machineTag)
+        assertNull(cleared.resumeFromMs)
+        assertTrue(!cleared.rewriteRequested)
+
+        // The defaults: the nights go to health records, respiratory rate does not go anywhere.
+        assertTrue(!SyncState.EMPTY.respiratoryRate)
+        assertTrue(SyncState.EMPTY.healthRecords)
+
+        // Written by the version before this was a choice, which wrote respiratory rate always:
+        // if it had written any, it goes on doing so; if it had not, the new default applies.
+        val one = entry(1_800_000_000_000, listOf(0, 1))
+        val json = SyncStore.encode(SyncState.EMPTY.with(machineTag = one.machineTag, ledger = mapOf(one.key to one)))
+        val older = kotlinx.serialization.json.JsonObject(json.filterKeys { it != "respiratoryRate" && it != "healthRecords" })
+        assertTrue(SyncStore.decode(older).respiratoryRate)
+        assertTrue(SyncStore.decode(older).healthRecords)
+        val unused = kotlinx.serialization.json.JsonObject(SyncStore.encode(SyncState.EMPTY).filterKeys { it != "respiratoryRate" })
+        assertTrue(!SyncStore.decode(unused).respiratoryRate)
+    }
 }

@@ -34,7 +34,7 @@
     <string name="sync_partial">Not every night has come across yet. PAPRelay will try again.</string>
     <string name="sync_machine_away">The machine did not answer. It may be out of range. PAPRelay will try again.</string>
     <string name="sync_bluetooth_not_allowed">PAPRelay is not allowed to use Bluetooth. Choose Synchronise now and allow it. If Android does not ask, allow Nearby devices in the app settings.</string>
-    <string name="sync_hc_not_allowed">PAPRelay is not allowed to write to Health Connect. Open Health Connect and allow respiratory rate for PAPRelay.</string>
+    <string name="sync_hc_not_allowed">PAPRelay is not allowed to write to Health Connect what is switched on in Sharing. Allow it, or switch it off there.</string>
     <string name="sync_pairing_rejected">The machine no longer accepts this phone. Open Device check, choose Forget machine, and pair again.</string>
     <string name="sync_wrong_machine">The machine that answered is not the paired machine. Nothing was written.</string>
     <string name="sync_software_not_confirmed">PAPRelay cannot yet read this machine\'s software version. Nothing was written.</string>
@@ -50,33 +50,41 @@
     <string name="action_stopping">Stopping…</string>
     <string name="action_share">Share</string>
     <string name="action_share_nights">Share the recent nights as text</string>
-    <string name="action_choose_folder">Choose a folder</string>
-    <string name="action_other_folder">Choose another folder</string>
-    <string name="action_no_folder">Stop writing the file</string>
+    <string name="action_choose_file">Choose where to keep it</string>
+    <string name="action_other_file">Choose another place</string>
+    <string name="action_no_file">Stop writing the file</string>
+    <string name="action_allow_health">Allow</string>
 
     <!-- A night's figures. Numbers and symbols are kept as they are in every language. -->
     <!-- %1$s is a date such as "14 Nov 2026". -->
     <string name="night_of">Night of %1$s</string>
     <string name="night_none">No therapy</string>
-    <string name="night_usage">%1$d h %2$d min</string>
+    <!-- %1$s hours and %2$s minutes of use, as numbers. -->
+    <string name="night_usage">%1$s h %2$s min</string>
     <string name="night_ahi">AHI %1$s</string>
-    <string name="night_leak">Leak %1$s L/min</string>
-    <string name="night_pressure">Pressure %1$s cmH₂O</string>
+    <string name="night_leak">Leak 95%%: %1$s L/min</string>
+    <string name="night_pressure">Pressure 95%%: %1$s cmH₂O</string>
+    <!-- The same, as a screen reader says them. -->
+    <string name="night_usage_spoken">Used for %1$s hours and %2$s minutes</string>
+    <string name="night_ahi_spoken">A H I %1$s</string>
+    <string name="night_leak_spoken">Leak, 95th percentile, %1$s litres per minute</string>
+    <string name="night_pressure_spoken">Pressure, 95th percentile, %1$s centimetres of water</string>
     <string name="nights_title">Nights</string>
-    <string name="nights_note">The machine\'s own figures. A night runs from midday to midday, and its figures arrive after it has ended. Leak and pressure are the values not exceeded for 95% of the night.</string>
+    <string name="nights_note">The machine\'s own figures. A night runs from midday to midday, and its figures arrive after it has ended. AHI is what remains during therapy, for each hour of use. Leak and pressure are the values that were not exceeded for 95% of the time in use.</string>
 
     <!-- What is passed on, and where to -->
-    <string name="choices_title">Passing on</string>
+    <string name="choices_title">Sharing</string>
     <string name="choice_records">Nightly figures to health records</string>
     <string name="choice_records_body">Usage, AHI, leak and pressure for each night are written to the health records in Health Connect. They appear there as lab results from PAPRelay.</string>
-    <string name="choice_records_unsupported">This phone has no health records in Health Connect. They need Android 16 or later.</string>
-    <string name="choice_records_not_allowed">PAPRelay is not allowed to write health records. Open Health Connect and allow it.</string>
+    <string name="choice_records_unsupported">Health records are not available on this phone. They need Health Connect on Android 16 or later.</string>
     <string name="choice_respiratory">Respiratory rate to Health Connect</string>
     <string name="choice_respiratory_body">One value for each minute of therapy. Leave this off if another device already writes your respiratory rate.</string>
     <string name="choice_file">Table of nights</string>
-    <string name="choice_file_body">A file with one line for each night, kept up to date in a folder you choose. If the folder is one that a cloud drive keeps in step, other programs can read the file there. PAPRelay itself sends nothing.</string>
-    <string name="choice_file_on">The file is written to the folder you chose.</string>
-    <string name="choice_file_failed">The file could not be written. Choose the folder again.</string>
+    <string name="choice_file_body">A file with one line for each night, kept up to date where you choose. If you keep it on a cloud drive, other programs can read it there. PAPRelay itself sends nothing: it hands the file to the place you chose.</string>
+    <string name="choice_file_on">The file is kept up to date.</string>
+    <!-- %1$s is the file\'s name. -->
+    <string name="choice_file_named">Kept up to date: %1$s</string>
+    <string name="choice_file_failed">The table of nights could not be written to its file the last time. PAPRelay will try again. If this stays, choose the place again.</string>
     <string name="action_use_this">Use this machine</string>
     <string name="action_open_settings">Open app settings</string>
 
@@ -150,6 +158,7 @@
     <string name="detail_hc_no_permission">PAPRelay is not allowed to write to Health Connect. Run the check again and allow it. If Android does not ask, open Health Connect, choose App permissions, then PAPRelay, and allow it there.</string>
     <string name="detail_hc_value_left">A test value was written but could not be removed. Delete it in Health Connect, under PAPRelay.</string>
     <string name="detail_hc_not_written">Health Connect did not store the test value.</string>
+    <string name="detail_records_not_allowed">PAPRelay is not allowed to write health records. Run the check again and allow it. If Android does not ask, open Health Connect, choose App permissions, then PAPRelay, and allow it there.</string>
     <string name="detail_records_refused">This phone\'s health records did not accept the kind of record PAPRelay writes. The nightly figures stay in PAPRelay. Please save the report.</string>
     <string name="detail_hc_absent_refused">Health Connect refused to remove a value that was not there. PAPRelay cannot synchronise on this phone. Please save the report.</string>
     <string name="detail_bluetooth_off">Bluetooth is off.</string>
@@ -244,7 +253,7 @@
     <string name="about_intended_use_heading">Intended use</string>
     <string name="about_intended_use">PAPRelay transfers, stores, converts and displays data your machine has already recorded. It does not interpret the data, raise alerts, give advice or control the machine.</string>
     <string name="about_check_heading">Device check</string>
-    <string name="about_check">The device check reads from the machine and changes none of its settings or data. Pairing replaces the myAir app\'s connection to the machine. The check writes one test value to Health Connect and removes it again.</string>
+    <string name="about_check">The device check reads from the machine and changes none of its settings or data. Pairing replaces the myAir app\'s connection to the machine. For each thing that is switched on in Sharing, the check writes a made-up test entry to Health Connect and removes it again. An empty source named PAPRelay stays in the health records.</string>
     <string name="about_disclaimer_heading">Not a medical device</string>
     <string name="about_disclaimer">PAPRelay is not intended to diagnose, treat, cure or prevent any condition, and must not be used to make diagnosis or treatment decisions. Values may be wrong, late or missing. It does not replace myAir, your equipment provider\'s reporting, or advice from a clinician.</string>
     <string name="about_affiliation">PAPRelay is an independent project. It is not affiliated with or endorsed by ResMed or Google. ResMed, AirSense and myAir are trademarks of ResMed. Android and Health Connect are trademarks of Google LLC.</string>
@@ -252,11 +261,11 @@
     <!-- Privacy screen, shown by Health Connect -->
     <string name="privacy_title">Privacy</string>
     <string name="privacy_heading_what">What PAPRelay does with your data</string>
-    <string name="privacy_what">PAPRelay reads therapy records from your machine over Bluetooth and stores them on this phone. If you leave it switched on, it writes each night\'s figures to the health records in Health Connect. If you switch it on, it writes respiratory rate to Health Connect, and a table of nights to a folder you choose. It does this when you ask, and from time to time in the background when the machine is in range.</string>
+    <string name="privacy_what">PAPRelay reads therapy records from your machine over Bluetooth and stores them on this phone. If you leave it switched on, it writes each night\'s figures to the health records in Health Connect. If you switch it on, it writes respiratory rate to Health Connect, and keeps a table of nights in a file where you choose. It does this when you ask, and from time to time in the background when the machine is in range.</string>
     <string name="privacy_heading_where">Where your data goes</string>
-    <string name="privacy_where">Your data goes nowhere else. PAPRelay has no internet permission, no accounts, no analytics and no advertising. Data leaves the app only through Health Connect and through files you choose to save.</string>
+    <string name="privacy_where">Your data goes nowhere else. PAPRelay has no internet permission, no accounts, no analytics and no advertising. Data leaves the app only through Health Connect, through a file you choose to have kept or saved, and when you share it with another app yourself.</string>
     <string name="privacy_heading_read">What PAPRelay reads from Health Connect</string>
     <string name="privacy_read">PAPRelay reads nothing from Health Connect. It asks only for permission to write.</string>
     <string name="privacy_heading_delete">Removing your data</string>
-    <string name="privacy_delete">Uninstalling PAPRelay deletes everything it stored. Records it wrote to Health Connect can be removed in Health Connect, under App permissions, PAPRelay.</string>
+    <string name="privacy_delete">Uninstalling PAPRelay deletes everything it stored itself. A table of nights kept in a place you chose stays there until you delete it. Records it wrote to Health Connect can be removed in Health Connect.</string>
 </resources>

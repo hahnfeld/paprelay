@@ -14,24 +14,31 @@ import android.health.connect.datatypes.FhirResource.FHIR_RESOURCE_TYPE_OBSERVAT
 import android.health.connect.datatypes.FhirVersion
 import android.health.connect.datatypes.MedicalDataSource
 import android.net.Uri
-import androidx.core.net.toUri
 import android.os.Build
 import android.os.OutcomeReceiver
 import androidx.annotation.RequiresApi
+import androidx.core.net.toUri
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.HealthConnectFeatures
 import androidx.health.connect.client.feature.ExperimentalPersonalHealthRecordApi
 import com.everysoft.paprelay.core.nights.FhirObservations
 import com.everysoft.paprelay.core.nights.FhirResource
+import com.everysoft.paprelay.core.nights.Night
+import com.everysoft.paprelay.core.nights.NightFigure
 import com.everysoft.paprelay.sync.HealthSinkException
 import com.everysoft.paprelay.sync.NightRecords
+import com.everysoft.paprelay.sync.RecordsState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import java.time.LocalDate
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+
+/** What the trial write of the device check found. [reason] is Health Connect's own word when it refused. */
+class RecordsProbe(val accepted: Boolean, val removed: Boolean, val reason: String?)
 
 /**
  * The phone's health records: the part of Health Connect, from Android 16, that keeps
@@ -44,6 +51,10 @@ import kotlin.coroutines.resumeWithException
 class HealthRecords(private val context: Context) : NightRecords {
     /** The permission that lets an app write health records. Asked for like any other Health Connect permission. */
     val writePermission: String = WRITE_PERMISSION
+
+    /** The id of PAPRelay's data source, once found or made. Forgotten when a call fails, in case it was removed. */
+    @Volatile
+    private var sourceId: String? = null
 
     /** Whether this phone keeps health records at all. */
     @OptIn(ExperimentalPersonalHealthRecordApi::class)
@@ -58,66 +69,86 @@ class HealthRecords(private val context: Context) : NightRecords {
 
     val allowed: Boolean get() = context.checkSelfPermission(WRITE_PERMISSION) == PackageManager.PERMISSION_GRANTED
 
-    override suspend fun ready(): Boolean = supported && allowed
+    override suspend fun state(): RecordsState = when {
+        !supported -> RecordsState.NOT_SUPPORTED
+        !allowed -> RecordsState.NOT_ALLOWED
+        else -> RecordsState.READY
+    }
+
+    override suspend fun open(): Boolean = guarded {
+        if (Build.VERSION.SDK_INT < FIRST_VERSION) throw HealthSinkException(notAllowed = false)
+        val manager = manager()
+        val existing = answered { sources(manager) }.firstOrNull { it.displayName == SOURCE_NAME }
+        val source = existing ?: answered { create(manager) }
+        sourceId = source.id
+        existing == null
+    }
 
     // Not cut short by a stop: one night's records are few, and half of them are only more work for the next run.
-    override suspend fun write(resources: List<FhirResource>, removeIds: List<String>): Unit = withContext(NonCancellable) {
+    override suspend fun write(resources: List<FhirResource>, removeIds: List<String>): Unit = guarded {
         if (Build.VERSION.SDK_INT < FIRST_VERSION) throw HealthSinkException(notAllowed = false)
-        try {
-            val manager = manager()
-            val source = source(manager)
-            if (removeIds.isNotEmpty()) answered { remove(manager, source, removeIds) }
-            for (chunk in resources.chunked(CHUNK)) answered { upsert(manager, source, chunk) }
-        } catch (e: HealthSinkException) {
-            throw e
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: SecurityException) {
-            throw HealthSinkException(notAllowed = true, cause = e)
-        } catch (e: HealthConnectException) {
-            throw HealthSinkException(
-                notAllowed = e.errorCode == HealthConnectException.ERROR_SECURITY,
-                cause = e,
-                rateLimited = e.errorCode == HealthConnectException.ERROR_RATE_LIMIT_EXCEEDED,
-            )
-        } catch (e: Exception) {
-            // The cause is kept for its type only; a record's own text holds a night's figures, and is never logged.
-            throw HealthSinkException(notAllowed = false, cause = e)
+        val manager = manager()
+        val source = sourceId ?: answered { sources(manager) }.firstOrNull { it.displayName == SOURCE_NAME }?.id?.also { sourceId = it }
+            // It was there when the run began and is gone: the user removed it meanwhile. The next run starts it afresh.
+            ?: throw HealthSinkException(notAllowed = false)
+        if (removeIds.isNotEmpty()) answered { remove(manager, source, removeIds) }
+        for (chunk in resources.chunked(CHUNK)) {
+            // Health Connect says how many it stored. Fewer than were sent is not a success.
+            if (answered { upsert(manager, source, chunk) } != chunk.size) throw HealthSinkException(notAllowed = false)
         }
     }
 
     /**
-     * Proves that this phone accepts PAPRelay's kind of record: writes one clearly labelled test
-     * observation of the same shape as a night's figure, and removes it again.
+     * Proves that this phone accepts PAPRelay's records: writes one made-up night, of exactly
+     * the shape a real one has and with every figure a night can have, under a name no real
+     * machine has, and removes it again.
      *
-     * @return true if it was stored and removed; false if the phone refused the record itself.
-     * @throws Exception for anything else: not allowed, no answer, an error inside Health Connect.
+     * @throws HealthSinkException if Health Connect could not be asked at all.
      */
-    suspend fun probe(): Boolean = withContext(NonCancellable) {
-        if (Build.VERSION.SDK_INT < FIRST_VERSION) return@withContext false
+    suspend fun probe(): RecordsProbe = withContext(NonCancellable) {
+        if (Build.VERSION.SDK_INT < FIRST_VERSION) throw HealthSinkException(notAllowed = false)
         val manager = manager()
-        val source = source(manager)
-        val stored = try {
-            answered { upsert(manager, source, listOf(FhirResource(PROBE_ID, PROBE_JSON))) } == 1
+        val source = try {
+            (answered { sources(manager) }.firstOrNull { it.displayName == SOURCE_NAME } ?: answered { create(manager) }).id
+        } catch (e: SecurityException) {
+            throw HealthSinkException(notAllowed = true, cause = e)
         } catch (e: HealthConnectException) {
-            if (e.errorCode != HealthConnectException.ERROR_INVALID_ARGUMENT) throw e
-            false
-        } catch (e: IllegalArgumentException) {
-            false
+            throw HealthSinkException(notAllowed = e.errorCode == HealthConnectException.ERROR_SECURITY, cause = e)
         }
-        // Removed whether or not the write was confirmed: it may have landed all the same.
-        answered { remove(manager, source, listOf(PROBE_ID)) }
-        stored
+        val resources = FhirObservations.forNight(PROBE_NIGHT, PROBE_TAG)
+        var accepted = false
+        var reason: String? = null
+        var removed = false
+        try {
+            accepted = answered { upsert(manager, source, resources) } == resources.size
+            if (!accepted) reason = "fewer stored than sent"
+        } catch (e: HealthConnectException) {
+            // Its own word for why. This is about made-up data, so it holds nothing of the user's.
+            reason = "code ${e.errorCode}: ${e.message.orEmpty().take(MAX_REASON)}"
+        } catch (e: IllegalArgumentException) {
+            reason = e.message.orEmpty().take(MAX_REASON)
+        } finally {
+            // Removed whatever became of the write: it may have landed even when its answer did not.
+            removed = try {
+                answered { remove(manager, source, FhirObservations.idsFor(PROBE_NIGHT, PROBE_TAG)) }
+                true
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                false
+            }
+        }
+        RecordsProbe(accepted, removed, reason)
     }
 
-    /** Removes a test record a check that was cut short may have left behind. Does nothing if there is none. */
+    /** Removes the made-up night a check that was cut short may have left behind. Does nothing if there is none. */
     suspend fun removeLeftover() {
         if (Build.VERSION.SDK_INT < FIRST_VERSION) return
         try {
             if (!supported || !allowed) return
             val manager = manager()
             val existing = answered { sources(manager) }.firstOrNull { it.displayName == SOURCE_NAME } ?: return
-            answered { remove(manager, existing, listOf(PROBE_ID)) }
+            answered { remove(manager, existing.id, FhirObservations.idsFor(PROBE_NIGHT, PROBE_TAG)) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -125,18 +156,39 @@ class HealthRecords(private val context: Context) : NightRecords {
         }
     }
 
+    /** Runs [block] to its end whatever is stopped around it, and turns what Health Connect throws into the one failure the engine knows. */
+    private suspend fun <T> guarded(block: suspend () -> T): T = withContext(NonCancellable) {
+        try {
+            block()
+        } catch (e: HealthSinkException) {
+            sourceId = null
+            throw e
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: SecurityException) {
+            throw HealthSinkException(notAllowed = true, cause = e)
+        } catch (e: HealthConnectException) {
+            sourceId = null
+            throw HealthSinkException(
+                notAllowed = e.errorCode == HealthConnectException.ERROR_SECURITY,
+                cause = e,
+                rateLimited = e.errorCode == HealthConnectException.ERROR_RATE_LIMIT_EXCEEDED,
+            )
+        } catch (e: Exception) {
+            sourceId = null
+            // The cause is kept for its type only; a record's own text holds a night's figures, and is never logged.
+            throw HealthSinkException(notAllowed = false, cause = e)
+        }
+    }
+
     @RequiresApi(FIRST_VERSION)
     private fun manager(): HealthConnectManager =
         context.getSystemService(HealthConnectManager::class.java) ?: throw HealthSinkException(notAllowed = false)
 
-    /** PAPRelay's own data source, made the first time it is needed. */
     @RequiresApi(FIRST_VERSION)
-    private suspend fun source(manager: HealthConnectManager): MedicalDataSource =
-        answered { sources(manager) }.firstOrNull { it.displayName == SOURCE_NAME } ?: answered {
-            call<MedicalDataSource> { receiver ->
-                manager.createMedicalDataSource(CreateMedicalDataSourceRequest.Builder(SOURCE_URI, SOURCE_NAME, version()).build(), Runnable::run, receiver)
-            }
-        }
+    private suspend fun create(manager: HealthConnectManager): MedicalDataSource = call { receiver ->
+        manager.createMedicalDataSource(CreateMedicalDataSourceRequest.Builder(SOURCE_URI, SOURCE_NAME, version()).build(), Runnable::run, receiver)
+    }
 
     @RequiresApi(FIRST_VERSION)
     private suspend fun sources(manager: HealthConnectManager): List<MedicalDataSource> = call { receiver ->
@@ -144,27 +196,32 @@ class HealthRecords(private val context: Context) : NightRecords {
     }
 
     @RequiresApi(FIRST_VERSION)
-    private suspend fun upsert(manager: HealthConnectManager, source: MedicalDataSource, resources: List<FhirResource>): Int {
-        val requests = resources.map { UpsertMedicalResourceRequest.Builder(source.id, version(), it.json).build() }
+    private suspend fun upsert(manager: HealthConnectManager, source: String, resources: List<FhirResource>): Int {
+        val requests = resources.map { UpsertMedicalResourceRequest.Builder(source, version(), it.json).build() }
         return call<List<android.health.connect.datatypes.MedicalResource>> { receiver ->
             manager.upsertMedicalResources(requests, Runnable::run, receiver)
         }.size
     }
 
     @RequiresApi(FIRST_VERSION)
-    private suspend fun remove(manager: HealthConnectManager, source: MedicalDataSource, ids: List<String>) {
-        val resourceIds = ids.map { MedicalResourceId(source.id, FHIR_RESOURCE_TYPE_OBSERVATION, it) }
+    private suspend fun remove(manager: HealthConnectManager, source: String, ids: List<String>) {
+        val resourceIds = ids.map { MedicalResourceId(source, FHIR_RESOURCE_TYPE_OBSERVATION, it) }
         call<Void?> { receiver -> manager.deleteMedicalResources(resourceIds, Runnable::run, receiver) }
     }
 
     @RequiresApi(FIRST_VERSION)
     private fun version(): FhirVersion = FhirVersion.parseFhirVersion(FhirObservations.FHIR_VERSION)
 
-    /** Bounds the wait for Health Connect, which now and then does not answer at all. */
+    /**
+     * Bounds the wait for Health Connect, which now and then does not answer at all. Giving up
+     * is a failure of Health Connect's, and is reported as one: not as this run having been stopped.
+     */
     private suspend fun <T> answered(block: suspend () -> T): T {
-        var result: Result<T>? = null
-        withTimeoutOrNull(ANSWER_MS) { result = runCatching { block() } }
-        return (result ?: throw HealthSinkException(notAllowed = false)).getOrThrow()
+        var done = false
+        val value = withTimeoutOrNull(ANSWER_MS) { block().also { done = true } }
+        if (!done) throw HealthSinkException(notAllowed = false, cause = HealthConnectUnresponsiveException())
+        @Suppress("UNCHECKED_CAST")
+        return value as T
     }
 
     @RequiresApi(FIRST_VERSION)
@@ -185,6 +242,7 @@ class HealthRecords(private val context: Context) : NightRecords {
     private companion object {
         /** Android 16. */
         const val FIRST_VERSION = 36
+
         /** Spelt out: the constant for it exists only on phones that have health records. */
         const val WRITE_PERMISSION = "android.permission.health.WRITE_MEDICAL_DATA"
         const val SOURCE_NAME = "PAPRelay (CPAP machine)"
@@ -193,13 +251,12 @@ class HealthRecords(private val context: Context) : NightRecords {
         val SOURCE_URI: Uri = "https://github.com/hahnfeld/paprelay/".toUri()
         const val CHUNK = 50
         const val ANSWER_MS = 30_000L
-        const val PROBE_ID = "paprelay-write-test"
-        const val PROBE_JSON =
-            """{"resourceType":"Observation","id":"paprelay-write-test","status":"final",""" +
-                """"category":[{"coding":[{"system":"http://terminology.hl7.org/CodeSystem/observation-category","code":"laboratory","display":"Laboratory"}]}],""" +
-                """"code":{"coding":[{"system":"https://github.com/hahnfeld/paprelay/fhir/CodeSystem/cpap-night","code":"write-test","display":"PAPRelay write test"}],""" +
-                """"text":"PAPRelay write test (not a measurement)"},""" +
-                """"effectiveDateTime":"2026-01-01T12:00:00Z",""" +
-                """"valueQuantity":{"value":0,"unit":"events/h","system":"http://unitsofmeasure.org","code":"{events}/h"}}"""
+        const val MAX_REASON = 300
+
+        /** No machine's name: a real one is "m-" and sixteen hexadecimal digits. */
+        const val PROBE_TAG = "paprelay-write-test"
+
+        /** A night long past with one of everything, every value plainly not a measurement. */
+        val PROBE_NIGHT = Night(LocalDate.of(2000, 1, 1), 0, 1, 1, NightFigure.entries.associateWith { 1L }, complete = true)
     }
 }

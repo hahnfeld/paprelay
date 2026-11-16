@@ -1,8 +1,8 @@
 # PAPRelay
 
 PAPRelay copies therapy data from a ResMed AirSense 11 into Android Health Connect.
-It talks to the machine directly over Bluetooth, keeps everything on the phone, and
-has no internet permission.
+It talks to the machine directly over Bluetooth and has no internet permission: what it
+reads stays on the phone unless you have it kept in a file elsewhere or share it yourself.
 
 **Status: early releases.** Tested against one AirSense 11 AutoSet (software
 `SW04600.19.8.8.0`) and one phone (Pixel 10 Pro, Android 17), and checked against the
@@ -19,23 +19,24 @@ Based on SomnoTrace, originally created by Ilya Kruchinin (https://github.com/il
 
 ## What it does
 
-- Keeps **each night's figures as the machine recorded them**: hours of use, AHI and its
-  split into obstructive, central and hypopnoea, leak and pressure. It shows them, and can
-  pass them on three ways:
-  - to the **health records in Health Connect** (Android 16 and later), as one coded
-    observation per figure and night. Health Connect has no place of its own for these, so
-    they appear there under lab results, marked as coming from PAPRelay;
-  - to a **table of nights** (`PAPRelay nights.csv`) kept up to date in a folder you choose,
+- Keeps **each night's figures as the machine recorded them**: hours of use, the residual
+  AHI and its split into obstructive, central and hypopnoea, leak and pressure. It shows
+  them, and can pass them on three ways:
+  - to the **health records in Health Connect** (Android 16 and later), as up to five coded
+    observations a night: usage, events, leak, pressure and breathing. Health Connect has no
+    place of its own for these, so they are filed as lab results, each saying plainly that it
+    is a CPAP machine's nightly figure;
+  - to a **table of nights** (a CSV file) kept up to date wherever you choose to keep it,
     for anything that reads files;
-  - as a few lines of text through the phone's share sheet.
+  - as text through the phone's share sheet.
 - Can also write the machine's **respiratory rate, one value per minute of therapy**, to
   Health Connect at the true time (the machine's clock is measured and corrected for). This
   is off unless you switch it on.
 - Synchronises when you ask, when the phone hears the machine come into range, and about
   once an hour as a backstop. A night's figures arrive after the machine has closed the day,
   at midday. Being out of range is normal and is simply tried again later.
-- Never writes anything twice: every record has a fixed name derived from the machine, the
-  night and the figure, so a reinstall or another run writes over the same records.
+- Never writes anything twice: every record has a fixed name derived from the machine and
+  the night, so a reinstall or another run writes over the same records.
 
 ## Installing
 

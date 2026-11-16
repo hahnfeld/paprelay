@@ -29,6 +29,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.time.DateTimeException
@@ -48,9 +50,11 @@ class SyncStatus(
     /** What the user has chosen to have passed on, and where. */
     val respiratoryRate: Boolean = false,
     val healthRecords: Boolean = true,
-    val exportFolder: String? = null,
-    /** True when the table of nights could not be written to the chosen folder at the last attempt. */
+    val exportFile: String? = null,
+    /** True when the table of nights could not be written to the chosen file at the last attempt. */
     val exportFailed: Boolean = false,
+    /** The chosen file's name as the user sees it, when it is known. */
+    val exportName: String? = null,
 ) {
     fun with(
         running: Boolean = this.running,
@@ -59,9 +63,10 @@ class SyncStatus(
         storeUnreadable: Boolean = this.storeUnreadable,
         respiratoryRate: Boolean = this.respiratoryRate,
         healthRecords: Boolean = this.healthRecords,
-        exportFolder: String? = this.exportFolder,
+        exportFile: String? = this.exportFile,
         exportFailed: Boolean = this.exportFailed,
-    ) = SyncStatus(running, lastReport, lastCompleteAtMs, storeUnreadable, respiratoryRate, healthRecords, exportFolder, exportFailed)
+        exportName: String? = this.exportName,
+    ) = SyncStatus(running, lastReport, lastCompleteAtMs, storeUnreadable, respiratoryRate, healthRecords, exportFile, exportFailed, exportName)
 }
 
 /**
@@ -93,6 +98,12 @@ class SyncRunner(
         connector, sink, store, System::currentTimeMillis, ::keepRaw,
         phoneClockWrong = ::phoneClockWrong, describe = describe, nights = nightStore, records = records,
     )
+
+    private val exporting = Mutex()
+
+    /** What the table was when it was last written to the chosen file in this process: its hash and length. */
+    @Volatile
+    private var exported: Pair<Int, Int>? = null
 
     private val _nights = MutableStateFlow<List<Night>>(emptyList())
 
@@ -348,25 +359,24 @@ class SyncRunner(
     }
 
     /**
-     * Sets the folder the table of nights is kept in, or none. [folder] is what the system's
-     * folder picker returned; the right to write there is kept until another is chosen.
+     * Sets the file the table of nights is kept in, or none. [file] is what the system's "save
+     * as" screen returned; the right to write to it is kept until another is chosen.
      */
-    fun setExportFolder(folder: Uri?) {
+    fun setExportFile(file: Uri?) {
         scope.launch {
-            val before = _status.value.exportFolder
-            withContext(Dispatchers.IO) {
-                runCatching {
-                    if (folder != null) nightFile.keep(folder)
-                    if (before != null && before != folder?.toString()) nightFile.release(before.toUri())
-                }
-            }
-            change { it.with(exportFolder = folder?.toString()) }
+            val before = _status.value.exportFile
+            // The new right is taken before anything is stored, and the old one given up only once the new choice is.
+            if (file != null) withContext(Dispatchers.IO) { runCatching { nightFile.keep(file) } }
+            val stored = change { it.with(exportFile = file?.toString()) }
+            if (stored && before != null && before != file?.toString()) withContext(Dispatchers.IO) { nightFile.release(before.toUri()) }
+            exported = null
+            _status.update { it.with(exportFailed = false, exportName = null) }
             export()
         }
     }
 
-    /** The recent nights as a few lines of text, for sharing by hand. */
-    fun shareText(): String = NightReport.text(_nights.value)
+    /** What the table is, and the table itself, as text to hand to another app. */
+    fun shareText(): String = NightReport.EXPLANATION + "\n\n" + NightReport.csv(_nights.value.take(MAX_SHARED_NIGHTS))
 
     /** Sets or removes the leak rule. Every night is then looked at again. */
     suspend fun setLeakLimit(litresPerMinute: Int?) = change { it.withLeakLimit(litresPerMinute) }
@@ -447,21 +457,40 @@ class SyncRunner(
         WorkManager.getInstance(context).enqueueUniqueWork(name, ExistingWorkPolicy.KEEP, work)
     }
 
-    /** Waits for a run in progress to finish: it holds the state in hand, and would overwrite the change. */
-    private suspend fun change(transform: (SyncState) -> SyncState) {
-        engine.whileIdle { withContext(Dispatchers.IO) { runCatching { store.write(transform(store.read())) } } }
+    /**
+     * Waits for a run in progress to finish: it holds the state in hand, and would overwrite the change.
+     * Returns whether the change was stored.
+     */
+    private suspend fun change(transform: (SyncState) -> SyncState): Boolean {
+        val stored = engine.whileIdle { withContext(Dispatchers.IO) { runCatching { store.write(transform(store.read())) }.isSuccess } }
         refresh()
+        return stored
     }
 
     private fun publish() {
         _status.update { it.with(running = request.get() != IDLE || active.get()) }
     }
 
-    /** Writes the table of nights to the chosen folder, if one is chosen. */
-    private suspend fun export() {
-        val folder = _status.value.exportFolder ?: return
-        val written = withContext(Dispatchers.IO) { runCatching { nightFile.write(folder.toUri(), nightStore.read().all) }.getOrDefault(false) }
-        _status.update { it.with(exportFailed = !written) }
+    /**
+     * Writes the table of nights to the chosen file, if one is chosen and the table has changed
+     * since it was last written there (or the last attempt failed). One at a time.
+     */
+    private suspend fun export() = exporting.withLock {
+        val file = _status.value.exportFile ?: return@withLock
+        val outcome = withContext(Dispatchers.IO) {
+            runCatching {
+                val all = nightStore.read().all
+                // With nothing to say the file is left as it is: an empty table must never replace a full one.
+                if (all.none { it.complete }) return@runCatching null
+                val table = NightReport.csv(all)
+                val print = table.hashCode() to table.length
+                if (exported == print && !_status.value.exportFailed) return@runCatching null
+                val written = nightFile.write(file.toUri(), table)
+                if (written) exported = print
+                written to nightFile.name(file.toUri())
+            }.getOrDefault(false to null)
+        } ?: return@withLock
+        _status.update { it.with(exportFailed = !outcome.first, exportName = outcome.second ?: it.exportName) }
     }
 
     /** Reads the stored report again. Whether a run is in progress is not its affair. */
@@ -475,7 +504,7 @@ class SyncRunner(
                     val report = listOfNotNull(stored.lastReport, latest).maxByOrNull { it.atMs }
                     before.with(
                         lastReport = report, lastCompleteAtMs = stored.lastCompleteAtMs, storeUnreadable = false,
-                        respiratoryRate = stored.respiratoryRate, healthRecords = stored.healthRecords, exportFolder = stored.exportFolder,
+                        respiratoryRate = stored.respiratoryRate, healthRecords = stored.healthRecords, exportFile = stored.exportFile,
                     )
                 }
                 // Damaged: the user is told, and offered a fresh start.
@@ -485,6 +514,11 @@ class SyncRunner(
             }
         }
         withContext(Dispatchers.IO) { runCatching { nightStore.read().all } }.getOrNull()?.let { _nights.value = it }
+        // The name of the chosen file, asked for once.
+        val file = _status.value.exportFile
+        if (file != null && _status.value.exportName == null) {
+            withContext(Dispatchers.IO) { nightFile.name(file.toUri()) }?.let { name -> _status.update { it.with(exportName = name) } }
+        }
     }
 
     /**
@@ -528,6 +562,9 @@ class SyncRunner(
         const val RETRY_WORK = "sync-retry"
         const val RAW_DIRECTORY = "raw"
         const val MAX_RAW_FILES = 400
+
+        /** A year and a little: as many nights as are worth handing over as text. */
+        const val MAX_SHARED_NIGHTS = 400
         const val PHONE_CLOCK_TOLERANCE_MS = 30_000L
 
         /** How long the system is given to begin a run asked for by hand. */
