@@ -85,4 +85,5 @@ dependencies {
     // Android's local unit tests run on JUnit 4.
     testImplementation(kotlin("test-junit"))
     testImplementation(libs.coroutines.test)
+    testImplementation(testFixtures(project(":as11")))
 }
