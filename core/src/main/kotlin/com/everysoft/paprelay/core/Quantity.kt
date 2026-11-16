@@ -60,52 +60,67 @@ public data class Scale(val numerator: Int, val denominator: Int) {
  * [value] and [exact] are in whatever [unit] says; code that needs a
  * particular unit should ask for it with [valueIn], which refuses a unit of
  * another kind.
+ *
+ * Printing one shows its unit and nothing else: a measurement is health data,
+ * and must not reach a log by way of a string template.
+ *
+ * @throws IllegalArgumentException if [raw] is beyond [MAX_RAW] either way.
  */
-public data class Quantity(val raw: Long, val scale: Scale, val unit: PapUnit) {
+public class Quantity(public val raw: Long, public val scale: Scale, public val unit: PapUnit) {
     init {
         // With the limits on a scale, `raw * numerator` stays below 2^53: exact in a Long and in a Double.
         require(raw in -MAX_RAW..MAX_RAW) { "stored value out of range" }
     }
 
-    /** The physical value, correctly rounded to the nearest double. */
+    /** The physical value in [unit], correctly rounded to the nearest double. */
     public val value: Double get() = (raw * scale.numerator).toDouble() / scale.denominator
 
-    /** The physical value with no rounding at all, in plain notation, for display and export. */
-    public fun exact(): BigDecimal {
-        val exact = BigDecimal(raw * scale.numerator).divide(BigDecimal(scale.denominator)).stripTrailingZeros()
-        // stripTrailingZeros turns 10 into 1E+1; whole numbers are kept whole.
-        return if (exact.scale() < 0) exact.setScale(0) else exact
-    }
+    /** The physical value in [unit] with no rounding at all, in plain notation, for display and export. */
+    public fun exact(): BigDecimal = plain(BigDecimal(raw * scale.numerator).divide(BigDecimal(scale.denominator)))
 
     /**
-     * The value expressed in [target]. Only the same unit, or the other unit of the same
-     * kind (flow per second and per minute; seconds and minutes), is possible.
+     * The value expressed in [target], as the nearest double. Only the same unit, or the other
+     * unit of the same kind (flow per second and per minute; seconds and minutes), is possible.
      *
      * @throws IllegalArgumentException if [target] measures something else.
      */
-    public fun valueIn(target: PapUnit): Double = exactIn(target).toDouble()
-
-    /** As [valueIn], with no rounding. */
-    public fun exactIn(target: PapUnit): BigDecimal {
-        val sixty = BigDecimal(60)
-        return when {
-            target == unit -> exact()
-            unit == PapUnit.LITRES_PER_SECOND && target == PapUnit.LITRES_PER_MINUTE -> plain(exact().multiply(sixty))
-            unit == PapUnit.MINUTES && target == PapUnit.SECONDS -> plain(exact().multiply(sixty))
-            // Sixty has a factor of three, so the other direction cannot always be exact; it is
-            // rounded to more places than any stored value has.
-            unit == PapUnit.LITRES_PER_MINUTE && target == PapUnit.LITRES_PER_SECOND -> exact().divide(sixty, java.math.MathContext.DECIMAL64)
-            unit == PapUnit.SECONDS && target == PapUnit.MINUTES -> exact().divide(sixty, java.math.MathContext.DECIMAL64)
-            else -> throw IllegalArgumentException("$unit cannot be expressed in $target")
-        }
+    public fun valueIn(target: PapUnit): Double = when {
+        target == unit -> value
+        larger(unit) == target -> (raw * scale.numerator * 60).toDouble() / scale.denominator
+        larger(target) == unit -> (raw * scale.numerator).toDouble() / (scale.denominator * 60L)
+        else -> throw IllegalArgumentException("$unit cannot be expressed in $target")
     }
 
-    /** Whether this and [other] are the same amount of the same thing, however each is stored. */
-    public fun sameAmountAs(other: Quantity): Boolean = unit == other.unit && exact().compareTo(other.exact()) == 0
+    /**
+     * Whether this and [other] are the same amount of the same thing, however each is stored
+     * and in whichever of two convertible units: one litre a second is sixty litres a minute.
+     */
+    public fun sameAmountAs(other: Quantity): Boolean {
+        val mine = larger(unit)
+        val theirs = larger(other.unit)
+        return (mine ?: unit) == (theirs ?: other.unit) && inLarger().compareTo(other.inLarger()) == 0
+    }
 
-    private fun plain(value: BigDecimal): BigDecimal = value.stripTrailingZeros().let { if (it.scale() < 0) it.setScale(0) else it }
+    /** The value in the unit with the larger number (per minute, seconds), which is always exact. */
+    private fun inLarger(): BigDecimal = if (larger(unit) != null) exact().multiply(BigDecimal(60)) else exact()
+
+    override fun equals(other: Any?): Boolean = other is Quantity && raw == other.raw && scale == other.scale && unit == other.unit
+
+    override fun hashCode(): Int = (raw.hashCode() * 31 + scale.hashCode()) * 31 + unit.hashCode()
+
+    override fun toString(): String = "Quantity($unit)"
 
     public companion object {
         public const val MAX_RAW: Long = 1L shl 40
+
+        /** For a unit that has a sixty-times-finer partner, that partner; otherwise null. */
+        private fun larger(unit: PapUnit): PapUnit? = when (unit) {
+            PapUnit.LITRES_PER_SECOND -> PapUnit.LITRES_PER_MINUTE
+            PapUnit.MINUTES -> PapUnit.SECONDS
+            else -> null
+        }
+
+        // stripTrailingZeros turns 10 into 1E+1; whole numbers are kept whole.
+        private fun plain(value: BigDecimal): BigDecimal = value.stripTrailingZeros().let { if (it.scale() < 0) it.setScale(0) else it }
     }
 }

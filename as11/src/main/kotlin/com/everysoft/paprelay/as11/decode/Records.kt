@@ -32,8 +32,14 @@ public sealed interface RecordResult<out T> {
      * [DecodedLog.entries] show roughly where it belongs.
      *
      * @property ordinal position among the log's entries, counting from zero.
+     * @property severalRecords true when what failed was a container, so that an unknown
+     *   number of records is missing, not one.
      */
-    public class Failed internal constructor(public val ordinal: Int, public val reason: String) : RecordResult<Nothing>
+    public class Failed internal constructor(
+        public val ordinal: Int,
+        public val reason: String,
+        public val severalRecords: Boolean,
+    ) : RecordResult<Nothing>
 }
 
 /**
@@ -41,15 +47,27 @@ public sealed interface RecordResult<out T> {
  *
  * An entry that is not understood is kept in its place as a [RecordResult.Failed]
  * and leaves the others standing: it stays on the machine, so refusing the whole
- * log would hide every night until the app is fixed. [records] alone is therefore
- * not the whole story; a caller must look at [complete] or [failures] before
- * treating a gap as a gap.
+ * log would hide every night until the app is fixed. [decoded] alone is therefore
+ * not the whole story. What a failure means for whoever uses the log:
+ *
+ *  - **Daily summaries:** the failed day is unknown. Nothing is to be written for
+ *    it, and the place synchronisation has reached must not move past it.
+ *  - **Events:** the list is incomplete. A count taken from it (an index, say)
+ *    would be too low, so none is to be taken.
+ *  - **Per-minute records:** the minutes of the failed record are missing. A gap
+ *    is honest; the place synchronisation has reached must not move past it.
+ *
+ * The bytes themselves are not kept here; whoever downloaded them keeps them, so
+ * that a later version can decode what this one could not.
  */
 public class DecodedLog<T> internal constructor(entries: List<RecordResult<T>>) {
     public val entries: List<RecordResult<T>> = Collections.unmodifiableList(ArrayList(entries))
 
-    /** The entries that were understood, in order. */
-    public val records: List<T> = Collections.unmodifiableList(this.entries.filterIsInstance<RecordResult.Decoded<T>>().map { it.value })
+    /** The entries that were understood, in order. **Possibly not all of them**: see [complete]. */
+    public val decoded: List<T> = Collections.unmodifiableList(this.entries.filterIsInstance<RecordResult.Decoded<T>>().map { it.value })
+
+    /** Every record of the log, or null if any entry failed. */
+    public fun allOrNull(): List<T>? = if (complete) decoded else null
 
     public val failures: List<RecordResult.Failed> = Collections.unmodifiableList(this.entries.filterIsInstance<RecordResult.Failed>())
 
@@ -64,8 +82,15 @@ internal class ResultSink<T> {
         entries += RecordResult.Decoded(value)
     }
 
-    fun fail(reason: String) {
-        entries += RecordResult.Failed(entries.size, reason)
+    fun fail(reason: String, severalRecords: Boolean = false) {
+        entries += RecordResult.Failed(entries.size, reason, severalRecords)
+    }
+
+    /** Turns every entry into a failure: one of them has shown that none can be trusted. */
+    fun failAll(reason: String) {
+        val count = entries.size
+        entries.clear()
+        repeat(count) { fail(reason) }
     }
 
     /** Runs [decode] for one entry; a decoding failure becomes that entry's result. */
@@ -107,9 +132,6 @@ internal fun count(value: Long, max: Int, what: String, name: String): Int {
 /** The quantity, or null if the stored value cannot be one: negative (a ten-byte varint) or absurdly large. */
 internal fun quantityOrNull(raw: Long, scale: Scale, unit: PapUnit): Quantity? =
     if (raw in 0..MAX_STORED_VALUE) Quantity(raw, scale, unit) else null
-
-internal fun quantity(raw: Long, scale: Scale, unit: PapUnit, what: String): Quantity =
-    quantityOrNull(raw, scale, unit) ?: throw SpoolDecodeException("$what: a stored value is out of range")
 
 /** Ten thousand of any unit, in hundredths. No figure the machine reports comes near it. */
 internal const val MAX_STORED_VALUE: Long = 1_000_000L

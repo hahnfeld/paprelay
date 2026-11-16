@@ -93,47 +93,65 @@ public enum class SummaryMetric(
 }
 
 /**
+ * The firmware on which the layouts, moduli and factors in this file were
+ * checked against a real machine and its SD card. Data from any other firmware
+ * may be laid out differently, and the per-minute log in particular can decode
+ * to wrong but plausible values when a modulus differs, so [MinuteDecoder]
+ * refuses data from firmware not listed here.
+ */
+public object ConfirmedFirmware {
+    /** `ApplicationIdentifier` prefixes: AirSense 11, software 19.8.8.0. */
+    private val prefixes = listOf("SW04600.19.8.8.0.")
+
+    /** @param applicationIdentifier the machine's `ApplicationIdentifier`, as it reports it. */
+    public fun covers(applicationIdentifier: String): Boolean = prefixes.any { applicationIdentifier.startsWith(it) }
+}
+
+/**
  * Signals in the per-minute log.
  *
  * @property modulus the Rice modulus of the compressed series, or null where
  *   the machine stores plain int16 samples (the oximeter signals).
- * @property modulusConfirmed whether a real capture has shown the series
- *   decodes with this modulus. A series decoded with the wrong one usually
- *   comes out a different length from its neighbours and is refused, but in a
- *   record of only a few minutes it can pass with wrong values, so a signal
- *   whose modulus is unconfirmed is not decoded at all.
+ * @property layoutConfirmed whether the signal has been seen in a real capture
+ *   and found to decode as described here. One that has not is neither decoded
+ *   nor allowed a say in how long the record is: decoded with a wrong modulus
+ *   a short series can come out the right length with wrong values, and a
+ *   series of an unexpected length would take the whole record down with it.
  * @property factorConfirmed whether the factor and unit have been checked
  *   against the same machine's SD card. Unconfirmed values are given out only
  *   on request.
+ * @property maxStored the largest stored value that can be a measurement. For
+ *   the confirmed signals this is the top of the range the SD card declares
+ *   for the same signal; anything above it, or below zero, means the series
+ *   was misread or holds a marker this version does not know.
  *
- * Evidence, from an AirSense 11 AutoSet on firmware 19.8.8.0 (2026-11-16):
- * signals 1 to 7 were present. With respiratory rate at modulus 8 and minute
- * ventilation at 4 (the reference decoder has them the other way round) every
- * signal of every record has the session's length in minutes. Leak, both
- * pressures, respiratory rate and minute ventilation agree with the SD card's
- * two-second signals averaged per minute. Inspiratory duration and I:E ratio
- * have nothing to be compared with, and the first gives values near half a
- * second, which is short for a breath in. Other firmware has not been examined.
+ * Evidence, from one AirSense 11 AutoSet on firmware 19.8.8.0 (2026-11-16):
+ * three sessions of 123, 202 and 101 minutes, signals 1 to 7 present. With
+ * respiratory rate at modulus 8 and minute ventilation at 4 (the reference
+ * decoder has them the other way round) every signal of every record has the
+ * session's length in minutes. Leak, both pressures, respiratory rate and
+ * minute ventilation agree with the SD card's two-second signals averaged per
+ * minute. Inspiratory duration and I:E ratio have nothing to be compared with,
+ * and the first gives values near half a second, which is short for a breath in.
  */
 public enum class MinuteSignal(
     public val field: Int,
     public val modulus: Int?,
     public val scale: Scale,
     public val unit: PapUnit,
-    public val modulusConfirmed: Boolean,
+    public val layoutConfirmed: Boolean,
     public val factorConfirmed: Boolean,
+    public val maxStored: Int = Short.MAX_VALUE.toInt(),
 ) {
-    LEAK(1, 4, Scale(6, 5), PapUnit.LITRES_PER_MINUTE, true, true),
-    INSPIRATORY_PRESSURE(2, 4, Scale(1, 5), PapUnit.CM_H2O, true, true),
-    EXPIRATORY_PRESSURE(3, 2, Scale(1, 5), PapUnit.CM_H2O, true, true),
-    RESPIRATORY_RATE(4, 8, Scale(1, 4), PapUnit.BREATHS_PER_MINUTE, true, true),
+    LEAK(1, 4, Scale(6, 5), PapUnit.LITRES_PER_MINUTE, true, true, maxStored = 100), // 120 L/min
+    INSPIRATORY_PRESSURE(2, 4, Scale(1, 5), PapUnit.CM_H2O, true, true, maxStored = 250), // 50 cmH2O
+    EXPIRATORY_PRESSURE(3, 2, Scale(1, 5), PapUnit.CM_H2O, true, true, maxStored = 250),
+    RESPIRATORY_RATE(4, 8, Scale(1, 4), PapUnit.BREATHS_PER_MINUTE, true, true, maxStored = 360), // 90 breaths/min
     INSPIRATORY_DURATION(5, 4, Scale(1, 25), PapUnit.SECONDS, true, false),
-    MINUTE_VENTILATION(6, 4, Scale(2, 5), PapUnit.LITRES_PER_MINUTE, true, true),
+    MINUTE_VENTILATION(6, 4, Scale(2, 5), PapUnit.LITRES_PER_MINUTE, true, true, maxStored = 75), // 30 L/min
     IE_RATIO(7, 4, Scale(4, 1), PapUnit.PERCENT, true, false),
-
-    // Stored uncompressed, so there is no modulus to get wrong.
-    SPO2(8, null, Scale.ONE, PapUnit.PERCENT, true, false),
-    HEART_RATE(9, null, Scale.ONE, PapUnit.BEATS_PER_MINUTE, true, false),
+    SPO2(8, null, Scale.ONE, PapUnit.PERCENT, false, false),
+    HEART_RATE(9, null, Scale.ONE, PapUnit.BEATS_PER_MINUTE, false, false),
     ALVEOLAR_MINUTE_VENTILATION(18, 8, Scale(2, 5), PapUnit.LITRES_PER_MINUTE, false, false),
     MEAN_INSPIRATORY_TIME(21, 4, Scale(1, 10), PapUnit.SECONDS, false, false),
 }

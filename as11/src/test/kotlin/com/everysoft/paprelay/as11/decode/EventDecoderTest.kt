@@ -37,11 +37,10 @@ class EventDecoderTest {
         assertTrue(log.complete)
         assertEquals(
             listOf(UsageEvent.THERAPY_START, UsageEvent.MASK_ON, UsageEvent.THERAPY_STOP, UsageEvent.MASK_OFF),
-            log.records.map { it.kind },
+            log.decoded.map { it.kind },
         )
-        val on = log.records[1]
+        val on = log.decoded[1]
         assertEquals(MachineTime(maskOn), on.time)
-        assertEquals(on.time, on.storedStart)
         assertNull(on.durationMs)
         assertNull(on.onset)
     }
@@ -55,7 +54,7 @@ class EventDecoderTest {
                 message(1) { event(2, t + 90_000) }
             },
         )
-        val (obstructive, central, hypopnea) = log.records
+        val (obstructive, central, hypopnea) = log.decoded
         assertEquals(RespiratoryEvent.OBSTRUCTIVE_APNEA, obstructive.kind)
         assertEquals(MachineTime(t), obstructive.time)
         assertEquals(10_000, obstructive.durationMs)
@@ -70,8 +69,8 @@ class EventDecoderTest {
 
     @Test
     fun `the same number means different things in the two logs`() {
-        val usage = EventDecoder.usage(asCaptured(6) { message(1) { event(3, t) } }).records.single()
-        val breathing = EventDecoder.respiratory(asCaptured(4) { message(1) { event(3, t) } }).records.single()
+        val usage = EventDecoder.usage(asCaptured(6) { message(1) { event(3, t) } }).decoded.single()
+        val breathing = EventDecoder.respiratory(asCaptured(4) { message(1) { event(3, t) } }).decoded.single()
         assertEquals(UsageEvent.MASK_ON, usage.kind)
         assertEquals(RespiratoryEvent.CENTRAL_APNEA, breathing.kind)
         // And a download is only ever read as the log it is.
@@ -83,11 +82,13 @@ class EventDecoderTest {
     fun `events are found under zero, one or two wrappers, and no deeper`() {
         val direct = proto { message(6) { event(3, t) } }
         val twice = proto { message(6) { message(2) { message(1) { event(3, t) } }; message(2) { message(1) { event(2, t + 5) } } } }
-        assertEquals(listOf(3), EventDecoder.usage(direct).records.map { it.code })
-        assertEquals(listOf(3, 2), EventDecoder.usage(twice).records.map { it.code })
+        assertEquals(listOf(3), EventDecoder.usage(direct).decoded.map { it.code })
+        assertEquals(listOf(3, 2), EventDecoder.usage(twice).decoded.map { it.code })
         val thrice = EventDecoder.usage(proto { message(6) { message(2) { message(1) { message(1) { event(3, t) } } } } })
-        assertTrue(thrice.records.isEmpty())
+        assertTrue(thrice.decoded.isEmpty())
         assertEquals(1, thrice.failures.size)
+        // What failed there held records, so more than one may be missing.
+        assertTrue(thrice.failures.single().severalRecords)
     }
 
     @Test
@@ -99,13 +100,13 @@ class EventDecoderTest {
 
     @Test
     fun `a kind of event this version does not know is kept by number`() {
-        val event = EventDecoder.usage(asCaptured(6) { message(1) { event(42, t); varint(9, 3); bytes(17, "note".toByteArray()) } }).records.single()
+        val event = EventDecoder.usage(asCaptured(6) { message(1) { event(42, t); varint(9, 3); bytes(17, "note".toByteArray()) } }).decoded.single()
         assertEquals(42, event.code)
         assertNull(event.kind)
-        assertEquals(2, event.extraFields)
+        assertEquals(2, event.unknownFields)
         // The gaps in the numbering are not filled in.
-        assertNull(EventDecoder.usage(asCaptured(6) { message(1) { event(9, t) } }).records.single().kind)
-        assertNull(EventDecoder.respiratory(asCaptured(4) { message(1) { event(7, t) } }).records.single().kind)
+        assertNull(EventDecoder.usage(asCaptured(6) { message(1) { event(9, t) } }).decoded.single().kind)
+        assertNull(EventDecoder.respiratory(asCaptured(4) { message(1) { event(7, t) } }).decoded.single().kind)
     }
 
     @Test
@@ -133,7 +134,7 @@ class EventDecoderTest {
                 message(1) { event(2, t + 9) }
             },
         )
-        assertEquals(listOf(3, 2), log.records.map { it.code })
+        assertEquals(listOf(3, 2), log.decoded.map { it.code })
         assertTrue(!log.complete)
         // The failure sits between its neighbours, so a caller can see where the gap is.
         assertEquals(3, log.entries.size)
@@ -143,35 +144,64 @@ class EventDecoderTest {
         assertIs<RecordResult.Decoded<*>>(log.entries[2])
     }
 
-    /** Each of these is one event that must be refused, with no event made out of it. */
-    private fun refusedEvent(why: String, build: Proto.() -> Unit) {
-        val log = EventDecoder.usage(asCaptured(6) { message(1, build) })
-        assertTrue(log.records.isEmpty(), "$why: decoded to ${log.records}")
-        assertEquals(1, log.failures.size, why)
+    /** One event that must be refused for the stated reason, between two that must survive it. */
+    private fun refusedEvent(reason: String, build: Proto.() -> Unit) {
+        val log = EventDecoder.usage(asCaptured(6) { message(1) { event(7, t) }; message(1, build); message(1) { event(8, t + 1) } })
+        assertEquals(listOf(7, 8), log.decoded.map { it.code }, reason)
+        val failure = log.failures.single()
+        assertEquals(1, failure.ordinal, reason)
+        assertTrue(reason in failure.reason, "expected \"$reason\" in \"${failure.reason}\"")
+        assertTrue(!failure.severalRecords, reason)
     }
 
     @Test
-    fun `an event that cannot be right is refused`() {
-        refusedEvent("no code") { varint(2, t); varint(3, t) }
-        refusedEvent("no first stamp") { varint(1, 3); varint(3, t) }
-        refusedEvent("no second stamp") { varint(1, 3); varint(2, t) }
-        refusedEvent("code zero") { event(0, t) }
-        refusedEvent("no time") { event(3, 0, t) }
-        refusedEvent("far future") { event(3, t, Long.MAX_VALUE) }
-        refusedEvent("seconds for milliseconds") { event(3, t / 1000) }
-        refusedEvent("just before 2015") { event(3, 1_420_070_399_999) }
-        refusedEvent("negative duration") { event(3, t, duration = -1) }
-        refusedEvent("a duration of days") { event(3, t, duration = 86_400_001) }
-        refusedEvent("code twice") { event(3, t); varint(1, 2) }
-        refusedEvent("first stamp twice") { event(3, t); varint(2, t) }
-        refusedEvent("second stamp twice") { event(3, t); varint(3, t) }
-        refusedEvent("duration twice") { event(3, t, duration = 5); varint(4, 5) }
-        refusedEvent("duration of the wrong kind") { event(3, t); bytes(4, byteArrayOf(1)) }
-        refusedEvent("events inside an event") { event(3, t); message(5) { event(2, t) } }
-        refusedEvent("events two levels inside an event") { event(3, t); message(5) { message(1) { event(2, t) } } }
+    fun `an event that cannot be right is refused, and its neighbours are not`() {
+        refusedEvent("code is missing") { varint(2, t); varint(3, t) }
+        refusedEvent("first time stamp is missing") { varint(1, 3); varint(3, t) }
+        refusedEvent("second time stamp is missing") { varint(1, 3); varint(2, t) }
+        refusedEvent("code of zero") { event(0, t) }
+        refusedEvent("time is out of range") { event(3, 0, t) }
+        refusedEvent("time is out of range") { event(3, t, Long.MAX_VALUE) }
+        refusedEvent("time is out of range") { event(3, t / 1000) }
+        refusedEvent("time is out of range") { event(3, 1_420_070_399_999) }
+        refusedEvent("duration is out of range") { event(3, t, duration = -1) }
+        refusedEvent("duration is out of range") { event(3, t, duration = 86_400_001) }
+        refusedEvent("field 1 appears twice") { event(3, t); varint(1, 2) }
+        refusedEvent("field 2 appears twice") { event(3, t); varint(2, t) }
+        refusedEvent("field 3 appears twice") { event(3, t); varint(3, t) }
+        refusedEvent("field 4 appears twice") { event(3, t, duration = 5); varint(4, 5) }
+        refusedEvent("unexpected wire type") { event(3, t); bytes(4, byteArrayOf(1)) }
+        refusedEvent("unexpected wire type") { varint(1, 3); varint(2, t); bytes(3, byteArrayOf(1)) }
+        refusedEvent("contains events") { event(3, t); message(5) { event(2, t) } }
+        refusedEvent("contains events") { event(3, t); message(5) { message(1) { event(2, t) } } }
+        refusedEvent("contains events") { event(3, t); message(5) { message(1) { message(1) { event(2, t) } } } }
+        // Two stamps that differ have never been seen, and what the difference would mean is not known.
+        refusedEvent("two time stamps differ") { event(3, t, t + 5_000, duration = 5_000) }
+        refusedEvent("two time stamps differ") { event(3, t + 5_000, t, duration = 5_000) }
+        // An empty record where an event belongs is a missing event, not nothing.
+        refusedEvent("neither an event") { }
+        refusedEvent("neither an event") { varint(9, 1) }
         // The limits themselves are accepted.
-        assertEquals(1, EventDecoder.usage(asCaptured(6) { message(1) { event(3, 1_420_070_400_000) } }).records.size)
-        assertEquals(1, EventDecoder.usage(asCaptured(6) { message(1) { event(3, t, duration = 86_400_000) } }).records.size)
+        assertEquals(1, EventDecoder.usage(asCaptured(6) { message(1) { event(3, 1_420_070_400_000) } }).decoded.size)
+        assertEquals(1, EventDecoder.usage(asCaptured(6) { message(1) { event(3, t, duration = 86_400_000) } }).decoded.size)
+    }
+
+    @Test
+    fun `an onset is worked out only for the kinds whose stamp is known to be their end`() {
+        fun onsetOf(code: Long) = EventDecoder.respiratory(asCaptured(4) { message(1) { event(code, t, duration = 10_000) } }).decoded.single().onset
+        assertEquals(MachineTime(t - 10_000), onsetOf(3))
+        assertEquals(MachineTime(t - 10_000), onsetOf(4))
+        // Never seen with a duration, so nothing is assumed about them, nor about kinds not known at all.
+        for (code in listOf(2L, 5L, 6L, 8L, 9L, 42L)) assertNull(onsetOf(code), "code $code")
+        // And a usage event is a moment, whatever number it carries.
+        assertNull(EventDecoder.usage(asCaptured(6) { message(1) { event(3, t, duration = 10_000) } }).decoded.single().onset)
+    }
+
+    @Test
+    fun `a stray value among the records costs only itself`() {
+        val log = EventDecoder.usage(proto { message(6) { message(1) { message(1) { event(3, t) }; fixed32(2, 7); message(1) { event(2, t + 1) } } } })
+        assertEquals(listOf(3, 2), log.decoded.map { it.code })
+        assertEquals(1, log.failures.single().ordinal)
     }
 
     @Test
@@ -180,8 +210,5 @@ class EventDecoderTest {
         assertFailsWith<SpoolDecodeException> { EventDecoder.usage(whole.copyOf(whole.size - 1)) }
         assertFailsWith<SpoolDecodeException> { EventDecoder.usage(whole + proto { varint(6, 1) }) }
         assertFailsWith<SpoolDecodeException> { EventDecoder.usage(whole + proto { message(5) { event(3, t) } }) }
-        // A wrapper that carries something other than records fails as one entry.
-        val mixed = EventDecoder.usage(proto { message(6) { message(1) { message(1) { event(3, t) } }; fixed32(2, 7) } })
-        assertEquals(1, mixed.failures.size)
     }
 }

@@ -23,6 +23,8 @@ public value class MachineTime(public val epochMs: Long) : Comparable<MachineTim
      */
     public fun toInstant(clockOffsetMs: Long): Instant = Instant.ofEpochMilli(Math.addExact(epochMs, clockOffsetMs))
 
+    // The arithmetic below throws ArithmeticException on overflow, which no real time can cause.
+
     public operator fun plus(milliseconds: Long): MachineTime = MachineTime(Math.addExact(epochMs, milliseconds))
 
     public operator fun minus(milliseconds: Long): MachineTime = MachineTime(Math.subtractExact(epochMs, milliseconds))
@@ -32,6 +34,6 @@ public value class MachineTime(public val epochMs: Long) : Comparable<MachineTim
 
     override fun compareTo(other: MachineTime): Int = epochMs.compareTo(other.epochMs)
 
-    /** Deliberately not a calendar date: printing one would suggest it is a real-world time. */
-    override fun toString(): String = "machine:$epochMs"
+    /** Shows nothing: when someone went to bed is health data, and must not reach a log by way of a string template. */
+    override fun toString(): String = "MachineTime"
 }

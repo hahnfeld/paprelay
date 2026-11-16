@@ -43,11 +43,17 @@ class QuantityTest {
     @Test
     fun `a value is given in another unit only when the two measure the same thing`() {
         val leak = Scale(1, 100).of(42, PapUnit.LITRES_PER_SECOND)
-        assertEquals("25.2", leak.exactIn(PapUnit.LITRES_PER_MINUTE).toPlainString())
         assertEquals(25.2, leak.valueIn(PapUnit.LITRES_PER_MINUTE))
         assertEquals(0.42, leak.valueIn(PapUnit.LITRES_PER_SECOND))
         assertEquals(0.4, Scale(6, 5).of(20, PapUnit.LITRES_PER_MINUTE).valueIn(PapUnit.LITRES_PER_SECOND))
-        assertEquals("120", Scale.ONE.of(2, PapUnit.MINUTES).exactIn(PapUnit.SECONDS).toPlainString())
+        assertEquals(120.0, Scale.ONE.of(2, PapUnit.MINUTES).valueIn(PapUnit.SECONDS))
+        assertEquals(1.5, Scale.ONE.of(90, PapUnit.SECONDS).valueIn(PapUnit.MINUTES))
+        // Each conversion is the nearest double to the true value, in both directions.
+        for (raw in 0L..5_000L) {
+            assertEquals(BigDecimal(raw * 6).divide(BigDecimal(5 * 60), java.math.MathContext.DECIMAL128).toDouble(), Scale(6, 5).of(raw, PapUnit.LITRES_PER_MINUTE).valueIn(PapUnit.LITRES_PER_SECOND))
+            assertEquals(BigDecimal(raw * 60).divide(BigDecimal(100)).toDouble(), Scale(1, 100).of(raw, PapUnit.LITRES_PER_SECOND).valueIn(PapUnit.LITRES_PER_MINUTE))
+        }
+        assertFailsWith<IllegalArgumentException> { Scale.ONE.of(5, PapUnit.LITRES).valueIn(PapUnit.LITRES_PER_MINUTE) }
         assertFailsWith<IllegalArgumentException> { leak.valueIn(PapUnit.CM_H2O) }
         assertFailsWith<IllegalArgumentException> { leak.valueIn(PapUnit.LITRES) }
         assertFailsWith<IllegalArgumentException> { Scale.ONE.of(5, PapUnit.PERCENT).valueIn(PapUnit.SECONDS) }
@@ -57,8 +63,12 @@ class QuantityTest {
     fun `the same amount is recognised however it is stored, and never across units`() {
         assertEquals(true, Scale(1, 100).of(120, PapUnit.CM_H2O).sameAmountAs(Scale(1, 10).of(12, PapUnit.CM_H2O)))
         assertEquals(false, Scale(1, 100).of(120, PapUnit.CM_H2O).sameAmountAs(Scale(1, 10).of(13, PapUnit.CM_H2O)))
-        // Twenty-four of one thing is not twenty-four of another.
+        // Twenty-four a minute is not twenty-four a second; but one a second is sixty a minute.
         assertEquals(false, Scale.ONE.of(24, PapUnit.LITRES_PER_MINUTE).sameAmountAs(Scale.ONE.of(24, PapUnit.LITRES_PER_SECOND)))
+        assertEquals(true, Scale.ONE.of(1, PapUnit.LITRES_PER_SECOND).sameAmountAs(Scale.ONE.of(60, PapUnit.LITRES_PER_MINUTE)))
+        assertEquals(true, Scale(6, 5).of(20, PapUnit.LITRES_PER_MINUTE).sameAmountAs(Scale(1, 100).of(40, PapUnit.LITRES_PER_SECOND)))
+        assertEquals(true, Scale.ONE.of(2, PapUnit.MINUTES).sameAmountAs(Scale.ONE.of(120, PapUnit.SECONDS)))
+        assertEquals(false, Scale.ONE.of(24, PapUnit.PERCENT).sameAmountAs(Scale.ONE.of(24, PapUnit.CELSIUS)))
     }
 
     @Test
@@ -70,7 +80,15 @@ class QuantityTest {
         assertEquals(MachineTime(1_794_556_795_988), stamp - 10_000)
         assertEquals(60_000, (stamp + 60_000).since(stamp))
         assertEquals(true, stamp < stamp + 1)
-        assertEquals("machine:1794556805988", stamp.toString())
+        assertEquals(true, stamp + 1 > stamp)
+        // Neither a time nor a measurement prints its value: both are health data.
+        assertEquals("MachineTime", stamp.toString())
+        assertEquals("Quantity(BREATHS_PER_MINUTE)", Scale(1, 4).of(60, PapUnit.BREATHS_PER_MINUTE).toString())
+        assertEquals("a reading of Quantity(CM_H2O) at MachineTime", "a reading of ${Scale(1, 5).of(52, PapUnit.CM_H2O)} at $stamp")
+        // Overflow cannot pass silently.
+        assertFailsWith<ArithmeticException> { MachineTime(Long.MIN_VALUE) - 1 }
+        assertFailsWith<ArithmeticException> { MachineTime(Long.MAX_VALUE).since(MachineTime(-1)) }
+        assertFailsWith<ArithmeticException> { MachineTime(Long.MAX_VALUE).toInstant(1) }
         assertFailsWith<ArithmeticException> { MachineTime(Long.MAX_VALUE) + 1 }
     }
 

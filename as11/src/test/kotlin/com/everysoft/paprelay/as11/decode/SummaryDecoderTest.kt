@@ -54,7 +54,7 @@ class SummaryDecoderTest {
     private fun one(payload: ByteArray): SummaryRecord {
         val log = SummaryDecoder.decode(payload)
         assertTrue(log.complete, "failures: ${log.failures.map { it.reason }}")
-        return log.records.single()
+        return log.decoded.single()
     }
 
     private fun night(extra: Proto.() -> Unit = {}): SummaryRecord = one(proto { night(extra = extra) })
@@ -62,7 +62,7 @@ class SummaryDecoderTest {
     /** One record that must be refused, with nothing passed off as a night. */
     private fun refused(why: String, build: Proto.() -> Unit) {
         val log = SummaryDecoder.decode(proto(build))
-        assertTrue(log.records.isEmpty(), "$why: decoded")
+        assertTrue(log.decoded.isEmpty(), "$why: decoded")
         assertEquals(1, log.failures.size, why)
     }
 
@@ -101,8 +101,11 @@ class SummaryDecoderTest {
         // What it does not write is not turned into one.
         assertNull(record.metrics[SummaryMetric.SPO2])
         assertNull(record.metrics[SummaryMetric.TIDAL_VOLUME])
-        assertNull(record.spontaneousTriggered)
-        assertNull(record.minutesBelowSpo2Threshold)
+        assertTrue(record.unconfirmedMetrics.isEmpty())
+        // A metric that is present but says nothing is not a reading either.
+        val hollow = night { message(22) {} }
+        assertNull(hollow.metrics[SummaryMetric.TIDAL_VOLUME])
+        assertTrue(hollow.misreadMetrics.isEmpty())
         val noIndices = one(proto(bare { varint(5, 12) }))
         assertTrue(noIndices.indices.isEmpty())
     }
@@ -111,7 +114,7 @@ class SummaryDecoderTest {
     fun `a day without therapy has a duration of zero and nothing else`() {
         val log = SummaryDecoder.decode(proto { unusedDay(noon); night(start = noon + day); unusedDay(noon + 2 * day) })
         assertTrue(log.complete)
-        val (before, used, after) = log.records
+        val (before, used, after) = log.decoded
         assertEquals(0, before.durationMinutes)
         assertTrue(before.sessions.isEmpty() && before.indices.isEmpty() && before.metrics.isEmpty())
         assertNull(before.storedSessionCount)
@@ -149,15 +152,18 @@ class SummaryDecoderTest {
     }
 
     @Test
-    fun `the remaining whole-number fields carry their own meaning`() {
-        val record = night { varint(17, 12); varint(18, 9_550); varint(19, 8_025) }
-        assertEquals(12, record.minutesBelowSpo2Threshold)
-        val triggered = record.spontaneousTriggered!!
-        assertEquals(BigDecimal("95.5"), triggered.exact())
-        assertEquals(PapUnit.PERCENT, triggered.unit)
-        assertEquals(BigDecimal("80.25"), record.spontaneousCycled!!.exact())
-        // Kept as stored for export: the zone offset is still in its wire encoding there.
+    fun `whole-number fields are kept as stored for export, and metrics never checked on a machine are kept apart`() {
+        val record = night {
+            varint(17, 12); varint(18, 9_550)
+            message(27) { varint(2, 6_800); varint(3, 8_000); varint(4, 9_200) } // I:E ratio, never seen on a real machine
+        }
+        assertEquals(12, record.storedIntegers[17])
+        assertEquals(9_550, record.storedIntegers[18])
+        // The zone offset is still in its wire encoding there.
         assertEquals(839, record.storedIntegers[4])
+        assertNull(record.metrics[SummaryMetric.IE_RATIO])
+        assertEquals(BigDecimal("68"), record.unconfirmedMetrics.getValue(SummaryMetric.IE_RATIO).getValue(Percentile.P50).exact())
+        assertTrue(record.metrics.keys.all { it.confirmed })
     }
 
     @Test
@@ -165,16 +171,27 @@ class SummaryDecoderTest {
         // Percentiles that fall, a value below zero, an oximeter figure of zero.
         val record = night {
             message(21) { varint(2, 900); varint(3, 600); varint(4, 950) }
-            message(22) { varint(2, 46); varint(3, -5) }
+            message(30) { varint(2, -5) } // one value, so only its sign can be wrong
             message(28) { varint(2, 0); varint(3, 0); varint(4, 0) }
             message(41) { varint(2, 0) }
         }
         assertEquals(
-            setOf(SummaryMetric.MEAN_MASK_PRESSURE, SummaryMetric.TIDAL_VOLUME, SummaryMetric.SPO2, SummaryMetric.HEART_RATE),
+            setOf(SummaryMetric.MEAN_MASK_PRESSURE, SummaryMetric.HUMIDIFIER_TEMPERATURE, SummaryMetric.SPO2, SummaryMetric.HEART_RATE),
             record.misreadMetrics,
         )
         // None of them can be read by mistake, and the rest of the night is untouched.
-        for (metric in record.misreadMetrics) assertNull(record.metrics[metric])
+        for (metric in record.misreadMetrics) {
+            assertNull(record.metrics[metric])
+            assertNull(record.unconfirmedMetrics[metric])
+        }
+        // One impossible zero is enough, even beside values that look fine.
+        assertEquals(setOf(SummaryMetric.SPO2), night { message(28) { varint(2, 0); varint(3, 9_600); varint(4, 9_900) } }.misreadMetrics)
+        // An index that cannot be right is set aside in the same way.
+        val wild = one(proto(bare { varint(5, 60); varint(7, 36_001); varint(8, 150) }))
+        assertEquals(setOf(SummaryIndex.AHI), wild.misreadIndices)
+        assertNull(wild.indices[SummaryIndex.AHI])
+        assertEquals(BigDecimal("1.5"), wild.indices.getValue(SummaryIndex.APNEA).exact())
+        assertEquals(setOf(SummaryIndex.CENTRAL_APNEA), one(proto(bare { varint(11, -1) })).misreadIndices)
         assertEquals(BigDecimal("1.7"), record.indices.getValue(SummaryIndex.AHI).exact())
         assertEquals(BigDecimal("8"), record.metrics.getValue(SummaryMetric.INSPIRATORY_PRESSURE).getValue(Percentile.P50).exact())
         // Equal percentiles are a flat night, not a misreading; and zero is a fair value where it is possible.
@@ -209,7 +226,7 @@ class SummaryDecoderTest {
                 night(start = noon + 2 * day)
             },
         )
-        assertEquals(listOf(MachineTime(noon), MachineTime(noon + 2 * day)), log.records.map { it.periodStart })
+        assertEquals(listOf(MachineTime(noon), MachineTime(noon + 2 * day)), log.decoded.map { it.periodStart })
         assertTrue(!log.complete)
         assertEquals(3, log.entries.size)
         assertEquals(1, assertIs<RecordResult.Failed>(log.entries[1]).ordinal)
@@ -236,6 +253,8 @@ class SummaryDecoderTest {
         refused("a period that runs backwards") { message(2) { varint(2, noon + day); varint(3, noon) } }
         refused("a period of a millisecond") { message(2) { varint(2, noon); varint(3, noon + 1) } }
         refused("a period of thirty days") { message(2) { varint(2, noon); varint(3, noon + 30 * day) } }
+        refused("a period under twenty-three hours") { message(2) { varint(2, noon); varint(3, noon + day - 3_600_001) } }
+        refused("a period over twenty-five hours") { message(2) { varint(2, noon); varint(3, noon + day + 3_600_001) } }
         refused("times in seconds") { message(2) { varint(2, noon / 1000); varint(3, (noon + day) / 1000) } }
         refusedNight("an index twice") { varint(7, 200) }
         refusedNight("a metric twice") { message(15) { varint(2, 900) } }
@@ -244,20 +263,23 @@ class SummaryDecoderTest {
         refusedNight("an index as bytes") { bytes(8, byteArrayOf(1)) }
         refusedNight("an index as a fixed number") { fixed32(11, 5) }
         refused("a percentile as bytes", bare { message(15) { bytes(2, byteArrayOf(1)) } })
-        refused("a negative index", bare { varint(11, -1) })
-        refused("an index beyond one event every ten seconds", bare { varint(7, 36_001) })
         refused("a session with no start", bare { message(6) { message(1) { varint(2, 5) } } })
         refused("a session before its day", bare { message(6) { message(1) { varint(1, noon - 1); varint(2, 5) } } })
-        refused("a session after its day", bare { message(6) { message(1) { varint(1, noon + day); varint(2, 5) } } })
+        refused("a session after its day", bare { message(6) { message(1) { varint(1, noon + day + 1); varint(2, 5) } } })
         refused("a session longer than a day", bare { message(6) { message(1) { varint(1, noon + 5); varint(2, 1441) } } })
         refused("a session start twice", bare { message(6) { message(1) { varint(1, noon + 5); varint(1, noon + 6) } } })
         refused("more than a day of therapy", bare { varint(5, 1441) })
         refused("a zone beyond the map", bare { zigzag(4, 1081) })
         refused("a zone beyond the map, westwards", bare { zigzag(4, -1081) })
         refused("a record stamp from 1970", bare { varint(40, 1000) })
+        refused("a session count beyond belief", bare { varint(39, 501) })
         // The limits themselves are accepted.
-        assertEquals(1, SummaryDecoder.decode(proto(bare { varint(7, 36_000); varint(5, 1440); zigzag(4, -1080) })).records.size)
-        assertEquals(1, SummaryDecoder.decode(proto(bare { message(6) { message(1) { varint(1, noon); varint(2, 1440) } } })).records.size)
+        assertEquals(1, SummaryDecoder.decode(proto(bare { varint(7, 36_000); varint(5, 1440); zigzag(4, -1080) })).decoded.size)
+        assertEquals(1, SummaryDecoder.decode(proto(bare { message(6) { message(1) { varint(1, noon); varint(2, 1440) } } })).decoded.size)
+        assertEquals(1, SummaryDecoder.decode(proto(bare { message(6) { message(1) { varint(1, noon + day) } } })).decoded.size)
+        // A day an hour short or long, as a clock change might make it.
+        assertEquals(1, SummaryDecoder.decode(proto { message(2) { varint(2, noon); varint(3, noon + day - 3_600_000) } }).decoded.size)
+        assertEquals(1, SummaryDecoder.decode(proto { message(2) { varint(2, noon); varint(3, noon + day + 3_600_000) } }).decoded.size)
     }
 
     @Test
