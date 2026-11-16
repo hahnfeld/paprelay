@@ -73,7 +73,7 @@ class HealthConnectProbe(private val context: Context) {
 
     /**
      * True if the last [writeAndRemove] could not confirm that its test value is
-     * gone. It is then removed by [removeLeftover] at the next app start, or by
+     * gone. It is then removed by [removeLeftover] the next time the app is opened, or by
      * the next check. Cleared when a new attempt begins.
      */
     @Volatile

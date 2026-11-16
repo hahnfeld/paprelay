@@ -20,13 +20,15 @@ class SyncWorker(context: Context, parameters: WorkerParameters) : CoroutineWork
         val app = applicationContext as PapRelayApp
         val sync = app.sync
         if (TAG_NOW in tags) {
-            sync.beginRequested()
-            try {
-                // A run by hand begins the background runs.
-                if (app.pairingStore.current() != PairingState.Absent && sync.runOnce() != null) sync.keepWatch()
+            // Already being run in the app itself, which had waited long enough for this.
+            if (!sync.beginRequested()) return Result.success()
+            val report = try {
+                if (app.pairingStore.current() != PairingState.Absent) sync.runOnce() else null
             } finally {
-                sync.doneStarting()
+                sync.doneRequested()
             }
+            // A run by hand begins the background runs.
+            if (report != null) sync.keepWatch()
             return Result.success()
         }
         // With no machine there is nothing to do, now or in an hour.
@@ -38,23 +40,24 @@ class SyncWorker(context: Context, parameters: WorkerParameters) : CoroutineWork
         when {
             TAG_HEARD in tags -> when (val wait = sync.heardWaitMs()) {
                 null -> Unit
-                0L -> again(sync, sync.runOnce())
-                else -> sync.retryLater(wait)
+                0L -> again(sync, sync.runOnce(), heard = true)
+                else -> sync.heardTooSoon(wait)
             }
             // The one further attempt: made unless there is no longer any point, and not followed by another.
-            TAG_RETRY in tags -> if (sync.heardWaitMs() != null) sync.runOnce()
-            else -> again(sync, sync.runOnce())
+            TAG_RETRY in tags -> if (sync.worthRetrying()) sync.runOnce()
+            else -> again(sync, sync.runOnce(), heard = false)
         }
         sync.listenForMachine()
         return Result.success()
     }
 
     /** Asks for the one further attempt where the run that has just ended gives a reason for it. */
-    private fun again(sync: SyncRunner, report: SyncReport?) {
+    private fun again(sync: SyncRunner, report: SyncReport?, heard: Boolean) {
         when {
             report == null -> Unit
-            // Heard or expected, but not reached, or lost on the way: it may have been at the edge of range.
-            report.outcome in WORTH_ANOTHER_TRY -> sync.retryLater()
+            // Heard, but not reached, or lost on the way: it may have been at the edge of range. (An
+            // hourly run that finds nothing is simply a phone away from home, and waits for the next.)
+            heard && report.outcome in WORTH_ANOTHER_TRY -> sync.retryLater()
             // A session was still going on, or had only just ended. Once it has settled it can be written:
             // soon, and not an hour from now, when the phone may have left the house.
             report.sessionInProgress -> sync.retryLater(SyncEngine.SETTLE_MS + 60_000)

@@ -16,6 +16,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Process-wide objects. Deliberately plain: there is no dependency-injection framework. */
 class PapRelayApp : Application() {
@@ -31,6 +32,17 @@ class PapRelayApp : Application() {
         SyncRunner(this, scope, GattMachineConnector(this, scope, pairingStore, scanner), HealthConnectSink(this), claim, pairingStore) {
             DeviceCheck.code(it, messages = false)
         }
+    }
+
+    private val cleaned = AtomicBoolean(false)
+
+    /**
+     * A check that was cut short may have left its test value in Health Connect. Looked for once
+     * each time the app is opened in a new process, not every time the system starts it for a
+     * background run.
+     */
+    fun cleanUpOnce() {
+        if (cleaned.compareAndSet(false, true)) scope.launch { healthConnect.removeLeftover() }
     }
 
     override fun onCreate() {

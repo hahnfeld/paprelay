@@ -253,10 +253,10 @@ fun HomeScreen(
                         !free -> Unit
                         outcome == SyncOutcome.CLOCK_CHANGED ->
                             OutlinedButton(onClick = onAcceptClock) { Text(stringResource(R.string.action_accept_clock)) }
-                        outcome == SyncOutcome.HEALTH_CONNECT_NOT_ALLOWED || healthRefused ->
-                            OutlinedButton(onClick = onOpenHealthConnect) { Text(stringResource(R.string.action_open_health)) }
                         outcome == SyncOutcome.BLUETOOTH_NOT_ALLOWED ->
                             OutlinedButton(onClick = onOpenSettings) { Text(stringResource(R.string.action_open_settings)) }
+                        outcome == SyncOutcome.HEALTH_CONNECT_NOT_ALLOWED || healthRefused ->
+                            OutlinedButton(onClick = onOpenHealthConnect) { Text(stringResource(R.string.action_open_health)) }
                     }
                 }
             }
@@ -277,7 +277,7 @@ fun HomeScreen(
         }
 
         // Not said twice: the sentence above already says it when the last run was stopped by this.
-        val saidAbove = paired && syncEnabled && sync.lastReport?.outcome == SyncOutcome.BLUETOOTH_NOT_ALLOWED
+        val saidAbove = paired && syncEnabled && free && !sync.storeUnreadable && sync.lastReport?.outcome == SyncOutcome.BLUETOOTH_NOT_ALLOWED
         if (permissionRefused && !checkRunning && !saidAbove) {
             Secondary(stringResource(R.string.permission_needed), Modifier.padding(top = 12.dp))
             TextButton(onClick = onOpenSettings, modifier = Modifier.offset(x = (-12).dp)) {

@@ -47,9 +47,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val app = application as PapRelayApp
-        // A check that was cut short may have left its test value in Health Connect. Looked for when
-        // the app is opened, not every time the system starts it for a background run.
-        if (savedInstanceState == null) app.scope.launch { app.healthConnect.removeLeftover() }
+        app.cleanUpOnce()
         setContent { PapRelayTheme { Root(app) } }
     }
 }
@@ -77,6 +75,8 @@ private fun Root(app: PapRelayApp) {
     // What the permissions being asked for are wanted for: a device check, or a synchronisation.
     var pendingSync by rememberSaveable { mutableStateOf(false) }
     var permissionRefused by rememberSaveable { mutableStateOf(false) }
+    // True from asking for a permission until the answer has been dealt with.
+    var askingPermission by rememberSaveable { mutableStateOf(false) }
     // Whether Health Connect already lets PAPRelay write, so the picture can show that leg as
     // ready; and whether it was asked and still does not, so the way to its settings can be shown.
     var healthAllowed by rememberSaveable { mutableStateOf(false) }
@@ -104,7 +104,8 @@ private fun Root(app: PapRelayApp) {
                 pausesWhenUnused = !context.packageManager.isAutoRevokeWhitelisted
                 refreshHealth()
                 // What the screen says should be how things are now, not how they were at the last attempt.
-                app.sync.onForeground()
+                // Not on the way back from a permission question, whose answer starts what was asked for.
+                if (!askingPermission) app.sync.onForeground()
             }
         }
         lifecycle?.addObserver(observer)
@@ -119,6 +120,7 @@ private fun Root(app: PapRelayApp) {
     }
 
     fun proceed() {
+        askingPermission = false
         if (pendingSync) app.sync.syncNow() else check.start(pendingFull)
     }
 
@@ -141,6 +143,7 @@ private fun Root(app: PapRelayApp) {
         val allowed = BLUETOOTH_PERMISSIONS.all { context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
         // Whatever the reason, the same two ways forward apply: tap again, or open settings.
         permissionRefused = !allowed
+        if (!allowed) askingPermission = false
         if (allowed) {
             uiScope.launch {
                 // If Health Connect cannot even be asked, the check or the synchronisation reports why.
@@ -172,6 +175,7 @@ private fun Root(app: PapRelayApp) {
     fun request(full: Boolean, forSync: Boolean = false) {
         pendingFull = full
         pendingSync = forSync
+        askingPermission = true
         // Returns at once when already granted, then carries on to Health Connect.
         bluetoothPermission.launch(BLUETOOTH_PERMISSIONS)
     }

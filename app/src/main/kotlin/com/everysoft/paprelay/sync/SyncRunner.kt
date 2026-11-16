@@ -31,6 +31,7 @@ import java.time.DateTimeException
 import java.time.Instant
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.abs
 
 /** What the screen needs to know about synchronising. */
@@ -67,11 +68,12 @@ class SyncRunner(
         SyncEngine(connector, sink, store, System::currentTimeMillis, ::keepRaw, phoneClockWrong = ::phoneClockWrong, describe = describe)
     private val presence = PresenceWatch(context)
 
-    /** Asked for by hand, and taken up by nobody yet. */
-    private val requested = AtomicBoolean(false)
-
-    /** The system has begun the run that was asked for by hand; it has not reached the machine yet. */
-    private val starting = AtomicBoolean(false)
+    /**
+     * Where a run asked for by hand stands: not asked for; asked for and taken up by nobody yet;
+     * taken by the system's run; or taken by the run made here in its place. Exactly one of the
+     * last two ever takes a request.
+     */
+    private val request = AtomicInteger(IDLE)
 
     /** A run of this object's holds the machine. */
     private val active = AtomicBoolean(false)
@@ -94,31 +96,38 @@ class SyncRunner(
      * it is run here instead.
      */
     fun syncNow() {
-        if (!enabled || active.get() || starting.get() || !requested.compareAndSet(false, true)) return
+        if (!enabled || active.get() || !request.compareAndSet(IDLE, REQUESTED)) return
         publish()
         val handedOver = runCatching { enqueue(NOW_WORK, SyncWorker.TAG_NOW) }.isSuccess
         scope.launch {
             if (handedOver) delay(START_GRACE_MS)
             // Whoever takes the request has it: the system's run when it begins, or this one. Never both.
-            if (requested.compareAndSet(true, false)) {
-                runCatching { WorkManager.getInstance(context).cancelUniqueWork(NOW_WORK) }
-                if (runOnce() != null) keepWatch() else publish()
+            if (request.compareAndSet(REQUESTED, LOCAL)) {
+                try {
+                    runCatching { WorkManager.getInstance(context).cancelUniqueWork(NOW_WORK) }
+                    if (runOnce() != null) keepWatch()
+                } finally {
+                    request.set(IDLE)
+                    publish()
+                }
             }
         }
     }
 
     /**
-     * Called first thing by the system's run of a request made by hand: takes the request, so
-     * that it is not also run here. [doneStarting] must follow, whatever happens.
+     * Called first thing by the system's run of a request made by hand. Returns true if the run
+     * is the system's to make: it has taken the request, or there was none in this process (the
+     * app was restarted in between). False if the request is already being run here.
+     * [doneRequested] must follow a true, whatever happens.
      */
-    fun beginRequested() {
-        starting.set(true)
-        requested.set(false)
+    fun beginRequested(): Boolean {
+        val mine = request.compareAndSet(REQUESTED, WORKER) || request.compareAndSet(IDLE, WORKER)
         publish()
+        return mine
     }
 
-    fun doneStarting() {
-        starting.set(false)
+    fun doneRequested() {
+        request.compareAndSet(WORKER, IDLE)
         publish()
     }
 
@@ -130,9 +139,21 @@ class SyncRunner(
         when (val wait = heardWaitMs()) {
             null -> Unit
             0L -> enqueue(HEARD_WORK, SyncWorker.TAG_HEARD)
-            else -> retryLater(wait)
+            else -> heardTooSoon(wait)
         }
     }
+
+    /**
+     * The machine was heard within minutes of an attempt. If that attempt did not reach it, one
+     * more is worth making once the gap has passed: the phone has probably just come into range.
+     * After any other attempt the hearing is let go, or each run would bring the next.
+     */
+    fun heardTooSoon(waitMs: Long) {
+        if (_status.value.lastReport?.outcome in NOT_REACHED) retryLater(waitMs)
+    }
+
+    /** False when a further attempt could change nothing until the user has acted. */
+    fun worthRetrying(): Boolean = _status.value.lastReport?.outcome !in USER_DECIDES
 
     /**
      * How long a run begun because the machine was heard should wait: not at all, some
@@ -200,17 +221,17 @@ class SyncRunner(
         if (!claim.tryTake()) return null
         active.set(true)
         publish()
-        var report: SyncReport? = null
+        // True until it is known that this run cannot get as far as calling the machine.
+        var mayConnect = true
         try {
-            // The machine does not answer a new connection in the first seconds after the last one
-            // ended. Only if this run can get as far as calling it at all.
-            if (engine.blockedBy() == null) delay(claim.restMs())
-            report = engine.sync()?.also { latest = it }
-            return report
+            mayConnect = engine.blockedBy() == null
+            // The machine does not answer a new connection in the first seconds after the last one ended.
+            if (mayConnect) delay(claim.restMs())
+            return engine.sync()?.also { latest = it }
         } finally {
             // In this order, and at once: the screen must never show a run that holds nothing,
             // nor offer a button while the machine is still taken.
-            claim.release(connected = report?.outcome !in PRECONDITIONS)
+            claim.release(connected = mayConnect)
             active.set(false)
             publish()
             withContext(NonCancellable) { refresh() }
@@ -281,7 +302,7 @@ class SyncRunner(
             // Not at once: the run that led here has only just finished.
             .setInitialDelay(1, TimeUnit.HOURS)
             .build()
-        // Kept if it is already there: replacing it would cancel the very run that may have started this process.
+        // Kept if it is already there: asking again must not disturb the run that may have started this process.
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(HOURLY_WORK, ExistingPeriodicWorkPolicy.KEEP, hourly)
         listenForMachine()
     }
@@ -334,7 +355,7 @@ class SyncRunner(
     }
 
     private fun publish() {
-        _status.update { SyncStatus(requested.get() || starting.get() || active.get(), it.lastReport, it.lastCompleteAtMs, it.storeUnreadable) }
+        _status.update { SyncStatus(request.get() != IDLE || active.get(), it.lastReport, it.lastCompleteAtMs, it.storeUnreadable) }
     }
 
     /** Reads the stored report again. Whether a run is in progress is not its affair. */
@@ -387,6 +408,10 @@ class SyncRunner(
     }
 
     private companion object {
+        const val IDLE = 0
+        const val REQUESTED = 1
+        const val WORKER = 2
+        const val LOCAL = 3
         const val HOURLY_WORK = "sync"
         const val NOW_WORK = "sync-now"
         const val HEARD_WORK = "sync-heard"
@@ -414,6 +439,9 @@ class SyncRunner(
             SyncOutcome.BLUETOOTH_OFF, SyncOutcome.BLUETOOTH_NOT_ALLOWED, SyncOutcome.HEALTH_CONNECT_NOT_ALLOWED,
             SyncOutcome.HEALTH_CONNECT_UNAVAILABLE, SyncOutcome.NOT_PAIRED, SyncOutcome.PHONE_CLOCK_WRONG,
         )
+
+        /** The machine did not answer, or the link to it was lost. */
+        val NOT_REACHED = setOf(SyncOutcome.MACHINE_AWAY, SyncOutcome.CONNECTION_LOST)
 
         /** Trying again changes nothing until the user has acted. */
         val USER_DECIDES = setOf(
