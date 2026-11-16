@@ -53,7 +53,7 @@ public object NightPlan {
     )
 
     private const val HOUR_MS = 3_600_000L
-    private const val MAX_ZONE_DRIFT_MINUTES = 120
+    private const val CLEAR_MARGIN_MINUTES = 12 * 60
     private const val DAY_MS = 24 * HOUR_MS
     private val HUNDRED = BigDecimal(100)
     private val SIXTY = BigDecimal(60)
@@ -113,9 +113,14 @@ public object NightPlan {
         return when {
             possible.size == 1 -> possible.single()
             sent == null -> null
-            // The nearer, if it is near: a machine's zone moves an hour with the seasons. A zone field
-            // hours away from both (the machine carried across the world and set there) decides nothing.
-            else -> possible.minByOrNull { kotlin.math.abs(it - sent) }?.takeIf { kotlin.math.abs(it - sent) <= MAX_ZONE_DRIFT_MINUTES }
+            else -> {
+                // The nearer to the machine's own zone, if it is clearly the nearer: by half a day or more.
+                // A zone that moved an hour with the seasons, or a few hours with a journey, still points
+                // plainly at one of the two. One that sits about midway between them decides nothing.
+                val byDistance = possible.sortedBy { kotlin.math.abs(it - sent) }
+                val margin = kotlin.math.abs(byDistance[1] - sent) - kotlin.math.abs(byDistance[0] - sent)
+                byDistance[0].takeIf { margin >= CLEAR_MARGIN_MINUTES }
+            }
         }
     }
 
