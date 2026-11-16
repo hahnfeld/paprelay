@@ -6,16 +6,16 @@ package com.everysoft.paprelay.as11.decode
 public class SpoolDecodeException(message: String) : Exception(message)
 
 /** One field of a protobuf message, as found on the wire. */
-public class ProtoField internal constructor(
-    public val number: Int,
-    public val wireType: Int,
+internal class ProtoField(
+    val number: Int,
+    val wireType: Int,
     /** The value for varint and fixed-width fields; zero for length-delimited ones. */
-    public val value: Long,
+    val value: Long,
     /** The content of a length-delimited field; null otherwise. */
-    public val bytes: ByteArray?,
+    val bytes: ByteArray?,
 ) {
     /** The value read as a signed, ZigZag-encoded integer. */
-    public val signed: Long get() = (value ushr 1) xor -(value and 1)
+    val signed: Long get() = (value ushr 1) xor -(value and 1)
 }
 
 /**
@@ -28,18 +28,18 @@ public class ProtoField internal constructor(
  *
  * Every length is checked against what is actually there before it is used.
  */
-public object ProtoReader {
-    public const val VARINT: Int = 0
-    public const val FIXED64: Int = 1
-    public const val BYTES: Int = 2
-    public const val FIXED32: Int = 5
+internal object ProtoReader {
+    const val VARINT: Int = 0
+    const val FIXED64: Int = 1
+    const val BYTES: Int = 2
+    const val FIXED32: Int = 5
     private const val MAX_FIELD_NUMBER = (1L shl 29) - 1
 
     /** A month of per-minute records is a few tens of thousands of fields. */
-    public const val DEFAULT_MAX_FIELDS: Int = 250_000
+    const val DEFAULT_MAX_FIELDS: Int = 250_000
 
     /** @throws SpoolDecodeException if [data] is not a well-formed message. */
-    public fun read(data: ByteArray, maxFields: Int = DEFAULT_MAX_FIELDS): List<ProtoField> {
+    fun read(data: ByteArray, maxFields: Int = DEFAULT_MAX_FIELDS): List<ProtoField> {
         val fields = ArrayList<ProtoField>()
         var at = 0
         while (at < data.size) {

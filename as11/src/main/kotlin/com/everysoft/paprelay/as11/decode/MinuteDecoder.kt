@@ -4,64 +4,89 @@
 // Record layout from the airbreak-plus protocol notes (MIT), facts only.
 package com.everysoft.paprelay.as11.decode
 
+import com.everysoft.paprelay.core.MachineTime
 import com.everysoft.paprelay.core.Quantity
+import java.util.Collections
 
 /**
  * One stretch of the per-minute log: several signals sampled at the same times.
  *
+ * What is known, from a capture compared with the same machine's SD card
+ * (AirSense 11 AutoSet, firmware 19.8.8.0): the machine writes one record per
+ * mask-on period and one sample per completed minute. Each sample is the
+ * machine's own figure for the minute that **ends** at its time stamp: the
+ * first is stamped sixty seconds after mask-on and equals the card's first
+ * minute. A last part-minute before mask-off has no sample.
+ *
  * The record stores no sample count, and a compressed series cannot always
- * show where it ends (see [SampleBlock]). The signals of a record share their
- * times, so each one narrows the answer for the others. What is left is:
+ * show where it ends. The signals of a record share their times, so each one
+ * narrows the answer for the others. What is left is:
  *
  *  - [sampleCount] samples that certainly exist, and
  *  - [uncertainTail] further positions that may be real minutes or may be
  *    padding. Nothing returns them unless the caller names a length it has
- *    settled from elsewhere (the mask-off time, the next record).
- *
- * Values come out as [Quantity], which carries the factor and the unit. The
- * stored integers are available too, but they are not physical values: a
- * stored respiratory rate of 60 means 15 breaths a minute.
+ *    settled from elsewhere (the mask-off time, the next record). With the
+ *    padding this machine uses, the tail is empty unless every series of the
+ *    record happens to end exactly on a byte.
  */
 public class MinuteRecord internal constructor(
-    /** When the first sample was taken, by the machine's clock, in UTC milliseconds. */
-    public val startMs: Long,
+    /** The time stamp of the first sample: the end of the first minute. */
+    public val start: MachineTime,
     public val intervalMs: Long,
     public val sampleCount: Int,
     public val uncertainTail: Int,
     private val series: Map<MinuteSignal, IntArray>,
+    /**
+     * Signals the record carries but which were not decoded, because how they are
+     * compressed has not been confirmed on a real machine. See [MinuteSignal.modulusConfirmed].
+     */
+    public val withheldSignals: Set<MinuteSignal>,
     /** Fields of the record this version does not understand. */
     public val unknownFields: Int,
 ) {
-    public val signals: Set<MinuteSignal> get() = series.keys
+    /** The signals that were decoded. */
+    public val signals: Set<MinuteSignal> = Collections.unmodifiableSet(LinkedHashSet(series.keys))
 
     /**
-     * The integers the machine stored for [signal], or null if the record has no such signal.
-     * These are not physical values; use [quantity] for those.
+     * The physical values of [signal], or null if the record has no such signal.
      *
      * @param length how many samples to return: [sampleCount] unless the caller has settled
      *   the record's true length, which lies between [sampleCount] and `sampleCount + uncertainTail`.
+     * @param allowUnconfirmed must be true to read a signal whose factor has not been
+     *   confirmed against the SD card ([MinuteSignal.factorConfirmed]); such values may be wrong.
+     * @throws IllegalStateException if the signal's factor is unconfirmed and [allowUnconfirmed] is false.
+     */
+    public fun quantities(signal: MinuteSignal, length: Int = sampleCount, allowUnconfirmed: Boolean = false): List<Quantity>? {
+        checkLength(length)
+        check(signal.factorConfirmed || allowUnconfirmed) { "the factor for $signal has not been confirmed" }
+        val values = series[signal] ?: return null
+        return List(length) { signal.scale.of(values[it].toLong(), signal.unit) }
+    }
+
+    /** One value of [quantities]. */
+    public fun quantity(signal: MinuteSignal, index: Int, length: Int = sampleCount, allowUnconfirmed: Boolean = false): Quantity? {
+        if (index !in 0 until length) {
+            checkLength(length)
+            throw IndexOutOfBoundsException("sample $index of $length")
+        }
+        return quantities(signal, length, allowUnconfirmed)?.get(index)
+    }
+
+    /**
+     * The integers the machine stored for [signal], for export, or null if the record has no
+     * such signal. **These are not physical values**: a stored respiratory rate of 60 means
+     * 15 breaths a minute. Use [quantities] for anything that is shown or passed on.
      */
     public fun storedSamples(signal: MinuteSignal, length: Int = sampleCount): IntArray? {
         checkLength(length)
         return series[signal]?.copyOf(length)
     }
 
-    /**
-     * The physical value of one sample, or null if the record has no such signal.
-     *
-     * @param length the record's settled length, as for [storedSamples].
-     */
-    public fun quantity(signal: MinuteSignal, index: Int, length: Int = sampleCount): Quantity? {
+    /** The time stamp of sample [index]: the end of the minute it describes. */
+    public fun timeOf(index: Int, length: Int = sampleCount): MachineTime {
         checkLength(length)
         if (index !in 0 until length) throw IndexOutOfBoundsException("sample $index of $length")
-        val values = series[signal] ?: return null
-        return signal.scale.of(values[index].toLong(), signal.unit)
-    }
-
-    /** When sample [index] was taken, by the machine's clock, in UTC milliseconds. */
-    public fun timeOf(index: Int): Long {
-        if (index !in 0 until sampleCount + uncertainTail) throw IndexOutOfBoundsException("sample $index")
-        return startMs + index * intervalMs
+        return start + index * intervalMs
     }
 
     private fun checkLength(length: Int) {
@@ -69,6 +94,8 @@ public class MinuteRecord internal constructor(
             "a length of $length is not possible for this record ($sampleCount to ${sampleCount + uncertainTail})"
         }
     }
+
+    override fun toString(): String = "MinuteRecord($sampleCount samples from $start, $signals)"
 }
 
 /** Decodes the `TherapyOneMinutePeriodic` log. */
@@ -78,6 +105,7 @@ public object MinuteDecoder {
     private const val BLOCK = 3
     private const val INTERVAL = 15
     private const val EXPECTED_STATUS = 1L
+    private const val ONE_MINUTE = 1L
     private const val MINUTE_MS = 60_000L
 
     private val signalByField = MinuteSignal.entries.associateBy { it.field }
@@ -86,22 +114,36 @@ public object MinuteDecoder {
      * @param payload one verified download of the per-minute log.
      * @throws SpoolDecodeException if the download as a whole is not this log.
      */
-    public fun decode(payload: ByteArray): DecodedLog<MinuteRecord> =
-        decodeRecords(payload, SpoolEnvelope.MINUTE_LOG, "per-minute log") { body, what -> listOf(record(body, what)) }
+    public fun decode(payload: ByteArray): DecodedLog<MinuteRecord> {
+        val sink = ResultSink<MinuteRecord>()
+        unwrap(payload, SpoolEnvelope.MINUTE_LOG, "per-minute log").forEachIndexed { index, body ->
+            sink.attempt { record(body, "per-minute record $index") }
+        }
+        return sink.finish()
+    }
 
-    private class Series(val start: Long, val block: SampleBlock)
+    private class Series(val start: MachineTime, val block: SampleBlock)
 
     private fun record(body: ByteArray, what: String): MinuteRecord {
         val found = LinkedHashMap<MinuteSignal, Series>()
+        val withheld = LinkedHashSet<MinuteSignal>()
         var interval: Long? = null
         var unknown = 0
         for (field in ProtoReader.read(body)) {
             val signal = signalByField[field.number]
             when {
                 signal != null -> {
-                    val (series, extra) = series(signal, field.bytes ?: wrongType(what, field), "$what, $signal")
-                    unknown += extra
-                    if (found.put(signal, series) != null) repeated(what, field.number)
+                    val bytes = field.bytes ?: wrongType(what, field)
+                    if (signal in found || signal in withheld) repeated(what, field.number)
+                    if (signal.modulusConfirmed) {
+                        val (series, extra) = series(signal, bytes, "$what, $signal")
+                        unknown += extra
+                        found[signal] = series
+                    } else {
+                        // Decoded with a wrong modulus, a short series can come out the right length
+                        // with wrong values, and would then also vouch for a wrong record length.
+                        withheld += signal
+                    }
                 }
                 field.number == INTERVAL -> {
                     if (field.wireType != ProtoReader.VARINT) wrongType(what, field)
@@ -110,7 +152,10 @@ public object MinuteDecoder {
                 else -> unknown++
             }
         }
-        if (found.isEmpty()) throw SpoolDecodeException("$what: no signals")
+        if (found.isEmpty()) throw SpoolDecodeException("$what: no signals that can be decoded")
+        // One minute, written as 1, is all that has been seen. The format allows other intervals,
+        // and a misread interval would misplace every sample after the first.
+        if (interval != ONE_MINUTE) throw SpoolDecodeException("$what: unexpected sample interval (${interval ?: "none"})")
 
         val start = found.values.first().start
         if (found.values.any { it.start != start }) throw SpoolDecodeException("$what: the signals start at different times")
@@ -122,11 +167,12 @@ public object MinuteDecoder {
         if (atLeast > atMost) throw SpoolDecodeException("$what: the signals disagree about how many samples there are")
 
         return MinuteRecord(
-            startMs = start,
-            intervalMs = intervalMs(interval, what),
+            start = start,
+            intervalMs = MINUTE_MS,
             sampleCount = atLeast,
             uncertainTail = atMost - atLeast,
             series = found.mapValues { it.value.block.samples.copyOf(atMost) },
+            withheldSignals = Collections.unmodifiableSet(withheld),
             unknownFields = unknown,
         )
     }
@@ -164,15 +210,5 @@ public object MinuteDecoder {
             SampleBlock(raw, raw.size, unreadBits = 0)
         }
         return Series(timestamp(start ?: missing(what, "the start time"), what), decoded) to unknown
-    }
-
-    /**
-     * One minute, however it is written: left out, as 1 (minutes) or as 60000
-     * (milliseconds). The format allows other intervals, but none has been
-     * seen, and a misread interval would misplace every sample after the first.
-     */
-    private fun intervalMs(token: Long?, what: String): Long {
-        if (token != null && token != 1L && token != MINUTE_MS) throw SpoolDecodeException("$what: unexpected sample interval ($token)")
-        return MINUTE_MS
     }
 }

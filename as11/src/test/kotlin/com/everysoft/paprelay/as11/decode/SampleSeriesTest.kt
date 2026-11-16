@@ -129,15 +129,51 @@ class SampleSeriesTest {
         val exact = SampleSeries.decode(byteArrayOf(10, 0, 12, 0, 0x00, 0x00, 0x00), modulus = 4)
         assertEquals(2 + 8, exact.samples.size)
         assertEquals(2 + 6, exact.certain)
-        // Any series, padded as the machine pads: nothing is in doubt unless it ends on a byte boundary.
+        // Any series, padded as the machine pads: nothing is in doubt unless it ends exactly on a
+        // byte, which is when padding of either kind encodes to the same bytes.
         val random = Random(7)
+        var padded = 0
         repeat(300) {
             val modulus = intArrayOf(2, 4, 8)[random.nextInt(3)]
             var value = random.nextInt(100)
             val samples = IntArray(3 + random.nextInt(50)) { value += random.nextInt(7) - 3; value }
-            val decoded = SampleSeries.decode(encode(samples, modulus, padWith = 1), modulus)
+            val bytes = encode(samples, modulus, padWith = 1)
+            val decoded = SampleSeries.decode(bytes, modulus)
             assertContentEquals(samples, decoded.samples)
-            assertTrue(decoded.certain <= samples.size)
+            if (!bytes.contentEquals(encode(samples, modulus, padWith = 0))) {
+                padded++
+                assertEquals(samples.size, decoded.certain)
+            } else {
+                assertTrue(decoded.certain <= samples.size)
+            }
+        }
+        assertTrue(padded > 200, "only $padded of 300 series had any padding")
+    }
+
+    @Test
+    fun `padding still unread when decoding stops is recognised all the same`() {
+        // Two codes fill all the block can hold; the two ones after them are its padding, though
+        // the decoder never has to read them.
+        val full = SampleSeries.decode(byteArrayOf(10, 0, 12, 0, 0x03), modulus = 4)
+        assertContentEquals(intArrayOf(10, 12, 14, 16), full.samples)
+        assertEquals(4, full.certain)
+        // The same when it is the caller's limit that stops it.
+        val limited = SampleSeries.decode(byteArrayOf(10, 0, 12, 0, 0x00, 0x0F), modulus = 4, maxSamples = 6)
+        assertEquals(6, limited.certain)
+        // A single one is padding enough: 000 (d=0), 1000 (d=+2), then one bit of padding.
+        val single = SampleSeries.decode(byteArrayOf(10, 0, 12, 0, 0x11), modulus = 4)
+        assertContentEquals(intArrayOf(10, 12, 14, 18), single.samples)
+        assertEquals(4, single.certain)
+        // With a zero in that place nothing shows the padding, and position decides again.
+        assertEquals(3, SampleSeries.decode(byteArrayOf(10, 0, 12, 0, 0x10), modulus = 4).certain)
+    }
+
+    @Test
+    fun `a code with the block's padding after it is real, so it cannot be out of range`() {
+        // Seeds at the top of the range, then 000 (d=0) and 1000 (d=+2), then one bit of ones
+        // padding. The second code makes 32769, and it was written on purpose.
+        assertFailsWith<SpoolDecodeException> {
+            SampleSeries.decode(byteArrayOf(0xFF.toByte(), 0x7F, 0xFF.toByte(), 0x7F, 0x11), modulus = 4)
         }
     }
 

@@ -18,7 +18,7 @@ public enum class Percentile { P5, P50, P70, P95, P100 }
  * not uniform: sub-field 3 is the 70th percentile for leak and the 95th for
  * everything else.
  */
-public enum class PercentileLayout(internal val bySubField: Map<Int, Percentile>) {
+internal enum class PercentileLayout(val bySubField: Map<Int, Percentile>) {
     LEAK(mapOf(2 to Percentile.P50, 3 to Percentile.P70, 4 to Percentile.P95, 5 to Percentile.P100)),
     STANDARD(mapOf(2 to Percentile.P50, 3 to Percentile.P95, 4 to Percentile.P100)),
     MEDIAN(mapOf(2 to Percentile.P50)),
@@ -48,39 +48,48 @@ public enum class SummaryIndex(public val field: Int) {
  * Leak and the flows are in litres per **second** here; the per-minute log
  * ([MinuteSignal.LEAK]) uses litres per minute.
  *
- * Field 37 (respiratory flow, 5th and 95th percentile) is deliberately not
- * listed. Its low percentile is negative on any used night, and the references
- * do not say how a negative number is stored there; guessing would turn -0.30
- * into +0.59. It is skipped as an unknown field until a capture settles it.
- * The two references also differ on the flow divisors, so [BLOWER_FLOW] is to
- * be confirmed against the SD card before anything depends on it.
+ * @property confirmed whether field, layout and divisor have been checked
+ *   against the same machine's SD card (AirSense 11 AutoSet, firmware 19.8.8.0:
+ *   twelve nights, every value equal at the stored resolution). The others
+ *   were not present in that capture and are as the reference gives them.
+ * @property zeroIsImpossible true for the oximeter metrics, where a stored zero
+ *   cannot be a measurement and means no sensor was attached.
  */
 public enum class SummaryMetric(
     public val field: Int,
     public val scale: Scale,
     public val unit: PapUnit,
-    public val layout: PercentileLayout,
+    internal val layout: PercentileLayout,
+    public val confirmed: Boolean,
+    public val zeroIsImpossible: Boolean = false,
 ) {
-    LEAK(14, HUNDREDTHS, PapUnit.LITRES_PER_SECOND, PercentileLayout.LEAK),
-    INSPIRATORY_PRESSURE(15, HUNDREDTHS, PapUnit.CM_H2O, PercentileLayout.STANDARD),
-    EXPIRATORY_PRESSURE(20, HUNDREDTHS, PapUnit.CM_H2O, PercentileLayout.STANDARD),
-    MEAN_MASK_PRESSURE(21, HUNDREDTHS, PapUnit.CM_H2O, PercentileLayout.STANDARD),
-    TIDAL_VOLUME(22, HUNDREDTHS, PapUnit.LITRES, PercentileLayout.STANDARD),
-    MINUTE_VENTILATION(23, HUNDREDTHS, PapUnit.LITRES_PER_MINUTE, PercentileLayout.STANDARD),
-    TARGET_MINUTE_VENTILATION(24, HUNDREDTHS, PapUnit.LITRES_PER_MINUTE, PercentileLayout.STANDARD),
-    RESPIRATORY_RATE(25, HUNDREDTHS, PapUnit.BREATHS_PER_MINUTE, PercentileLayout.STANDARD),
-    INSPIRATORY_DURATION(26, Scale(1, 1000), PapUnit.SECONDS, PercentileLayout.STANDARD),
-    IE_RATIO(27, HUNDREDTHS, PapUnit.PERCENT, PercentileLayout.STANDARD),
-    SPO2(28, HUNDREDTHS, PapUnit.PERCENT, PercentileLayout.STANDARD),
-    AMBIENT_HUMIDITY(29, HUNDREDTHS, PapUnit.MILLIGRAMS_PER_LITRE, PercentileLayout.MEDIAN),
-    HUMIDIFIER_TEMPERATURE(30, HUNDREDTHS, PapUnit.CELSIUS, PercentileLayout.MEDIAN),
-    HEATED_TUBE_TEMPERATURE(31, HUNDREDTHS, PapUnit.CELSIUS, PercentileLayout.MEDIAN),
-    HUMIDIFIER_POWER(32, HUNDREDTHS, PapUnit.PERCENT, PercentileLayout.MEDIAN),
-    HEATED_TUBE_POWER(33, HUNDREDTHS, PapUnit.PERCENT, PercentileLayout.MEDIAN),
-    BLOWER_PRESSURE(36, HUNDREDTHS, PapUnit.CM_H2O, PercentileLayout.RANGE),
-    BLOWER_FLOW(38, HUNDREDTHS, PapUnit.LITRES_PER_SECOND, PercentileLayout.MEDIAN),
-    HEART_RATE(41, HUNDREDTHS, PapUnit.BEATS_PER_MINUTE, PercentileLayout.STANDARD),
-    ALVEOLAR_MINUTE_VENTILATION(42, HUNDREDTHS, PapUnit.LITRES_PER_MINUTE, PercentileLayout.STANDARD),
+    LEAK(14, HUNDREDTHS, PapUnit.LITRES_PER_SECOND, PercentileLayout.LEAK, confirmed = true),
+    INSPIRATORY_PRESSURE(15, HUNDREDTHS, PapUnit.CM_H2O, PercentileLayout.STANDARD, confirmed = true),
+    EXPIRATORY_PRESSURE(20, HUNDREDTHS, PapUnit.CM_H2O, PercentileLayout.STANDARD, confirmed = true),
+    MEAN_MASK_PRESSURE(21, HUNDREDTHS, PapUnit.CM_H2O, PercentileLayout.STANDARD, confirmed = true),
+    TIDAL_VOLUME(22, HUNDREDTHS, PapUnit.LITRES, PercentileLayout.STANDARD, confirmed = true),
+    MINUTE_VENTILATION(23, HUNDREDTHS, PapUnit.LITRES_PER_MINUTE, PercentileLayout.STANDARD, confirmed = true),
+    TARGET_MINUTE_VENTILATION(24, HUNDREDTHS, PapUnit.LITRES_PER_MINUTE, PercentileLayout.STANDARD, confirmed = false),
+    RESPIRATORY_RATE(25, HUNDREDTHS, PapUnit.BREATHS_PER_MINUTE, PercentileLayout.STANDARD, confirmed = true),
+    INSPIRATORY_DURATION(26, Scale(1, 1000), PapUnit.SECONDS, PercentileLayout.STANDARD, confirmed = false),
+    IE_RATIO(27, HUNDREDTHS, PapUnit.PERCENT, PercentileLayout.STANDARD, confirmed = false),
+    SPO2(28, HUNDREDTHS, PapUnit.PERCENT, PercentileLayout.STANDARD, confirmed = false, zeroIsImpossible = true),
+    AMBIENT_HUMIDITY(29, HUNDREDTHS, PapUnit.MILLIGRAMS_PER_LITRE, PercentileLayout.MEDIAN, confirmed = true),
+    HUMIDIFIER_TEMPERATURE(30, HUNDREDTHS, PapUnit.CELSIUS, PercentileLayout.MEDIAN, confirmed = true),
+    HEATED_TUBE_TEMPERATURE(31, HUNDREDTHS, PapUnit.CELSIUS, PercentileLayout.MEDIAN, confirmed = true),
+    HUMIDIFIER_POWER(32, HUNDREDTHS, PapUnit.PERCENT, PercentileLayout.MEDIAN, confirmed = true),
+    HEATED_TUBE_POWER(33, HUNDREDTHS, PapUnit.PERCENT, PercentileLayout.MEDIAN, confirmed = true),
+    BLOWER_PRESSURE(36, HUNDREDTHS, PapUnit.CM_H2O, PercentileLayout.RANGE, confirmed = true),
+
+    /**
+     * Stored as a plain value: on the nights examined both percentiles were positive and
+     * equal to the SD card's. The card allows this figure to be negative; how the machine
+     * would send a negative one is not known, and such a value is reported as misread.
+     */
+    RESPIRATORY_FLOW(37, HUNDREDTHS, PapUnit.LITRES_PER_SECOND, PercentileLayout.RANGE, confirmed = true),
+    BLOWER_FLOW(38, HUNDREDTHS, PapUnit.LITRES_PER_SECOND, PercentileLayout.MEDIAN, confirmed = true),
+    HEART_RATE(41, HUNDREDTHS, PapUnit.BEATS_PER_MINUTE, PercentileLayout.STANDARD, confirmed = false, zeroIsImpossible = true),
+    ALVEOLAR_MINUTE_VENTILATION(42, HUNDREDTHS, PapUnit.LITRES_PER_MINUTE, PercentileLayout.STANDARD, confirmed = false),
 }
 
 /**
@@ -88,43 +97,45 @@ public enum class SummaryMetric(
  *
  * @property modulus the Rice modulus of the compressed series, or null where
  *   the machine stores plain int16 samples (the oximeter signals).
+ * @property modulusConfirmed whether a real capture has shown the series
+ *   decodes with this modulus. A series decoded with the wrong one usually
+ *   comes out a different length from its neighbours and is refused, but in a
+ *   record of only a few minutes it can pass with wrong values, so a signal
+ *   whose modulus is unconfirmed is not decoded at all.
+ * @property factorConfirmed whether the factor and unit have been checked
+ *   against the same machine's SD card. Unconfirmed values are given out only
+ *   on request.
  *
- * Two moduli differ from the reference decoder, which has respiratory rate at
- * 4 and minute ventilation at 8. A capture from an AirSense 11 AutoSet
- * (firmware 19.8.8.0, 2026-11-16) decodes only the other way round: with 8 and
- * 4 every signal of every record has the same length, that length is the
- * session's length in minutes, and the values agree with the machine's own
- * nightly percentiles; with the reference's values the two series run to the
- * wrong length and to impossible values. Signals 1 to 7 are confirmed by that
- * capture. The oximeter signals, alveolar ventilation (18) and mean inspiratory
- * time (21) were not present in it and are as the reference gives them; a
- * wrong modulus there cannot pass unnoticed, because the signals of a record
- * must agree on their length.
- *
- * Factors: leak, both pressures, respiratory rate and minute ventilation agree
- * with the machine's nightly percentiles for the same nights (leak exactly; the
- * others within one step of their resolution). [INSPIRATORY_DURATION] and
- * [IE_RATIO] have nothing to be compared with in that capture, and the first
- * gives values near half a second, which is short for a breath in: treat both
- * as unconfirmed until they are checked against the SD card.
+ * Evidence, from an AirSense 11 AutoSet on firmware 19.8.8.0 (2026-11-16):
+ * signals 1 to 7 were present. With respiratory rate at modulus 8 and minute
+ * ventilation at 4 (the reference decoder has them the other way round) every
+ * signal of every record has the session's length in minutes. Leak, both
+ * pressures, respiratory rate and minute ventilation agree with the SD card's
+ * two-second signals averaged per minute. Inspiratory duration and I:E ratio
+ * have nothing to be compared with, and the first gives values near half a
+ * second, which is short for a breath in. Other firmware has not been examined.
  */
 public enum class MinuteSignal(
     public val field: Int,
     public val modulus: Int?,
     public val scale: Scale,
     public val unit: PapUnit,
+    public val modulusConfirmed: Boolean,
+    public val factorConfirmed: Boolean,
 ) {
-    LEAK(1, 4, Scale(6, 5), PapUnit.LITRES_PER_MINUTE),
-    INSPIRATORY_PRESSURE(2, 4, Scale(1, 5), PapUnit.CM_H2O),
-    EXPIRATORY_PRESSURE(3, 2, Scale(1, 5), PapUnit.CM_H2O),
-    RESPIRATORY_RATE(4, 8, Scale(1, 4), PapUnit.BREATHS_PER_MINUTE),
-    INSPIRATORY_DURATION(5, 4, Scale(1, 25), PapUnit.SECONDS),
-    MINUTE_VENTILATION(6, 4, Scale(2, 5), PapUnit.LITRES_PER_MINUTE),
-    IE_RATIO(7, 4, Scale(4, 1), PapUnit.PERCENT),
-    SPO2(8, null, Scale.ONE, PapUnit.PERCENT),
-    HEART_RATE(9, null, Scale.ONE, PapUnit.BEATS_PER_MINUTE),
-    ALVEOLAR_MINUTE_VENTILATION(18, 8, Scale(2, 5), PapUnit.LITRES_PER_MINUTE),
-    MEAN_INSPIRATORY_TIME(21, 4, Scale(1, 10), PapUnit.SECONDS),
+    LEAK(1, 4, Scale(6, 5), PapUnit.LITRES_PER_MINUTE, true, true),
+    INSPIRATORY_PRESSURE(2, 4, Scale(1, 5), PapUnit.CM_H2O, true, true),
+    EXPIRATORY_PRESSURE(3, 2, Scale(1, 5), PapUnit.CM_H2O, true, true),
+    RESPIRATORY_RATE(4, 8, Scale(1, 4), PapUnit.BREATHS_PER_MINUTE, true, true),
+    INSPIRATORY_DURATION(5, 4, Scale(1, 25), PapUnit.SECONDS, true, false),
+    MINUTE_VENTILATION(6, 4, Scale(2, 5), PapUnit.LITRES_PER_MINUTE, true, true),
+    IE_RATIO(7, 4, Scale(4, 1), PapUnit.PERCENT, true, false),
+
+    // Stored uncompressed, so there is no modulus to get wrong.
+    SPO2(8, null, Scale.ONE, PapUnit.PERCENT, true, false),
+    HEART_RATE(9, null, Scale.ONE, PapUnit.BEATS_PER_MINUTE, true, false),
+    ALVEOLAR_MINUTE_VENTILATION(18, 8, Scale(2, 5), PapUnit.LITRES_PER_MINUTE, false, false),
+    MEAN_INSPIRATORY_TIME(21, 4, Scale(1, 10), PapUnit.SECONDS, false, false),
 }
 
 /** Codes in the `UsageEvents-TherapyStatusEvents` log. The numbering has gaps. */
@@ -150,7 +161,9 @@ public enum class UsageEvent(public val code: Int) {
 /**
  * Codes in the `TherapyEvents-RespiratoryEvents` log. The numbering has gaps.
  *
- * Apnoea, hypopnoea and RERA entries are written when the event **ends**.
+ * An entry is written when the event **ends** and is stamped with that moment;
+ * see [EventRecord]. Seen in a real capture: hypopnoea, central and obstructive
+ * apnoea. The other codes are as the reference gives them.
  */
 public enum class RespiratoryEvent(public val code: Int) {
     NO_EVENT(1),
@@ -170,9 +183,9 @@ public enum class RespiratoryEvent(public val code: Int) {
 }
 
 /** Where each stored log sits in the machine's delivery envelope. */
-public object SpoolEnvelope {
-    public const val SUMMARY: Int = 2
-    public const val RESPIRATORY_EVENTS: Int = 4
-    public const val MINUTE_LOG: Int = 5
-    public const val USAGE_EVENTS: Int = 6
+internal object SpoolEnvelope {
+    const val SUMMARY: Int = 2
+    const val RESPIRATORY_EVENTS: Int = 4
+    const val MINUTE_LOG: Int = 5
+    const val USAGE_EVENTS: Int = 6
 }

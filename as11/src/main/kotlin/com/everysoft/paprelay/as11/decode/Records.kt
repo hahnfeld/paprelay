@@ -2,9 +2,11 @@
 // PAPRelay — Copyright (C) 2026 PAPRelay contributors.
 package com.everysoft.paprelay.as11.decode
 
+import com.everysoft.paprelay.core.MachineTime
 import com.everysoft.paprelay.core.PapUnit
 import com.everysoft.paprelay.core.Quantity
 import com.everysoft.paprelay.core.Scale
+import java.util.Collections
 
 // Shared checks for the record decoders. Each one fails loudly: a record that
 // is not understood must never turn into a plausible-looking number.
@@ -19,54 +21,70 @@ internal const val MAX_TIMESTAMP_MS: Long = 4_102_444_800_000L
  */
 internal const val MIN_TIMESTAMP_MS: Long = 1_420_070_400_000L
 
-/** One record of a log that could not be decoded. */
-public class RecordFailure(
-    /** Position of the record in the download, counting from zero. */
-    public val index: Int,
-    public val reason: String,
-)
+/** One entry of a downloaded log, in the order the machine stored it. */
+public sealed interface RecordResult<out T> {
+    /** An entry that was understood. */
+    public class Decoded<T> internal constructor(public val value: T) : RecordResult<T>
+
+    /**
+     * An entry that was not understood. Its content is unknown: the stretch of time it
+     * covers must be treated as unknown too, never as empty. Its neighbours in
+     * [DecodedLog.entries] show roughly where it belongs.
+     *
+     * @property ordinal position among the log's entries, counting from zero.
+     */
+    public class Failed internal constructor(public val ordinal: Int, public val reason: String) : RecordResult<Nothing>
+}
 
 /**
  * What one download of a log decoded to.
  *
- * A record that is not understood is reported in [failures] and leaves the
- * others standing: it stays on the machine, so refusing the whole log would
- * hide every night until the app is fixed. A caller must treat the period a
- * failed record covers as unknown, never as empty.
+ * An entry that is not understood is kept in its place as a [RecordResult.Failed]
+ * and leaves the others standing: it stays on the machine, so refusing the whole
+ * log would hide every night until the app is fixed. [records] alone is therefore
+ * not the whole story; a caller must look at [complete] or [failures] before
+ * treating a gap as a gap.
  */
-public class DecodedLog<T> internal constructor(
-    public val records: List<T>,
-    public val failures: List<RecordFailure>,
-) {
+public class DecodedLog<T> internal constructor(entries: List<RecordResult<T>>) {
+    public val entries: List<RecordResult<T>> = Collections.unmodifiableList(ArrayList(entries))
+
+    /** The entries that were understood, in order. */
+    public val records: List<T> = Collections.unmodifiableList(this.entries.filterIsInstance<RecordResult.Decoded<T>>().map { it.value })
+
+    public val failures: List<RecordResult.Failed> = Collections.unmodifiableList(this.entries.filterIsInstance<RecordResult.Failed>())
+
     public val complete: Boolean get() = failures.isEmpty()
 }
 
-/**
- * Decodes each record of a log on its own. Damage to the envelope itself still
- * fails the whole download: then nothing can be told apart.
- */
-internal fun <T> decodeRecords(
-    payload: ByteArray,
-    envelopeField: Int,
-    what: String,
-    decode: (body: ByteArray, what: String) -> List<T>,
-): DecodedLog<T> {
-    val records = ArrayList<T>()
-    val failures = ArrayList<RecordFailure>()
-    unwrap(payload, envelopeField, what).forEachIndexed { index, body ->
+/** Collects results in order, giving each failure its place. */
+internal class ResultSink<T> {
+    private val entries = ArrayList<RecordResult<T>>()
+
+    fun add(value: T) {
+        entries += RecordResult.Decoded(value)
+    }
+
+    fun fail(reason: String) {
+        entries += RecordResult.Failed(entries.size, reason)
+    }
+
+    /** Runs [decode] for one entry; a decoding failure becomes that entry's result. */
+    inline fun attempt(decode: () -> T) {
         try {
-            records += decode(body, "$what record $index")
+            add(decode())
         } catch (e: SpoolDecodeException) {
-            failures += RecordFailure(index, e.message ?: "not understood")
+            fail(e.message ?: "not understood")
         }
     }
-    return DecodedLog(java.util.Collections.unmodifiableList(records), java.util.Collections.unmodifiableList(failures))
+
+    fun finish(): DecodedLog<T> = DecodedLog(entries)
 }
 
 /**
  * Splits a downloaded log into its records. Every top-level field must be the
  * log's own envelope field; anything else means this is not the log that was
- * asked for, or a layout this version does not know.
+ * asked for, or a layout this version does not know, and then nothing in the
+ * download can be told apart.
  */
 internal fun unwrap(payload: ByteArray, envelopeField: Int, what: String): List<ByteArray> =
     ProtoReader.read(payload).map { field ->
@@ -76,9 +94,9 @@ internal fun unwrap(payload: ByteArray, envelopeField: Int, what: String): List<
         field.bytes ?: wrongType(what, field)
     }
 
-internal fun timestamp(value: Long, what: String): Long {
+internal fun timestamp(value: Long, what: String): MachineTime {
     if (value !in MIN_TIMESTAMP_MS..MAX_TIMESTAMP_MS) throw SpoolDecodeException("$what: a time is out of range")
-    return value
+    return MachineTime(value)
 }
 
 internal fun count(value: Long, max: Int, what: String, name: String): Int {
@@ -86,13 +104,15 @@ internal fun count(value: Long, max: Int, what: String, name: String): Int {
     return value.toInt()
 }
 
-internal fun quantity(raw: Long, scale: Scale, unit: PapUnit, what: String): Quantity {
-    // A varint above this is a negative number or damage; neither is expected in these records.
-    if (raw !in 0..MAX_STORED_VALUE) throw SpoolDecodeException("$what: a stored value is out of range")
-    return Quantity(raw, scale, unit)
-}
+/** The quantity, or null if the stored value cannot be one: negative (a ten-byte varint) or absurdly large. */
+internal fun quantityOrNull(raw: Long, scale: Scale, unit: PapUnit): Quantity? =
+    if (raw in 0..MAX_STORED_VALUE) Quantity(raw, scale, unit) else null
 
-internal const val MAX_STORED_VALUE: Long = 100_000_000L
+internal fun quantity(raw: Long, scale: Scale, unit: PapUnit, what: String): Quantity =
+    quantityOrNull(raw, scale, unit) ?: throw SpoolDecodeException("$what: a stored value is out of range")
+
+/** Ten thousand of any unit, in hundredths. No figure the machine reports comes near it. */
+internal const val MAX_STORED_VALUE: Long = 1_000_000L
 
 internal fun missing(what: String, name: String): Nothing = throw SpoolDecodeException("$what: $name is missing")
 

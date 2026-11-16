@@ -53,11 +53,13 @@ public data class Scale(val numerator: Int, val denominator: Int) {
  * [exact] are derived on demand. Two quantities are equal only when the stored
  * integer, the scale and the unit are all the same: `120 x 1/100` and
  * `12 x 1/10` are the same amount but not the same record. Compare amounts
- * with [exact].
+ * with [sameAmountAs].
  *
  * The [unit] is part of the value. Leak, for one, is stored in litres per
- * second in one log and litres per minute in another; code that needs a
- * particular unit must check it, not assume it.
+ * second in one log and litres per minute in another, a factor of sixty.
+ * [value] and [exact] are in whatever [unit] says; code that needs a
+ * particular unit should ask for it with [valueIn], which refuses a unit of
+ * another kind.
  */
 public data class Quantity(val raw: Long, val scale: Scale, val unit: PapUnit) {
     init {
@@ -74,6 +76,34 @@ public data class Quantity(val raw: Long, val scale: Scale, val unit: PapUnit) {
         // stripTrailingZeros turns 10 into 1E+1; whole numbers are kept whole.
         return if (exact.scale() < 0) exact.setScale(0) else exact
     }
+
+    /**
+     * The value expressed in [target]. Only the same unit, or the other unit of the same
+     * kind (flow per second and per minute; seconds and minutes), is possible.
+     *
+     * @throws IllegalArgumentException if [target] measures something else.
+     */
+    public fun valueIn(target: PapUnit): Double = exactIn(target).toDouble()
+
+    /** As [valueIn], with no rounding. */
+    public fun exactIn(target: PapUnit): BigDecimal {
+        val sixty = BigDecimal(60)
+        return when {
+            target == unit -> exact()
+            unit == PapUnit.LITRES_PER_SECOND && target == PapUnit.LITRES_PER_MINUTE -> plain(exact().multiply(sixty))
+            unit == PapUnit.MINUTES && target == PapUnit.SECONDS -> plain(exact().multiply(sixty))
+            // Sixty has a factor of three, so the other direction cannot always be exact; it is
+            // rounded to more places than any stored value has.
+            unit == PapUnit.LITRES_PER_MINUTE && target == PapUnit.LITRES_PER_SECOND -> exact().divide(sixty, java.math.MathContext.DECIMAL64)
+            unit == PapUnit.SECONDS && target == PapUnit.MINUTES -> exact().divide(sixty, java.math.MathContext.DECIMAL64)
+            else -> throw IllegalArgumentException("$unit cannot be expressed in $target")
+        }
+    }
+
+    /** Whether this and [other] are the same amount of the same thing, however each is stored. */
+    public fun sameAmountAs(other: Quantity): Boolean = unit == other.unit && exact().compareTo(other.exact()) == 0
+
+    private fun plain(value: BigDecimal): BigDecimal = value.stripTrailingZeros().let { if (it.scale() < 0) it.setScale(0) else it }
 
     public companion object {
         public const val MAX_RAW: Long = 1L shl 40

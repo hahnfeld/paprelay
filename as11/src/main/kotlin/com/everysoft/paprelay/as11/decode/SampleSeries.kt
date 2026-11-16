@@ -19,9 +19,9 @@ package com.everysoft.paprelay.as11.decode
  * time until the next record. A caller that cannot settle it must not store
  * the uncertain tail.
  */
-public class SampleBlock internal constructor(
+internal class SampleBlock(
     /** Everything the bits can express, padding included. */
-    public val samples: IntArray,
+    val samples: IntArray,
     /**
      * How many leading samples are definitely real. When the block ends in an
      * unfinished run of ones, that run is the padding and every sample is
@@ -30,7 +30,7 @@ public class SampleBlock internal constructor(
      * last codes were data or zero padding. Equal to `samples.size` when
      * nothing is in doubt.
      */
-    public val certain: Int,
+    val certain: Int,
     /**
      * Bits left unread because the caller's limit was reached; zero when
      * decoding ran to the end of the block. Eight or more means the block
@@ -38,13 +38,13 @@ public class SampleBlock internal constructor(
      * samples: a limit also stops before damage further on is seen). One to
      * seven may be nothing but padding, so they say nothing either way.
      */
-    public val unreadBits: Long,
+    val unreadBits: Long,
 ) {
     /** True when the block certainly holds more data than the caller's limit let through. */
-    public val definitelyMore: Boolean get() = unreadBits >= 8
+    val definitelyMore: Boolean get() = unreadBits >= 8
 
     /** The series cut to [count] samples, which must lie within what is possible. */
-    public fun take(count: Int): IntArray {
+    fun take(count: Int): IntArray {
         if (count < certain || count > samples.size) {
             throw SpoolDecodeException("a length of $count is not possible for this block ($certain to ${samples.size})")
         }
@@ -61,15 +61,15 @@ public class SampleBlock internal constructor(
  * Rice-coded: a unary quotient (ones ended by a zero) followed by `log2(modulus)`
  * remainder bits.
  */
-public object SampleSeries {
+internal object SampleSeries {
     /** Largest series accepted. A day of per-minute samples is 1440. */
-    public const val MAX_SAMPLES: Int = 100_000
+    const val MAX_SAMPLES: Int = 100_000
 
     /**
      * Plain little-endian int16 samples, used for signals the machine does not
      * compress. A trailing odd byte is ignored, as the reference decoder does.
      */
-    public fun decodeRaw(blob: ByteArray): IntArray = IntArray(blob.size / 2) { int16(blob, it * 2) }
+    fun decodeRaw(blob: ByteArray): IntArray = IntArray(blob.size / 2) { int16(blob, it * 2) }
 
     /**
      * @param modulus the Rice modulus for this signal: a power of two, at least 1.
@@ -78,7 +78,7 @@ public object SampleSeries {
      *   sample leaves the int16 range, or (with no [maxSamples]) the block could
      *   hold more than [MAX_SAMPLES].
      */
-    public fun decode(blob: ByteArray, modulus: Int, maxSamples: Int? = null): SampleBlock {
+    fun decode(blob: ByteArray, modulus: Int, maxSamples: Int? = null): SampleBlock {
         if (modulus < 1 || modulus and (modulus - 1) != 0) throw SpoolDecodeException("unsupported Rice modulus $modulus")
         require(maxSamples == null || maxSamples in 0..MAX_SAMPLES) { "maxSamples out of range" }
         val limit = maxSamples ?: MAX_SAMPLES
@@ -106,9 +106,19 @@ public object SampleSeries {
         var bit = 0L
         var exhausted = false
 
-        fun next(): Int {
-            val byte = blob[4 + (bit ushr 3).toInt()].toInt()
-            return (byte ushr (7 - (bit and 7).toInt())) and 1
+        fun bitAt(at: Long): Int {
+            val byte = blob[4 + (at ushr 3).toInt()].toInt()
+            return (byte ushr (7 - (at and 7).toInt())) and 1
+        }
+
+        fun next(): Int = bitAt(bit)
+
+        /** True when one to seven bits remain from [from] and every one of them is a one: the block's padding. */
+        fun onlyOnesFrom(from: Long): Boolean {
+            if (totalBits - from !in 1..7) return false
+            var at = from
+            while (at < totalBits) if (bitAt(at++) == 0) return false
+            return true
         }
 
         while (count < out.size) {
@@ -147,19 +157,21 @@ public object SampleSeries {
             val difference = (encoded ushr 1) xor -(encoded and 1)
             val sample = 2L * out[count - 1] - out[count - 2] + difference
             if (sample < Short.MIN_VALUE || sample > Short.MAX_VALUE) {
-                // Padding on a steep series runs out of range. That ends the series; it is not corruption.
-                if (mayBePadding) {
+                // Zero padding on a steep series runs out of range. That ends the series; it is
+                // not corruption. But a code with the block's real padding (ones) after it was
+                // written on purpose, and a real sample cannot be out of range.
+                if (mayBePadding && !onlyOnesFrom(bit)) {
                     exhausted = true
                     break
                 }
                 throw SpoolDecodeException("sample block decodes outside the 16-bit range")
             }
             out[count++] = sample.toInt()
-            // Position is the only evidence used. A code with a value of its own at the very
-            // end is probably real, but only if padding is all zeros or all ones, and no
-            // capture has shown yet what this machine pads with.
             if (!mayBePadding) certain = count
         }
+        // Decoding can stop with the padding still unread: at the caller's limit, or because
+        // the block can hold no more codes. A few ones left over are that padding all the same.
+        if (!exhausted && onlyOnesFrom(bit)) certain = count
         var unread = if (exhausted) 0 else totalBits - bit
         if (!exhausted && count.toLong() == possible) {
             // Everything the block can hold was read, so what is left is too short to be a

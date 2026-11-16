@@ -41,6 +41,40 @@ class QuantityTest {
     }
 
     @Test
+    fun `a value is given in another unit only when the two measure the same thing`() {
+        val leak = Scale(1, 100).of(42, PapUnit.LITRES_PER_SECOND)
+        assertEquals("25.2", leak.exactIn(PapUnit.LITRES_PER_MINUTE).toPlainString())
+        assertEquals(25.2, leak.valueIn(PapUnit.LITRES_PER_MINUTE))
+        assertEquals(0.42, leak.valueIn(PapUnit.LITRES_PER_SECOND))
+        assertEquals(0.4, Scale(6, 5).of(20, PapUnit.LITRES_PER_MINUTE).valueIn(PapUnit.LITRES_PER_SECOND))
+        assertEquals("120", Scale.ONE.of(2, PapUnit.MINUTES).exactIn(PapUnit.SECONDS).toPlainString())
+        assertFailsWith<IllegalArgumentException> { leak.valueIn(PapUnit.CM_H2O) }
+        assertFailsWith<IllegalArgumentException> { leak.valueIn(PapUnit.LITRES) }
+        assertFailsWith<IllegalArgumentException> { Scale.ONE.of(5, PapUnit.PERCENT).valueIn(PapUnit.SECONDS) }
+    }
+
+    @Test
+    fun `the same amount is recognised however it is stored, and never across units`() {
+        assertEquals(true, Scale(1, 100).of(120, PapUnit.CM_H2O).sameAmountAs(Scale(1, 10).of(12, PapUnit.CM_H2O)))
+        assertEquals(false, Scale(1, 100).of(120, PapUnit.CM_H2O).sameAmountAs(Scale(1, 10).of(13, PapUnit.CM_H2O)))
+        // Twenty-four of one thing is not twenty-four of another.
+        assertEquals(false, Scale.ONE.of(24, PapUnit.LITRES_PER_MINUTE).sameAmountAs(Scale.ONE.of(24, PapUnit.LITRES_PER_SECOND)))
+    }
+
+    @Test
+    fun `machine time becomes real time only through a measured offset`() {
+        val stamp = MachineTime(1_794_556_805_988)
+        // The machine's clock was 361.6 s fast, so true time is earlier.
+        assertEquals(java.time.Instant.ofEpochMilli(1_794_556_444_388), stamp.toInstant(clockOffsetMs = -361_600))
+        assertEquals(MachineTime(1_794_556_865_988), stamp + 60_000)
+        assertEquals(MachineTime(1_794_556_795_988), stamp - 10_000)
+        assertEquals(60_000, (stamp + 60_000).since(stamp))
+        assertEquals(true, stamp < stamp + 1)
+        assertEquals("machine:1794556805988", stamp.toString())
+        assertFailsWith<ArithmeticException> { MachineTime(Long.MAX_VALUE) + 1 }
+    }
+
+    @Test
     fun `nonsense is refused`() {
         assertFailsWith<IllegalArgumentException> { Scale(0, 5) }
         assertFailsWith<IllegalArgumentException> { Scale(1, -5) }
