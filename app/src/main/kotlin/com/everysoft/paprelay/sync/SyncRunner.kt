@@ -159,7 +159,7 @@ class SyncRunner(
     fun retryLater(waitMs: Long = HEARD_GAP_MS) {
         if (!enabled) return
         val request = OneTimeWorkRequestBuilder<SyncWorker>()
-            .setInitialDelay(waitMs.coerceIn(1_000, HEARD_GAP_MS), TimeUnit.MILLISECONDS)
+            .setInitialDelay(waitMs.coerceIn(1_000, MAX_RETRY_WAIT_MS), TimeUnit.MILLISECONDS)
             .addTag(SyncWorker.TAG_RETRY)
             .build()
         WorkManager.getInstance(context).enqueueUniqueWork(RETRY_WORK, ExistingWorkPolicy.KEEP, request)
@@ -224,7 +224,9 @@ class SyncRunner(
      */
     fun acceptMachineClock() {
         scope.launch {
-            change { it.with(clock = null).fromTheStart() }
+            // The clock may have been set back past the moment the machine's present software was
+            // first seen, so that moment no longer tells its sessions from older ones.
+            change { it.with(clock = null, softwareSinceMs = null).fromTheStart() }
             syncNow()
         }
     }
@@ -362,6 +364,9 @@ class SyncRunner(
         abs(SystemClock.currentNetworkTimeClock().millis() - System.currentTimeMillis()) > PHONE_CLOCK_TOLERANCE_MS
     } catch (e: DateTimeException) {
         false
+    } catch (e: RuntimeException) {
+        // The time service itself failed. That says nothing about the clock.
+        false
     }
 
     /**
@@ -398,6 +403,8 @@ class SyncRunner(
 
         /** The least time between an attempt of any kind and one begun because the machine was heard. */
         const val HEARD_GAP_MS = 5L * 60 * 1000
+
+        const val MAX_RETRY_WAIT_MS = 30L * 60 * 1000
 
         /** The least time before a run stopped by a missing permission or the like is tried again on opening the app. */
         const val RECHECK_MS = 60_000L

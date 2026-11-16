@@ -634,7 +634,7 @@ class SyncEngineTest {
         machine.nights = listOf(under, short)
         assertEquals(SyncOutcome.PARTIAL, engine.sync()!!.outcome)
         assertHolds(listOf(under))
-        assertEquals(software, store.read().vouchedSoftware)
+        assertNull(store.read().vouchedSoftware)
 
         // A night recorded after the update vouches, and the short session comes across with it.
         phoneNow += 12 * hour
@@ -655,9 +655,36 @@ class SyncEngineTest {
         machine.nights = listOf(before, after, nap)
         val report = engine.sync()!!
         assertEquals(SyncOutcome.PARTIAL, report.outcome)
-        // The long nights stand on their own evidence. The nap is too short to, in this company.
-        assertHolds(listOf(before, after))
+        // The long nights decoded cleanly, which shows the layout is read as it is meant: what
+        // failed was the one record. So the nap beside them is believed too.
+        assertHolds(listOf(before, after, nap))
         assertEquals(before.firstMinuteEnd, store.read().resumeFromMs)
+    }
+
+    @Test
+    fun `short records beside one that cannot be trusted wait when nothing long vouches for the layout`() = runTest {
+        val long = first
+        machine.nights = listOf(long)
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        phoneNow += 72 * hour
+        val nap = Night(machineNow - 3 * hour, rates(14))
+        machine.nights = listOf(long, nap)
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        // Three days on, the download holds a torn record and two more naps, and nothing long:
+        // the long night is days behind the place reading starts from.
+        phoneNow += 72 * hour
+        val one = Night(machineNow - 6 * hour, rates(12))
+        val two = Night(machineNow - 2 * hour, rates(9, base = 60))
+        machine.torn = machineNow - 4 * hour
+        machine.nights = listOf(long, nap, one, two)
+        assertEquals(SyncOutcome.PARTIAL, engine.sync()!!.outcome)
+        assertHolds(listOf(long, nap))
+        // The next night is long and clean, and answers the doubt for the naps read with it.
+        phoneNow += 20 * hour
+        val night = Night(machineNow - 8 * hour, rates(400, base = 48))
+        machine.nights = listOf(long, nap, one, two, night)
+        assertEquals(SyncOutcome.PARTIAL, engine.sync()!!.outcome)
+        assertHolds(listOf(long, nap, one, two, night))
     }
 
     @Test
@@ -722,6 +749,67 @@ class SyncEngineTest {
         val next = engine.sync()!!
         assertEquals(SyncOutcome.PARTIAL, next.outcome)
         assertEquals(0, next.readingsWritten)
+    }
+
+    @Test
+    fun `a night that could not be read while everything was written again is written when it can be`() = runTest {
+        val good = first
+        val night = Night(machineNow - 20 * hour, rates(203))
+        val after = Night(machineNow - 3 * hour, rates(101))
+        machine.nights = listOf(good, night, after)
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        // Health Connect's data is cleared and everything is asked for again, at a moment when
+        // the middle night comes back unreadable.
+        health.records.clear()
+        store.write(store.read().with(rewriteRequested = true).fromTheStart())
+        machine.nights = listOf(good, Night(night.firstMinuteEnd, night.rates, kind = 2), after)
+        phoneNow += hour
+        assertEquals(SyncOutcome.PARTIAL, engine.sync()!!.outcome)
+        assertHolds(listOf(good, after))
+        // Readable again. The ledger still knows it was to be rewritten, and it is.
+        machine.nights = listOf(good, night, after)
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertHolds(listOf(good, night, after))
+    }
+
+    @Test
+    fun `writing everything again gets through even when Health Connect takes only a little at a time`() = runTest {
+        val nights = (1..9).map { Night(machineNow - (10 - it) * 24 * hour, rates(40 + it)) }
+        machine.nights = nights
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        health.records.clear()
+        store.write(store.read().with(rewriteRequested = true).fromTheStart())
+        var runs = 0
+        do {
+            // Three sessions, and then it has had enough for now.
+            health.applies = 0
+            health.failOnApply = 4
+            phoneNow += hour
+            val report = engine.sync()!!
+            assertTrue(++runs < 8, "no progress: ${health.records.size} records after $runs runs")
+        } while (report.outcome != SyncOutcome.COMPLETE)
+        assertHolds(nights)
+    }
+
+    @Test
+    fun `nights waiting for the software to be vouched for are not given up for being old`() = runTest {
+        // Forty nights are on the machine when its software is seen to have changed.
+        val old = Night(machineNow - 60 * 24 * hour, rates(300))
+        machine.nights = listOf(old)
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        phoneNow += 50 * 24 * hour
+        machine.applicationIdentifier = "SW04600.19.8.8.0.0123abc"
+        val unsynced = (1..40).map { Night(machineNow - (41 - it) * 24 * hour, rates(200 + it)) }
+        machine.nights = listOf(old) + unsynced
+        assertEquals(SyncOutcome.PARTIAL, engine.sync()!!.outcome)
+        assertHolds(listOf(old))
+        // The next night is recorded by the new software and vouches for it. All forty come across.
+        phoneNow += 24 * hour
+        val fresh = Night(machineNow - 9 * hour, rates(420, base = 50))
+        machine.nights = listOf(old) + unsynced + fresh
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertHolds(listOf(old) + unsynced + fresh)
     }
 
     @Test

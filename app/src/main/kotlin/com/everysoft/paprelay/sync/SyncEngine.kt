@@ -140,6 +140,7 @@ class SyncEngine(
         var sessions = 0
         var written = 0
         var partial = false
+        var sessionInProgress = false
     }
 
     private suspend fun attempt(): SyncReport {
@@ -189,7 +190,7 @@ class SyncEngine(
         }
         val now = nowMs()
         val code = failure?.let { runCatching { describe(it) }.getOrNull() }?.take(SyncReport.MAX_CODE)
-        val report = SyncReport(now, outcome, progress.sessions, progress.written, code)
+        val report = SyncReport(now, outcome, progress.sessions, progress.written, code, progress.sessionInProgress)
         val finished = progress.state.with(
             lastReport = report,
             lastCompleteAtMs = if (outcome == SyncOutcome.COMPLETE) now else progress.state.lastCompleteAtMs,
@@ -236,19 +237,34 @@ class SyncEngine(
             progress.state = progress.state.with(
                 softwareSeen = identity.applicationIdentifier,
                 softwareSinceMs = if (progress.state.softwareSeen == null) null else machineNow.epochMs,
+                // Whatever was vouched for before is not what is running now, even if its name comes back.
+                vouchedSoftware = null,
             )
+        }
+        if (progress.state.rewriteRequested) {
+            // Everything is to be written again: Health Connect's data may have been cleared, so the
+            // ledger's word that a session is in step counts for nothing. Every entry is marked as
+            // begun and not confirmed, which is exactly what makes a session be written again, and
+            // reading starts from the beginning. From here on it is an ordinary run: what it gets
+            // through is confirmed and stays so, and what it does not is still marked next time.
+            val marked = progress.state.ledger.mapValues { (_, entry) ->
+                LedgerEntry(
+                    entry.machineTag, entry.firstMinuteEnd, entry.minutes, entry.fingerprint, entry.clockOffset, entry.zone, entry.version,
+                    pendingMinutes = entry.possiblyHeld,
+                )
+            }
+            progress.state = progress.state.with(ledger = marked, rewriteRequested = false).fromTheStart()
         }
         progress.state = progress.state.with(clock = ClockBaseline(offset.millis, machineNow.epochMs))
         store.write(progress.state)
 
-        val force = progress.state.rewriteRequested
         var vouched = progress.state.vouchedSoftware == identity.applicationIdentifier
         val vouchFrom = progress.state.softwareSinceMs
         val from = maxOf(EARLIEST_START_MS, progress.state.resumeFromMs?.let { it - OVERLAP_MS } ?: (machineNow.epochMs - FIRST_WINDOW_MS))
         var address: SpoolAddress = SpoolAddress.FromMachineTime(from)
         var rounds = 0
         var emptyRounds = 0
-        var reachedEnd = false
+        var skippedInProgress = false
         // The start of the newest session seen, and of the last one dealt with before anything went wrong.
         var newest: Long? = null
         var lastBeforeTrouble: Long? = null
@@ -259,7 +275,7 @@ class SyncEngine(
         suspend fun write(plan: SessionPlan.Planned) {
             val key = plan.readings.key
             val now = nowMs()
-            val change = Reconcile.session(plan.readings, progress.state.ledger[key], offset, zone(), now, force) ?: return
+            val change = Reconcile.session(plan.readings, progress.state.ledger[key], offset, zone(), now) ?: return
             // A reading that has not happened yet means the clock correction is wrong.
             if (change.writes.any { it.time.toEpochMilli() > now + FUTURE_ALLOWANCE_MS }) throw Stop(SyncOutcome.CLOCK_UNRELIABLE)
             // The intent first: from here on the ledger covers whatever is about to exist.
@@ -273,6 +289,22 @@ class SyncEngine(
         fun trouble() {
             progress.partial = true
             troubled = true
+        }
+
+        // What is finished stays finished even if this run does not reach its end: the place to
+        // resume from moves up as sessions are dealt with. Never past one that is waiting, and past
+        // one that could not be dealt with only as far as the hold limit allows (see below).
+        fun checkpoint() {
+            if (waiting.isNotEmpty()) return
+            val reached = if (!troubled) {
+                lastBeforeTrouble
+            } else {
+                newest?.let { minOf(maxOf(lastBeforeTrouble ?: progress.state.resumeFromMs ?: Long.MIN_VALUE, machineNow.epochMs - HOLD_LIMIT_MS), it) }
+            } ?: return
+            if (reached > (progress.state.resumeFromMs ?: Long.MIN_VALUE)) {
+                progress.state = progress.state.with(resumeFromMs = reached)
+                store.write(progress.state)
+            }
         }
 
         while (true) {
@@ -290,6 +322,10 @@ class SyncEngine(
                 progress.partial = true
                 break
             }
+            // Something in this download failed the way a misread layout would. A long record that
+            // decoded cleanly beside it answers the doubt: the layout is being read as it is meant,
+            // and what failed was that one record. With none, the short records are not believed.
+            val doubtful = log.doubted && log.decoded.none { it.sampleCount >= VOUCH_SAMPLES }
             for (entry in log.entries) {
                 // A stop asked for from outside is heard between sessions, never inside one.
                 currentCoroutineContext().ensureActive()
@@ -309,12 +345,12 @@ class SyncEngine(
                     // It is left until it has ended, so that a night is written once, whole, and
                     // nothing depends on how the machine presents a record it is still adding to.
                     // The next run starts at it again.
+                    skippedInProgress = true
                     if (!troubled && waiting.isEmpty()) lastBeforeTrouble = newest
                     continue
                 }
-                if (log.doubted && record.sampleCount < VOUCH_SAMPLES) {
-                    // Something else in this download failed the way a misread layout would, and a
-                    // misreading can pass in a record this short. It is read again another time.
+                if (doubtful && record.sampleCount < VOUCH_SAMPLES) {
+                    // A misreading can pass in a record this short. It is read again another time.
                     trouble()
                     continue
                 }
@@ -337,9 +373,12 @@ class SyncEngine(
                             progress.state = progress.state.with(vouchedSoftware = identity.applicationIdentifier)
                             store.write(progress.state)
                             // The short sessions that were waiting for this are written first, in their order.
-                            for (held in waiting) write(held)
-                            progress.sessions += waiting.size
-                            waiting.clear()
+                            while (waiting.isNotEmpty()) {
+                                currentCoroutineContext().ensureActive()
+                                write(waiting.first())
+                                waiting.removeAt(0)
+                                progress.sessions++
+                            }
                         }
                         if (!vouched) {
                             // Too short, or too old, to show that this software's data is read as it
@@ -352,20 +391,10 @@ class SyncEngine(
                 }
                 progress.sessions++
                 if (!troubled && waiting.isEmpty()) lastBeforeTrouble = newest
+                checkpoint()
             }
-            // What is finished stays finished even if this run does not reach its end: the place to
-            // resume from moves up after every round, as long as nothing before it is outstanding.
-            val reached = lastBeforeTrouble
-            if (!troubled && waiting.isEmpty() && reached != null && reached > (progress.state.resumeFromMs ?: Long.MIN_VALUE)) {
-                progress.state = progress.state.with(resumeFromMs = reached)
-                store.write(progress.state)
-            }
-            val next = round.next
-            if (next == null) {
-                reachedEnd = true
-                break
-            }
-            address = SpoolAddress.Continuation(next)
+            checkpoint()
+            address = SpoolAddress.Continuation(round.next ?: break)
         }
         // Nothing long enough came to vouch for the software: the short sessions wait for the next run.
         val unvouched = waiting.isNotEmpty()
@@ -377,19 +406,18 @@ class SyncEngine(
         // that still cannot be read when it is that old stops being asked for, or every run would
         // read months of history again for its sake.
         val resume = when {
+            // Sessions that are only waiting for the software to be vouched for can be read; they are
+            // never given up for being old.
+            unvouched -> lastBeforeTrouble ?: progress.state.resumeFromMs
             troubled -> minOf(
                 maxOf(lastBeforeTrouble ?: progress.state.resumeFromMs ?: Long.MIN_VALUE, machineNow.epochMs - HOLD_LIMIT_MS),
                 newest ?: Long.MAX_VALUE,
             )
             else -> newest ?: progress.state.resumeFromMs
         }
-        progress.state = progress.state.with(
-            resumeFromMs = resume,
-            // Writing everything again is done once the end of the machine's log has been reached.
-            // What could not be dealt with on the way holds the place to resume from, not this.
-            rewriteRequested = force && (!reachedEnd || unvouched),
-        )
+        progress.state = progress.state.with(resumeFromMs = resume)
         store.write(progress.state)
+        progress.sessionInProgress = skippedInProgress
     }
 
     private fun storeEntry(progress: Progress, key: String, entry: LedgerEntry?) {

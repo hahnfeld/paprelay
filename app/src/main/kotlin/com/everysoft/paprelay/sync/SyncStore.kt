@@ -91,6 +91,11 @@ class SyncReport(
      * way as the device check's, so it holds no health value, serial number or address.
      */
     val code: String? = null,
+    /**
+     * True when a session was left unwritten because it may still be going on. Not stored: it
+     * matters only to whoever ran the attempt, who may want to look again when it has ended.
+     */
+    val sessionInProgress: Boolean = false,
 ) {
     companion object {
         const val MAX_CODE = 600
@@ -114,7 +119,7 @@ class ClockBaseline(val offsetMs: Long, val machineMs: Long)
  *   default) for no limit.
  * @property clock the machine's clock at the last synchronisation that measured it.
  * @property rewriteRequested true when every session is to be written again whatever the
- *   ledger says, until one synchronisation has completed.
+ *   ledger says. The next run turns it into a ledger whose every entry is marked as begun.
  * @property vouchedSoftware the machine software, by its full identifier, from which a long
  *   session has been read cleanly. Until there is one, short sessions are not written: a
  *   few minutes can be read "successfully" from a layout that is not the expected one, and

@@ -38,15 +38,27 @@ class SyncWorker(context: Context, parameters: WorkerParameters) : CoroutineWork
         when {
             TAG_HEARD in tags -> when (val wait = sync.heardWaitMs()) {
                 null -> Unit
-                0L -> if (sync.runOnce()?.outcome in WORTH_ANOTHER_TRY) sync.retryLater()
+                0L -> again(sync, sync.runOnce())
                 else -> sync.retryLater(wait)
             }
             // The one further attempt: made unless there is no longer any point, and not followed by another.
             TAG_RETRY in tags -> if (sync.heardWaitMs() != null) sync.runOnce()
-            else -> sync.runOnce()
+            else -> again(sync, sync.runOnce())
         }
         sync.listenForMachine()
         return Result.success()
+    }
+
+    /** Asks for the one further attempt where the run that has just ended gives a reason for it. */
+    private fun again(sync: SyncRunner, report: SyncReport?) {
+        when {
+            report == null -> Unit
+            // Heard or expected, but not reached, or lost on the way: it may have been at the edge of range.
+            report.outcome in WORTH_ANOTHER_TRY -> sync.retryLater()
+            // A session was still going on, or had only just ended. Once it has settled it can be written:
+            // soon, and not an hour from now, when the phone may have left the house.
+            report.sessionInProgress -> sync.retryLater(SyncEngine.SETTLE_MS + 60_000)
+        }
     }
 
     companion object {
@@ -54,7 +66,6 @@ class SyncWorker(context: Context, parameters: WorkerParameters) : CoroutineWork
         const val TAG_HEARD = "heard"
         const val TAG_RETRY = "retry"
 
-        /** Heard, but not reached, or lost on the way: the machine may have been at the edge of range. */
         private val WORTH_ANOTHER_TRY = setOf(SyncOutcome.MACHINE_AWAY, SyncOutcome.CONNECTION_LOST)
     }
 }
