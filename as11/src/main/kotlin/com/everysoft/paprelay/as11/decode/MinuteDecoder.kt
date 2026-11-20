@@ -165,7 +165,7 @@ public object MinuteDecoder {
      * A record's series could not be decoded, or contradict each other. Either is what a wrong
      * modulus looks like, and that casts doubt on the short records of the same download.
      */
-    private class LengthDisagreement(message: String, val startedAt: MachineTime? = null) : Exception(message)
+    private class LengthDisagreement(message: String) : Exception(message)
 
     /**
      * @param payload one verified download of the per-minute log.
@@ -187,20 +187,20 @@ public object MinuteDecoder {
         unwrap(payload, SpoolEnvelope.MINUTE_LOG, "per-minute log").forEachIndexed { index, body ->
             val what = "per-minute record $index"
             try {
-                sink.attempt {
-                    val decoded = record(body, what)
-                    // The machine stores sessions in time order and they cannot overlap. One that
-                    // does not start after the one before it would collide with it minute for minute.
-                    val before = previous
-                    if (before != null && decoded.firstMinuteEnd <= before.lastMinuteEnd) {
-                        throw SpoolDecodeException("$what: not after the record before it")
-                    }
-                    previous = decoded
-                    decoded
+                val decoded = record(body, what)
+                // The machine stores sessions in time order and they cannot overlap. One that
+                // does not start after the one before it would collide with it minute for minute.
+                val before = previous
+                if (before != null && decoded.firstMinuteEnd <= before.lastMinuteEnd) {
+                    throw SpoolDecodeException("$what: not after the record before it")
                 }
+                previous = decoded
+                sink.add(decoded)
             } catch (e: LengthDisagreement) {
-                sink.fail(e.message!!, startedAt = e.startedAt)
+                sink.fail(e.message!!, startedAt = startOf(body))
                 doubted = true
+            } catch (e: SpoolDecodeException) {
+                sink.fail(e.message ?: "not understood", startedAt = startOf(body))
             }
         }
         // A series that will not decode, or signals that disagree about a record's length, may mean
@@ -215,6 +215,21 @@ public object MinuteDecoder {
     }
 
     private class Series(val start: MachineTime, val block: SampleBlock)
+
+    /**
+     * The start time of a record that could not be decoded, read from its first series that
+     * states one, or null if none does. It says only when the record belongs.
+     */
+    private fun startOf(body: ByteArray): MachineTime? = try {
+        ProtoReader.read(body).asSequence()
+            .filter { signalByField[it.number] != null }
+            .mapNotNull { it.bytes }
+            .mapNotNull { series -> ProtoReader.read(series).firstOrNull { it.number == START && it.wireType == ProtoReader.VARINT } }
+            .firstOrNull()
+            ?.let { timestamp(it.value, "a record's start") }
+    } catch (e: SpoolDecodeException) {
+        null
+    }
 
     private fun record(body: ByteArray, what: String): MinuteRecord {
         val found = LinkedHashMap<MinuteSignal, Series>()
@@ -254,7 +269,7 @@ public object MinuteDecoder {
         // certain run and at most the shortest series.
         val atLeast = found.values.maxOf { it.block.certain }
         val atMost = found.values.minOf { it.block.samples.size }
-        if (atLeast > atMost) throw LengthDisagreement("$what: the signals disagree about how many samples there are", start)
+        if (atLeast > atMost) throw LengthDisagreement("$what: the signals disagree about how many samples there are")
 
         // A series still counts towards the record's length when its values cannot be right:
         // where it ends does not depend on what it holds.

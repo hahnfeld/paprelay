@@ -80,7 +80,7 @@
     <string name="choice_not_allowed">Health Connect does not allow PAPRelay to write this. Open Health Connect and allow it, then switch this on.</string>
     <string name="choice_respiratory">Respiratory rate to Health Connect</string>
     <!-- Shown while respiratory rate is switched on and nothing of it is written yet, on machine software PAPRelay has not been compared with. -->
-    <string name="rate_waiting">Respiratory rate starts after the next full night. PAPRelay first checks that it reads this machine\'s software correctly.</string>
+    <string name="rate_waiting">Respiratory rate starts after a night of therapy of one hour or more. First PAPRelay checks that it reads the data of this machine\'s software version correctly. If it does not start, switch it off in Sharing.</string>
     <string name="choice_respiratory_body">One value for each minute of therapy. Leave this off if another device already writes your respiratory rate.</string>
     <string name="choice_file">Table of nights</string>
     <string name="choice_file_body">A file with one line for each night, kept up to date where you choose. If you keep it on a cloud drive, other programs can read it there. PAPRelay itself sends nothing: it hands the file to the place you chose.</string>

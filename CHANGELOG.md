@@ -2,14 +2,14 @@
 
 Newest first. Before 1.0, any release may change behaviour.
 
-## 0.2.1 (2026-11-20)
+## 0.2.2 (2026-11-20)
 
 First public release.
 
 - PAPRelay no longer stops when an AirSense 11 has another software version. It reads the
-  nightly figures there too. Respiratory rate starts with the first full night after
-  PAPRelay has seen the new version; the nights before that are not filled in. Until then
-  the app says that respiratory rate waits.
+  nightly figures there too. With software other than 19.8.8.0, respiratory rate starts
+  with the first night of an hour or more after it is switched on or after the software
+  changes; earlier nights are not written. Until then the app says that it waits.
 - A nightly figure is left out if its set of percentiles is not the one PAPRelay knows.
 - The About screen says that PAPRelay is for personal use only and is not made, endorsed
   or supported by ResMed.

@@ -105,13 +105,13 @@ On any other version the rule is stricter, and it does not rely on the machine's
 
 - **Which sessions are its own.** The first time the engine reads the per-minute log to the
   end under that version, everything the machine then holds counts as older: an earlier
-  version may have recorded it. The software's own sessions are those that begin after the
+  version may have recorded it. The log is read only while respiratory rate is switched on,
+  so nights recorded before it is switched on count as older too. The software's own sessions are those that begin after the
   last minute present then. (Not after "now": a clock that was once set back leaves
   sessions stamped later than now.)
 - **What vouches.** One of its own sessions, 60 minutes or more, in which all seven known
-  signals are readable, and which is not stamped later than now. With a wrong constant one
-  of the signals then practically always disagrees about the length, or holds a value the
-  machine cannot report.
+  signals are readable, and which is not stamped later than now. With a wrong constant the
+  signals then practically always disagree about the session's length.
 - **Older sessions.** They are never newly written. A session that PAPRelay already wrote
   under trusted software stays in its care: it is written again after "Write everything
   again", and a write that was cut short is finished.
@@ -122,9 +122,9 @@ On any other version the rule is stricter, and it does not rely on the machine's
   stays as it was. If the clock was set back past that point, it is settled again, and the
   software must be vouched for again.
 
-Until the software is vouched for, respiratory rate waits. That is not a failure: the run
-ends as complete, and the home screen and the Sharing page say that respiratory rate
-starts after the next full night.
+Until the software is vouched for, respiratory rate waits. Waiting is not a failure: the
+run ends as complete (unless a record could not be read), and the home screen and the
+Sharing page say that respiratory rate starts after a night of an hour or more.
 
 Software whose identifier has another form is not read: the engine stops with
 `SOFTWARE_NOT_CONFIRMED` and writes nothing.
@@ -137,7 +137,12 @@ Known limits:
 - The machine does not say which software recorded a session. On the compared version,
   sessions that an earlier version recorded are read with its constants.
 - If another version does use other constants, no session ever vouches, and respiratory
-  rate keeps waiting. The nightly figures are not affected.
+  rate keeps waiting. If its records fail to decode, runs also report that not every night
+  could be copied. The user's way out is to switch respiratory rate off. The nightly
+  figures are not affected.
+- If the machine's clock is set back soon after the engine settled which sessions the new
+  software owns, sessions recorded in the following hours may be stamped before that point
+  and are then not written.
 
 ### Clocks
 

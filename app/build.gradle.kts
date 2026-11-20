@@ -20,8 +20,8 @@ android {
         applicationId = "com.everysoft.paprelay"
         minSdk = 34
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.2.1"
+        versionCode = 4
+        versionName = "0.2.2"
         // The commit, so that a report says exactly which build wrote it.
         buildConfigField("String", "GIT_COMMIT", "\"" + (commit.orNull?.trim()?.ifEmpty { null } ?: "unknown") + "\"")
     }

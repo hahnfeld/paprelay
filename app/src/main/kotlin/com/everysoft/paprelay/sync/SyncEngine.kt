@@ -277,12 +277,13 @@ class SyncEngine(
             progress.state = progress.state.with(
                 softwareSeen = identity.applicationIdentifier,
                 softwareSinceMs = when {
-                    // Not compared: which sessions are its own is settled when its per-minute log is next read (below).
                     !compared -> null
                     // The compared version, on a first run, takes the sessions the machine already holds.
                     progress.state.softwareSeen == null -> null
                     else -> machineNow.epochMs
                 },
+                // Not compared: which sessions are its own is settled when its per-minute log is next read (below).
+                softwareOwnFromMs = null,
                 // Whatever was vouched for before is not what is running now, even if its name comes back.
                 vouchedSoftware = null,
             )
@@ -333,10 +334,11 @@ class SyncEngine(
         // then, an earlier version may have recorded. This is settled once, in a run that reads the
         // log to its end, and kept as the moment after the last minute then present. (Not as "now":
         // a clock that was once set back leaves sessions stamped later than now.) It is settled
-        // again if it is missing, or if it lies after the machine's present time, which it can only
-        // do if the clock was set back past it. While it is being settled nothing is the software's
-        // own, and whatever was vouched for has to be vouched for again.
-        val settled = if (compared) null else progress.state.softwareSinceMs?.takeIf { it <= machineNow.epochMs }
+        // again if it is missing, or if it lies after the machine's present time: the clock was set
+        // back past it, or sessions stamped later than now were present when it was settled. While
+        // it is being settled nothing is the software's own, and whatever was vouched for has to be
+        // vouched for again.
+        val settled = if (compared) null else progress.state.softwareOwnFromMs?.takeIf { it <= machineNow.epochMs }
         val settling = !compared && settled == null
         if (settling && progress.state.vouchedSoftware != null) {
             progress.state = progress.state.with(vouchedSoftware = null)
@@ -550,7 +552,7 @@ class SyncEngine(
         if (undated > 0 && !settling) trouble()
         if (settling && readToEnd) {
             // Everything now on the machine was there before the software's own sessions begin.
-            progress.state = progress.state.with(softwareSinceMs = presentUntil)
+            progress.state = progress.state.with(softwareOwnFromMs = presentUntil)
         }
         // Nothing long enough came to vouch for the software: the sessions wait for the next run. On
         // the compared version that is a run that did not finish. On any other it is how things stand
@@ -779,8 +781,8 @@ class SyncEngine(
         /**
          * The same, for software the per-minute log was not compared on. With every known signal
          * readable, a record this long that was decoded with a wrong modulus practically always
-         * shows it: its signals disagree about its length, or one of them holds a value the
-         * machine cannot report.
+         * shows it, mostly because its signals then disagree about its length (and for some
+         * signals because a value leaves the range the machine can report).
          */
         const val STRICT_VOUCH_SAMPLES = 60
 

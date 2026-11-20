@@ -142,15 +142,11 @@ class SyncState(
     /** The machine software last seen, by its full identifier. */
     val softwareSeen: String? = null,
     /**
-     * From when, by the machine's clock, sessions are taken to be [softwareSeen]'s own.
-     *
-     * On the compared version: the moment that software was first seen in place of another.
-     * Only a session that began after it can vouch. Null when no other software was ever seen,
-     * and after the user has accepted a changed clock: then any long session vouches.
-     *
-     * On any other version: the moment after the last minute that was on the machine when its
-     * per-minute log was first read to the end. Only a session that began after it is the
-     * software's own, can vouch, and is newly written. Null until that has happened.
+     * The machine's time when [softwareSeen] was first seen in place of another, for the version
+     * the per-minute log was compared on. Only a session that began after it can vouch. Null when
+     * no other software was ever seen, and after the user has accepted a changed clock: then any
+     * long session vouches. (Earlier versions of the app also kept it for other software; there
+     * it is not used.)
      */
     val softwareSinceMs: Long? = null,
     /** Whether the machine's per-minute respiratory rate is written to Health Connect. Off unless switched on. */
@@ -159,6 +155,14 @@ class SyncState(
     val healthRecords: Boolean = true,
     /** The file the user made for the table of nights, as the system names it, or null for none. */
     val exportFile: String? = null,
+    /**
+     * For software the per-minute log was not compared on: one past the last minute that was on
+     * the machine when its per-minute log was first read to the end under that software. Only a
+     * session that begins at or after it is the software's own, can vouch, and is newly written.
+     * Null until that has happened. Kept apart from [softwareSinceMs], which earlier versions of
+     * the app set to the moment the software was first seen, so that no such value is taken for it.
+     */
+    val softwareOwnFromMs: Long? = null,
 ) {
     init {
         require((exportFile?.length ?: 0) <= MAX_FILE_NAME) { "not a file" }
@@ -182,9 +186,10 @@ class SyncState(
         respiratoryRate: Boolean = this.respiratoryRate,
         healthRecords: Boolean = this.healthRecords,
         exportFile: String? = this.exportFile,
+        softwareOwnFromMs: Long? = this.softwareOwnFromMs,
     ) = SyncState(
         machineTag, ledger, resumeFromMs, lastReport, lastCompleteAtMs, leakLimitLitresPerMinute, clock, rewriteRequested, vouchedSoftware,
-        rulesVersion, softwareSeen, softwareSinceMs, respiratoryRate, healthRecords, exportFile,
+        rulesVersion, softwareSeen, softwareSinceMs, respiratoryRate, healthRecords, exportFile, softwareOwnFromMs,
     )
 
     /** Everything about a machine forgotten; what the user has chosen kept. */
@@ -212,14 +217,14 @@ class SyncState(
      * After the user has the machine's clock taken as it is now. The clock is measured afresh and
      * the sessions are read again.
      *
-     * On the compared version the moment its software was first seen is dropped: the clock may
-     * have been set back past it, and then it no longer tells its sessions from older ones. On
-     * any other version that moment is kept. It marks what was on the machine before the
-     * software's own sessions, and those sessions keep the stamps they have; if the clock was
-     * set back past it, the engine sees that and settles it again.
+     * The moment the compared version was first seen is dropped: the clock may have been set back
+     * past it, and then it no longer tells its sessions from older ones. [softwareOwnFromMs] is
+     * kept. It marks what was on the machine before the software's own sessions, and those
+     * sessions keep the stamps they have. If the clock was set back past it, the engine sees that
+     * and settles it again.
      */
     fun clockAccepted(): SyncState =
-        with(clock = null, softwareSinceMs = if (softwareCompared == false) softwareSinceMs else null).fromTheStart()
+        with(clock = null, softwareSinceMs = null).fromTheStart()
 
     /**
      * True while respiratory rate is switched on and nothing of it is written yet, because the
@@ -245,8 +250,9 @@ class SyncStateUnreadableException(cause: Throwable) : IOException("the synchron
  *
  * Losing this file is survivable: the Sharing choices go back to their defaults, and
  * record ids come from the machine's own time stamps, so once respiratory rate is
- * switched on again each session is found, cleared and written again. But a state
- * that cannot be read is reported, not replaced, so that damage is not hidden.
+ * switched on again each session is found, cleared and written again. (On machine
+ * software the per-minute log was not compared on, only sessions recorded after that.)
+ * But a state that cannot be read is reported, not replaced, so that damage is not hidden.
  */
 class SyncStore(private val file: File) {
     /** @throws SyncStateUnreadableException if the file exists and is not a state this version wrote. */
@@ -308,6 +314,7 @@ class SyncStore(private val file: File) {
             state.rulesVersion?.let { put("rulesVersion", it) }
             state.softwareSeen?.let { put("softwareSeen", it) }
             state.softwareSinceMs?.let { put("softwareSinceMs", it) }
+            state.softwareOwnFromMs?.let { put("softwareOwnFromMs", it) }
             put("respiratoryRate", state.respiratoryRate)
             if (!state.healthRecords) put("healthRecords", false)
             state.exportFile?.let { put("exportFile", it) }
@@ -393,6 +400,7 @@ class SyncStore(private val file: File) {
                 respiratoryRate = (json["respiratoryRate"] as? JsonPrimitive)?.content?.let { it == "true" } ?: ledger.isNotEmpty(),
                 healthRecords = (json["healthRecords"] as? JsonPrimitive)?.content != "false",
                 exportFile = (json["exportFile"] as? JsonPrimitive)?.content,
+                softwareOwnFromMs = (json["softwareOwnFromMs"] as? JsonPrimitive)?.long,
             )
         }
 

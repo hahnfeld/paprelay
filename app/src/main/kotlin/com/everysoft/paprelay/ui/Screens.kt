@@ -292,7 +292,9 @@ fun HomeScreen(
                 Secondary(stringResource(R.string.sync_hc_not_allowed), Modifier.padding(top = 12.dp))
             }
             // Switched on, and nothing written yet: said here, or "up to date" would say too much.
-            if (sync.rateWaiting) {
+            // Not beside a sentence that says something else stands in the way.
+            val ran = sync.lastReport?.outcome.let { it == SyncOutcome.COMPLETE || it == SyncOutcome.PARTIAL }
+            if (sync.rateWaiting && ran && !healthMissing) {
                 Secondary(stringResource(R.string.rate_waiting), Modifier.padding(top = 12.dp))
             }
             if (sync.exportFile != null && sync.exportFailed) {
@@ -468,7 +470,7 @@ fun ChoicesScreen(
         if (recordsBlocked) NotAllowed(onOpenHealthConnect)
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Choice(R.string.choice_respiratory, R.string.choice_respiratory_body, sync.respiratoryRate, enabled = !sync.running, onChange = onRespiratoryRate)
-        if (sync.rateWaiting) Secondary(stringResource(R.string.rate_waiting), Modifier.padding(bottom = 14.dp))
+        if (sync.rateWaiting && !respiratoryBlocked) Secondary(stringResource(R.string.rate_waiting), Modifier.padding(bottom = 14.dp))
         if (respiratoryBlocked) NotAllowed(onOpenHealthConnect)
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Column(Modifier.fillMaxWidth().padding(vertical = 14.dp)) {
