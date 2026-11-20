@@ -6,6 +6,9 @@ Newest first. Before 1.0, any release may change behaviour.
 
 First public release.
 
+- PAPRelay now reads every software version of the AirSense 11, not only the one that was
+  compared with an SD card. The per-minute data of a new version is written only after a
+  long session has decoded cleanly.
 - The About screen says that PAPRelay is for personal use only and is not made, endorsed
   or supported by ResMed.
 - Some sentences in the app are clearer, and two are corrected: a changed machine clock

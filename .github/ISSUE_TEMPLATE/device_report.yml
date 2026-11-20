@@ -5,9 +5,9 @@ body:
   - type: markdown
     attributes:
       value: |
-        PAPRelay trusts only machine software that has been checked. Your report helps to add more.
+        The stored data was compared with an SD card on one software version. Your report tells us how PAPRelay does on others.
 
-        **Do not attach** downloads from the machine, SD-card files or Bluetooth logs. They are your health data. Read "A new machine software version" in CONTRIBUTING.md.
+        **Do not attach** downloads from the machine, SD-card files or Bluetooth logs. They are your health data. Read "Machines and software versions" in CONTRIBUTING.md.
   - type: input
     id: machine
     attributes:
@@ -36,7 +36,7 @@ body:
       label: Result
       options:
         - Everything works
-        - Pairing works, but PAPRelay says that it cannot read this software version
+        - Pairing works, but PAPRelay says that it cannot read this machine's software
         - Pairing does not work
         - Something else
     validations:

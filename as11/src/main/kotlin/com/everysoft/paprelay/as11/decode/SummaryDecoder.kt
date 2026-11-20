@@ -34,12 +34,12 @@ public class SummarySession internal constructor(public val start: MachineTime, 
  */
 public class SummaryRecord internal constructor(
     /**
-     * Whether the machine's software is the one this record's layout was confirmed on. When
-     * false, [metrics] is empty, every metric read is in [unconfirmedMetrics], and the
+     * Whether the machine's software is one whose data is read ([Firmware.layoutsAccepted]).
+     * When false, [metrics] is empty, every metric read is in [unconfirmedMetrics], and the
      * indices, durations and sessions are likewise as the published format describes them,
      * unchecked: fit to keep and to show as such, not to write into a health record.
      */
-    public val layoutConfirmed: Boolean,
+    public val layoutAccepted: Boolean,
     /** The machine's local noon that starts the day. */
     public val periodStart: MachineTime,
     /** The following noon. */
@@ -132,12 +132,12 @@ public object SummaryDecoder {
     public fun decode(payload: ByteArray, firmware: Firmware): DecodedLog<SummaryRecord> {
         val sink = ResultSink<SummaryRecord>()
         unwrap(payload, SpoolEnvelope.SUMMARY, "Summary").forEachIndexed { index, body ->
-            sink.attempt { record(body, "Summary record $index", firmware.layoutsConfirmed) }
+            sink.attempt { record(body, "Summary record $index", firmware.layoutsAccepted) }
         }
-        return sink.finish(firmware.layoutsConfirmed)
+        return sink.finish(firmware.layoutsAccepted)
     }
 
-    private fun record(body: ByteArray, what: String, layoutConfirmed: Boolean): SummaryRecord {
+    private fun record(body: ByteArray, what: String, layoutAccepted: Boolean): SummaryRecord {
         val integers = LinkedHashMap<Int, Long>()
         val metrics = LinkedHashMap<SummaryMetric, Map<Percentile, Quantity>>()
         val misread = LinkedHashSet<SummaryMetric>()
@@ -194,7 +194,7 @@ public object SummaryDecoder {
         }
 
         return SummaryRecord(
-            layoutConfirmed = layoutConfirmed,
+            layoutAccepted = layoutAccepted,
             periodStart = start,
             periodEnd = end,
             zoneOffsetMinutesWhenSent = integers[ZONE_OFFSET]?.let { stored ->
@@ -208,8 +208,8 @@ public object SummaryDecoder {
             recordTimestamp = integers[RECORD_TIMESTAMP]?.let { timestamp(it, what) },
             indices = Collections.unmodifiableMap(indices),
             misreadIndices = Collections.unmodifiableSet(misreadIndices),
-            metrics = Collections.unmodifiableMap(metrics.filterKeys { layoutConfirmed && it.confirmed }),
-            unconfirmedMetrics = Collections.unmodifiableMap(metrics.filterKeys { !(layoutConfirmed && it.confirmed) }),
+            metrics = Collections.unmodifiableMap(metrics.filterKeys { layoutAccepted && it.confirmed }),
+            unconfirmedMetrics = Collections.unmodifiableMap(metrics.filterKeys { !(layoutAccepted && it.confirmed) }),
             misreadMetrics = Collections.unmodifiableSet(misread),
             storedIntegers = Collections.unmodifiableMap(integers),
             unknownFields = unknown,

@@ -79,19 +79,24 @@ Three things are derived from the stored integers:
 - Health Connect takes respiratory rate as a floating-point number, so the stored
   hundredths are divided by 100 at the last step (`RateReading.breathsPerMinute`).
 
-### Only checked machine software
+### Machine software versions
 
 The manufacturer does not publish the layouts of the stored logs. They were confirmed
-against the files on the machine's SD card. Another software version could use another
-layout, and the per-minute log can then decode to values that are wrong but plausible.
+against the files on the machine's SD card, on software 19.8.8.0. PAPRelay reads every
+version of that software line (identifiers that begin `SW04600`) with the same layouts.
+That other versions share them is an assumption, so two checks stand behind it:
 
-`Firmware` therefore accepts only software 19.8.8.0 of the AirSense 11 (any build of it).
-With any other version the engine stops with `SOFTWARE_NOT_CONFIRMED` and writes nothing.
+- The daily summary is made of tagged fields. Each value is checked for sense before it
+  is passed on (the length of the day, the session count, a plausible range for each
+  figure), and a value that fails is left out.
+- The per-minute log is compressed, and with a wrong constant it can decode to values
+  that are wrong but plausible. On the first run, and after every software change, a
+  session of at least 30 minutes must decode with all its signals in agreement before
+  any session is written. After a software change it must be a session that began after
+  the change was seen. The code calls this "vouching".
 
-For the per-minute log there is a second check. On the first run, and after a software
-change, a session of at least 30 minutes must decode cleanly before any other session is
-written. After a software change it must be a session that began after the change was
-seen. The code calls this "vouching".
+Software of another line is not read: the engine stops with `SOFTWARE_NOT_CONFIRMED` and
+writes nothing.
 
 ### Clocks
 

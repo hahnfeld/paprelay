@@ -94,22 +94,30 @@ public enum class SummaryMetric(
 
 /**
  * The software a machine reports itself to be running, as the thing that
- * decides whether its data can be decoded with confidence.
+ * decides whether its data is read.
  *
  * The layouts, moduli and factors in this file were checked against one real
- * machine and its SD card: an AirSense 11 AutoSet on software 19.8.8.0. Data
- * from other software may be laid out differently, and the per-minute log in
- * particular can decode to wrong but plausible values when a modulus differs.
- * That another build of 19.8.8.0, or another model running it, shares these
- * layouts is an assumption, not something that has been seen.
+ * machine and its SD card: an AirSense 11 AutoSet on software 19.8.8.0. Other
+ * versions of the same software line (identifiers that begin `SW04600`) are
+ * read with the same layouts. That they share them is an assumption, not
+ * something that has been seen, so it is not relied on alone:
+ *
+ *  - the daily summaries are tagged fields, and each value is checked for sense
+ *    before it is passed on;
+ *  - the per-minute log can decode to wrong but plausible values when a modulus
+ *    differs, so whoever uses it must first see a long record decode with all
+ *    its signals in agreement (the synchronising engine does: it calls this
+ *    vouching, and asks for it again whenever the software changes).
+ *
+ * Software of any other line is not read.
  */
 public class Firmware private constructor(public val applicationIdentifier: String) {
-    /** Whether this software is the one the layouts were confirmed on. */
-    public val layoutsConfirmed: Boolean get() = CONFIRMED.any { it.matches(applicationIdentifier) }
+    /** Whether data from this software is read: any version of the software line the layouts were checked on. */
+    public val layoutsAccepted: Boolean get() = ACCEPTED.matches(applicationIdentifier)
 
     public companion object {
-        /** `ApplicationIdentifier` forms: AirSense 11, software 19.8.8.0, any build. Nothing looser. */
-        private val CONFIRMED = listOf(Regex("SW04600\\.19\\.8\\.8\\.0\\.[0-9a-f]{1,40}"))
+        /** `ApplicationIdentifier` forms of that software line: `SW04600`, then the parts of a version and a build. */
+        private val ACCEPTED = Regex("SW04600(\\.[0-9A-Za-z]{1,40}){2,8}")
 
         /**
          * @param applicationIdentifier the `ApplicationIdentifier` the machine gave **in the

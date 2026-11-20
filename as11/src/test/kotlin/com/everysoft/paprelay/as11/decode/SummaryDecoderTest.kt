@@ -208,17 +208,34 @@ class SummaryDecoderTest {
     }
 
     @Test
-    fun `on software the layout was not confirmed on, nothing is served as confirmed`() {
-        val log = SummaryDecoder.decode(proto { night() }, Firmware.reportedByMachine("SW04600.20.1.0.0.abc"))
-        assertTrue(!log.layoutConfirmed)
+    fun `on software of another line, nothing is served as confirmed`() {
+        val log = SummaryDecoder.decode(proto { night() }, Firmware.reportedByMachine("SW04700.20.1.0.0.abc"))
+        assertTrue(!log.layoutAccepted)
         val record = log.decoded.single()
-        assertTrue(!record.layoutConfirmed)
+        assertTrue(!record.layoutAccepted)
         assertTrue(record.metrics.isEmpty())
         // Everything read is still there, marked for what it is.
         assertEquals(BigDecimal("8"), record.unconfirmedMetrics.getValue(SummaryMetric.INSPIRATORY_PRESSURE).getValue(Percentile.P50).exact())
         assertEquals(305, record.durationMinutes)
-        assertTrue(night().layoutConfirmed)
-        assertTrue(summaries(proto { night() }).layoutConfirmed)
+        assertTrue(night().layoutAccepted)
+        assertTrue(summaries(proto { night() }).layoutAccepted)
+    }
+
+    @Test
+    fun `another version of the same software line is read like the one the layouts were checked on`() {
+        val log = SummaryDecoder.decode(proto { night() }, Firmware.reportedByMachine("SW04600.20.1.0.0.abc"))
+        assertTrue(log.layoutAccepted)
+        val record = log.decoded.single()
+        assertTrue(record.layoutAccepted)
+        val checked = night()
+        assertEquals(checked.metrics.keys, record.metrics.keys)
+        assertEquals(
+            checked.metrics.getValue(SummaryMetric.INSPIRATORY_PRESSURE).getValue(Percentile.P50).exact(),
+            record.metrics.getValue(SummaryMetric.INSPIRATORY_PRESSURE).getValue(Percentile.P50).exact(),
+        )
+        assertEquals(checked.indices, record.indices)
+        assertEquals(checked.unconfirmedMetrics.keys, record.unconfirmedMetrics.keys)
+        assertEquals(checked.durationMinutes, record.durationMinutes)
     }
 
     @Test

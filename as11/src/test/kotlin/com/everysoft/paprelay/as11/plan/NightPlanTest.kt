@@ -186,8 +186,18 @@ class NightPlanTest {
         assertNull(plan { night(listed = 3) }.single())
         // A day that does not begin at anyone's noon.
         assertNull(plan { night(start = noon + 7 * 60_000) }.single())
-        // Software the layout was not confirmed on.
-        val other = SummaryDecoder.decode(proto { night() }, Firmware.reportedByMachine("SW04600.20.0.0.0.abc"))
+        // Software of another line.
+        val other = SummaryDecoder.decode(proto { night() }, Firmware.reportedByMachine("SW04700.20.0.0.0.abc"))
         assertTrue(other.decoded.all { NightPlan.night(it, MachineTime(noon + 2 * day)) == null })
+    }
+
+    @Test
+    fun `another version of the same software line gives the same night`() {
+        val newer = SummaryDecoder.decode(proto { night() }, Firmware.reportedByMachine("SW04600.20.0.0.0.abc"))
+        val checked = SummaryDecoder.decode(proto { night() }, confirmed)
+        val now = MachineTime(noon + 2 * day)
+        val nights = newer.decoded.map { NightPlan.night(it, now) }
+        assertTrue(nights.isNotEmpty() && nights.all { it != null })
+        assertEquals(checked.decoded.map { NightPlan.night(it, now)?.fingerprint() }, nights.map { it?.fingerprint() })
     }
 }

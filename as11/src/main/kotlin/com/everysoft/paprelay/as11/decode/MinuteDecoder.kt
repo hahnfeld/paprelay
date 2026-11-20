@@ -171,11 +171,11 @@ public object MinuteDecoder {
      * @param payload one verified download of the per-minute log.
      * @param firmware the software of the machine the download came from.
      * @throws SpoolDecodeException if the download as a whole is not this log, or comes from
-     *   software on which this log's layout has not been confirmed ([Firmware.layoutsConfirmed]).
+     *   software whose data is not read ([Firmware.layoutsAccepted]).
      */
     public fun decode(payload: ByteArray, firmware: Firmware): DecodedLog<MinuteRecord> {
-        if (!firmware.layoutsConfirmed) {
-            throw SpoolDecodeException("per-minute log: this machine's software has not been confirmed, so its data is not decoded")
+        if (!firmware.layoutsAccepted) {
+            throw SpoolDecodeException("per-minute log: this machine's software is not one whose data is read")
         }
         val sink = ResultSink<MinuteRecord>()
         var doubted = false
@@ -206,7 +206,7 @@ public object MinuteDecoder {
         // its own evidence, and what to make of the short ones is for the caller. (A signal that
         // decodes but holds an impossible value is different again: on confirmed software that
         // is a marker this version does not know, and it costs only that signal.)
-        return sink.finish(layoutConfirmed = true, doubted = doubted)
+        return sink.finish(layoutAccepted = true, doubted = doubted)
     }
 
     private class Series(val start: MachineTime, val block: SampleBlock)

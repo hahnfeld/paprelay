@@ -1,8 +1,8 @@
 # First device run and SD-card comparison
 
 This is the record of the first run against a real machine, and of the comparison that
-confirmed the decoders. It also serves as the example of how a machine software version is
-confirmed (see [CONTRIBUTING.md](../CONTRIBUTING.md#a-new-machine-software-version)).
+confirmed the decoders. It also serves as the example of a comparison on one software
+version (see [CONTRIBUTING.md](../CONTRIBUTING.md#machines-and-software-versions)).
 
 Run on 2026-11-16 with a debug build, a Google Pixel 10 Pro on Android 17, and
 an AirSense 11 AutoSet (software `SW04600.19.8.8.0`, data model `v2.19.0`). Every step of

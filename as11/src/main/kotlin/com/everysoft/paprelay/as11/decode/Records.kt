@@ -63,12 +63,12 @@ public sealed interface RecordResult<out T> {
 public class DecodedLog<T> internal constructor(
     entries: List<RecordResult<T>>,
     /**
-     * Whether the machine's software is the one this log's layout was confirmed on
-     * ([Firmware.layoutsConfirmed]). When false, what was decoded follows the published
-     * description of the format and has not been checked against a real machine; it is
-     * fit to be kept and shown as such, not to be written into someone's health record.
+     * Whether the machine's software is one whose data is read ([Firmware.layoutsAccepted]).
+     * When false, what was decoded follows the published description of the format for
+     * software of another line; it is fit to be kept and shown as such, not to be written
+     * into someone's health record.
      */
-    public val layoutConfirmed: Boolean,
+    public val layoutAccepted: Boolean,
     /**
      * True when an entry failed in the way a misread layout would make it fail (a series that
      * will not decode, signals that disagree about a record's length). The same misreading
@@ -119,7 +119,7 @@ internal class ResultSink<T> {
         }
     }
 
-    fun finish(layoutConfirmed: Boolean, doubted: Boolean = false): DecodedLog<T> = DecodedLog(entries, layoutConfirmed, doubted)
+    fun finish(layoutAccepted: Boolean, doubted: Boolean = false): DecodedLog<T> = DecodedLog(entries, layoutAccepted, doubted)
 }
 
 /**

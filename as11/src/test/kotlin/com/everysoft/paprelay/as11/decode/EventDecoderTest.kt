@@ -221,11 +221,13 @@ class EventDecoderTest {
     }
 
     @Test
-    fun `a log says whether its layout was confirmed for the machine's software, and what can be acted on`() {
+    fun `a log says whether the machine's software is one whose data is read, and what can be acted on`() {
         val payload = asCaptured(6) { message(1) { event(3, t) }; message(1) { event(2, t + 1) }; message(1) { varint(1, 3) }; message(1) { event(7, t + 2) } }
-        assertTrue(usage(payload).layoutConfirmed)
-        val other = EventDecoder.usage(payload, Firmware.reportedByMachine("SW04600.20.0.0.0.abc"))
-        assertTrue(!other.layoutConfirmed)
+        assertTrue(usage(payload).layoutAccepted)
+        // Another version of the same software line is read like the first.
+        assertTrue(EventDecoder.usage(payload, Firmware.reportedByMachine("SW04600.20.0.0.0.abc")).layoutAccepted)
+        val other = EventDecoder.usage(payload, Firmware.reportedByMachine("SW04700.20.0.0.0.abc"))
+        assertTrue(!other.layoutAccepted)
         // Decoded all the same, for keeping and showing as unconfirmed.
         assertEquals(listOf(3, 2, 7), other.decoded.map { it.code })
         // Only what comes before the first failure can be acted on with nothing earlier missing.

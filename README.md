@@ -27,9 +27,7 @@ It uses Bluetooth. It does not use the internet.
 
 ## What you need
 
-- A ResMed AirSense 11 with machine software `SW04600.19.8.8.0`. This is the only version
-  that has been checked. With another version, PAPRelay tells you and writes nothing.
-  PAPRelay can read the version only after pairing.
+- A ResMed AirSense 11.
 - A phone with Android 14 or later. Health records need Android 16 or later.
 
 The machine seems to keep one pairing only. **When you pair PAPRelay, expect the myAir app
@@ -123,7 +121,7 @@ night's figures arrive **in the afternoon**, not in the morning.
 | "The machine did not answer." | Move the phone near the machine. Check that Bluetooth is on. PAPRelay tries again by itself. |
 | No machine is found during pairing. | Check that the machine is removed from myAir. Start again at step 2 of the setup. |
 | "The machine no longer accepts this phone." | Open **Device check**, choose **Forget machine**, and pair again. |
-| "PAPRelay cannot yet read this machine's software version." | Your machine has a software version that has not been checked. See [CONTRIBUTING.md](CONTRIBUTING.md#a-new-machine-software-version). |
+| "PAPRelay cannot yet read this machine's software." | PAPRelay reads the AirSense 11 only. If your machine is an AirSense 11, please [report it](CONTRIBUTING.md#machines-and-software-versions). |
 | Last night is missing in the morning. | This is normal. The figures arrive after midday. |
 | Health Connect shows nothing. | Open **Sharing** and check the switches. In Health Connect, allow PAPRelay to write. Phones with Android 14 or 15 have no health records. |
 | PAPRelay stops after some months. | Android pauses apps that you do not open. In the app settings, turn off the switch for unused apps. |

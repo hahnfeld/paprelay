@@ -37,7 +37,7 @@
     <string name="sync_hc_not_allowed">Health Connect does not allow PAPRelay to write what is switched on in Sharing. Allow PAPRelay in Health Connect, or switch the item off in Sharing.</string>
     <string name="sync_pairing_rejected">The machine no longer accepts this phone. Open Device check, choose Forget machine, and pair again.</string>
     <string name="sync_wrong_machine">The machine that answered is not the paired machine. Nothing was written.</string>
-    <string name="sync_software_not_confirmed">PAPRelay cannot yet read this machine\'s software version. Nothing was written.</string>
+    <string name="sync_software_not_confirmed">PAPRelay cannot yet read this machine\'s software. Nothing was written.</string>
     <string name="sync_clock_unreliable">The machine\'s clock cannot be trusted at the moment. PAPRelay will try again.</string>
     <string name="sync_clock_changed">The machine\'s clock was changed. The times of the nights since the last synchronisation may be wrong. PAPRelay stops writing respiratory rate until you choose to use the machine\'s clock as it is now.</string>
     <string name="sync_connection_lost">The connection to the machine was lost. PAPRelay will try again.</string>

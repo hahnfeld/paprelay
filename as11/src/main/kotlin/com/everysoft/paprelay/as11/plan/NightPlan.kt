@@ -61,11 +61,11 @@ public object NightPlan {
     /**
      * @param machineNow the machine's clock when the record was downloaded; a day that has not
      *   ended by it is marked as still running.
-     * @return the night, or null if the record cannot stand as one: its layout is not confirmed,
+     * @return the night, or null if the record cannot stand as one: its software is not one whose data is read,
      *   it has no duration, its session list is not whole, or its day does not begin at a local noon.
      */
     public fun night(record: SummaryRecord, machineNow: MachineTime): Night? {
-        if (!record.layoutConfirmed || !record.sessionCountMatches) return null
+        if (!record.layoutAccepted || !record.sessionCountMatches) return null
         val usage = record.durationMinutes ?: return null
         // The decoder has already held the day to 23, 24 or 25 hours.
         val hours = (record.periodEnd.since(record.periodStart) / HOUR_MS).toInt()

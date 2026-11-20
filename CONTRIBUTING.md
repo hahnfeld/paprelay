@@ -10,8 +10,8 @@ You do not need perfect English. Be kind and patient with each other; see the
 
 - Report a problem with the [issue form](https://github.com/hahnfeld/paprelay/issues).
   Attach the report from **Device check › Save report**.
-- Tell us if PAPRelay works with your machine software and your phone. See
-  [A new machine software version](#a-new-machine-software-version).
+- Tell us if PAPRelay works with your machine and your phone. See
+  [Machines and software versions](#machines-and-software-versions).
 - Improve the documentation.
 - Change the code. Read the rest of this page first.
 
@@ -55,8 +55,8 @@ reasons for the rules below.
    See [docs/INTENDED-USE.md](docs/INTENDED-USE.md).
 3. A value is exact or absent. No guessed zero. The few derived values are listed in the
    architecture page; do not add to them without a reason.
-4. A layout, a scale factor or a software version counts as confirmed only after it was
-   compared with a second source. Say in the pull request which one.
+4. A layout or a scale factor counts as confirmed only after it was compared with a second
+   source. Say in the pull request which one.
 5. Every write can be repeated. Records have fixed names. State is stored before Health
    Connect is touched.
 6. No network permission, no analytics, no crash reporting service.
@@ -104,19 +104,25 @@ and anything that could reach the machine. This can take a while.
 Your contribution is licensed under the GNU General Public License, version 3 or later,
 like the rest of PAPRelay.
 
-## A new machine software version
+## Machines and software versions
 
-PAPRelay refuses machine software that has not been checked. If you see "PAPRelay cannot
-yet read this machine's software version", you can help to add it.
+PAPRelay reads every software version of the AirSense 11. The layouts of the stored data
+were compared with an SD card on one version (19.8.8.0). For other versions PAPRelay
+relies on its own checks, described in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#machine-software-versions).
 
-1. Open an issue with the form "Report a machine or a phone". Attach the saved report from
-   **Device check**. The report names the software version.
-2. Do not attach downloads from the machine or SD-card files. They are your health data.
-3. To confirm a version, someone must compare what PAPRelay decodes with a second source
-   for the same nights. The usual second source is the machine's SD card, read with
-   [OSCAR](https://www.sleepfiles.com/OSCAR/). You do this on your own computer. You share
-   only the result: which kinds of figures you compared, and whether they were equal.
-4. The version is then added to `CONFIRMED` in
-   `as11/src/main/kotlin/com/everysoft/paprelay/as11/decode/As11Scales.kt`, with a test.
+You can help with a comparison on your version:
+
+1. Compare what PAPRelay shows for some nights with a second source for the same nights.
+   The usual second source is the machine's SD card, read with
+   [OSCAR](https://www.sleepfiles.com/OSCAR/). You do this on your own computer.
+2. Open an issue with the form "Report a machine or a phone". Attach the saved report from
+   **Device check**; it names the software version. Say which kinds of figures you
+   compared and whether they were equal.
+3. Do not attach downloads from the machine or SD-card files. They are your health data.
+
+If PAPRelay says "PAPRelay cannot yet read this machine's software", the machine reports
+software of another kind (its identifier does not begin `SW04600`). Open an issue with the
+saved report.
 
 [docs/FIRST-DEVICE-RUN.md](docs/FIRST-DEVICE-RUN.md) shows such a comparison.

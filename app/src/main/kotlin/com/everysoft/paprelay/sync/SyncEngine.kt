@@ -241,7 +241,7 @@ class SyncEngine(
         val expected = connector.pairedSerial()
         if (expected != null && expected != identity.serialNumber) throw Stop(SyncOutcome.WRONG_MACHINE)
         val firmware = Firmware.reportedByMachine(identity.applicationIdentifier)
-        if (!firmware.layoutsConfirmed) throw Stop(SyncOutcome.SOFTWARE_NOT_CONFIRMED)
+        if (!firmware.layoutsAccepted) throw Stop(SyncOutcome.SOFTWARE_NOT_CONFIRMED)
 
         val tag = knownTag?.takeIf { it.first == identity.serialNumber }?.second
             ?: machineTag(identity.serialNumber).also { knownTag = identity.serialNumber to it }

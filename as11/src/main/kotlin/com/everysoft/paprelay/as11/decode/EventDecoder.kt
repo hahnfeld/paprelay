@@ -107,7 +107,7 @@ public object EventDecoder {
                 }
             }
         }
-        return sink.finish(firmware.layoutsConfirmed)
+        return sink.finish(firmware.layoutsAccepted)
     }
 
     /** The nested messages of a container. Anything in it that is not one is recorded as a failure. */

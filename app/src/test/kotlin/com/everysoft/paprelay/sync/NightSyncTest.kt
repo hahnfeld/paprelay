@@ -236,6 +236,22 @@ class NightSyncTest {
     }
 
     @Test
+    fun `the nights of another version of the same software are passed on, and those of another line are not`() = runTest {
+        machine.days = week()
+        machine.applicationIdentifier = "SW04700.20.1.0.0.abcdef"
+        assertEquals(SyncOutcome.SOFTWARE_NOT_CONFIRMED, engine.sync()!!.outcome)
+        assertEquals(0, nightStore.read().byDate.size)
+        assertEquals(0, records.writes)
+
+        phoneNow += hour
+        machine.applicationIdentifier = "SW04600.20.1.0.0.abcdef"
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertEquals(6, nightStore.read().byDate.size)
+        assertEquals(weekRecords, records.held.size)
+        assertEquals("1.2", nightStore.read().byDate.getValue(first.plusDays(2)).night.value(NightFigure.AHI)!!.toPlainString())
+    }
+
+    @Test
     fun `with health records switched off or not there, the nights are kept and nothing is passed on`() = runTest {
         machine.days = week()
         store.write(SyncState.EMPTY.with(healthRecords = false))

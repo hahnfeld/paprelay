@@ -496,13 +496,13 @@ class SyncEngineTest {
     }
 
     @Test
-    fun `nothing is written for another machine, unconfirmed software, or a clock that cannot be read`() = runTest {
+    fun `nothing is written for another machine, software of another line, or a clock that cannot be read`() = runTest {
         machine.nights = listOf(first)
         machine.serialNumber = "23219999999"
         assertEquals(SyncOutcome.WRONG_MACHINE, engine.sync()!!.outcome)
         machine.serialNumber = serial
 
-        machine.applicationIdentifier = "SW04600.20.1.0.0.abcdef"
+        machine.applicationIdentifier = "SW04700.20.1.0.0.abcdef"
         assertEquals(SyncOutcome.SOFTWARE_NOT_CONFIRMED, engine.sync()!!.outcome)
         machine.applicationIdentifier = software
 
@@ -624,6 +624,25 @@ class SyncEngineTest {
         machine.nights = listOf(nap, later, long, brief)
         assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
         assertHolds(listOf(nap, later, long, brief))
+    }
+
+    @Test
+    fun `another version of the same software is read, once a long session has vouched for it`() = runTest {
+        machine.applicationIdentifier = "SW04600.20.1.0.0.abcdef"
+        // A short session alone does not show how this version lays out its data.
+        val short = Night(machineNow - 3 * hour, rates(10, base = 60))
+        machine.nights = listOf(short)
+        assertEquals(SyncOutcome.PARTIAL, engine.sync()!!.outcome)
+        assertHolds(emptyList())
+        assertNull(store.read().vouchedSoftware)
+
+        // A long one does, and the short one is written with it.
+        phoneNow += 12 * hour
+        val night = Night(machineNow - 6 * hour, rates(300, base = 50))
+        machine.nights = listOf(short, night)
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertHolds(listOf(short, night))
+        assertEquals("SW04600.20.1.0.0.abcdef", store.read().vouchedSoftware)
     }
 
     @Test

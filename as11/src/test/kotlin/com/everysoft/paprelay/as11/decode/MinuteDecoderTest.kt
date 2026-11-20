@@ -374,20 +374,29 @@ class MinuteDecoderTest {
     }
 
     @Test
-    fun `data from firmware that has not been confirmed is not decoded`() {
+    fun `any version of the machine's software line is decoded, and software of another line is not`() {
         val payload = proto { record(mapOf(MinuteSignal.LEAK to leak)) }
-        assertEquals(1, MinuteDecoder.decode(payload, Firmware.reportedByMachine("SW04600.19.8.8.0.0123456789")).decoded.size)
+        val same = listOf(
+            "SW04600.19.8.8.0.0123456789", "SW04600.19.8.9.0.dced143ae", "SW04600.20.0.0.0.abc", "SW04600.21.1.abc",
+            "SW04600.19.8.8.01.x", "SW04600.19.8.8.0.1.abc", "SW04600.19.8.8.0.ABCDEF",
+        )
+        for (version in same) {
+            val firmware = Firmware.reportedByMachine(version)
+            assertTrue(firmware.layoutsAccepted, version)
+            assertEquals(1, MinuteDecoder.decode(payload, firmware).decoded.size, version)
+        }
         val others = listOf(
-            "SW04600.19.8.9.0.dced143ae", "SW04600.19.8.8.01.x", "SW04601.19.8.8.0.x", "", "19.8.8.0",
+            "SW04601.19.8.8.0.x", "SW04700.19.8.8.0.abc", "", "19.8.8.0", "SW04600", "SW04600.19",
             // The right prefix is not enough, nor the right text somewhere inside, nor another case.
-            "SW04600.19.8.8.0.", "SW04600.19.8.8.0.1.abc", "SW04600.19.8.8.0.abc\nSW04600.20.0.0.0.abc", "xSW04600.19.8.8.0.abc", "sw04600.19.8.8.0.abc",
+            "SW04600.19.8.8.0.", "SW04600..19.8", "SW04600.19.8.8.0.abc\nSW04600.20.0.0.0.abc", "xSW04600.19.8.8.0.abc", "sw04600.19.8.8.0.abc",
+            "SW04600.19.8.8.0.abc def", "SW04600.1.2.3.4.5.6.7.8.9",
         )
         for (other in others) {
             val firmware = Firmware.reportedByMachine(other)
-            assertTrue(!firmware.layoutsConfirmed, other)
+            assertTrue(!firmware.layoutsAccepted, other)
             assertFailsWith<SpoolDecodeException>(other) { MinuteDecoder.decode(payload, firmware) }
         }
-        assertTrue(FIRMWARE.layoutsConfirmed)
+        assertTrue(FIRMWARE.layoutsAccepted)
     }
 
     @Test
