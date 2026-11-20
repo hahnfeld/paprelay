@@ -22,7 +22,7 @@ body:
     attributes:
       label: PAPRelay version
       description: Open About in the app.
-      placeholder: "0.2.0"
+      placeholder: "0.2.1"
     validations:
       required: true
   - type: input
@@ -42,7 +42,7 @@ body:
     id: report
     attributes:
       label: Report from the device check
-      description: In PAPRelay, open Device check, run it, choose Save report, and attach or paste the file here. The report holds no pairing key, no full serial number and no Bluetooth address.
+      description: In PAPRelay, open Device check, run it, choose Save report, and attach or paste the file here. The report is safe to share.
   - type: checkboxes
     id: private
     attributes:

@@ -1,0 +1,2 @@
+# The generated diagrams keep Unix line ends on every system.
+docs/images/*.svg text eol=lf

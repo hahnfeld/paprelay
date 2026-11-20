@@ -487,7 +487,7 @@ public class As11Client(
         MachineClockReading(machine, sentWall, (answer.arrivedElapsedMs - sentElapsed).coerceAtLeast(0))
     }
 
-    /** Asks the machine to forget this client. Only for the explicit "Forget machine" action. */
+    /** Asks the machine to forget this client. The app does not call it at present. */
     public suspend fun discardPairKey() {
         call(As11Request.DiscardPairKey, timeouts.rpcMs)
     }

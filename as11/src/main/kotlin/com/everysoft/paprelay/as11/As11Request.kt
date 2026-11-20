@@ -194,7 +194,7 @@ public sealed class As11Request(public val method: String, private val jsonRpcVe
 
     /**
      * Asks the machine to forget this client's pairing. Affects only PAPRelay's
-     * own pairing record; used solely by the explicit "Forget machine" action.
+     * own pairing record. The app does not send it at present.
      */
     public object DiscardPairKey : Encrypted("DiscardPairKey") {
         override fun params(): JsonElement? = null

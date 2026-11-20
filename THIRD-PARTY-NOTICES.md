@@ -42,10 +42,11 @@ OTHER DEALINGS IN THE SOFTWARE.
 
 ## Libraries
 
-PAPRelay links the following libraries, all under the Apache License 2.0:
+PAPRelay uses the following libraries directly, all under the Apache License 2.0:
 Kotlin standard library and kotlinx.coroutines, kotlinx.serialization (JetBrains);
 AndroidX Core, Activity, Lifecycle, Compose, WorkManager and Health Connect client
-(The Android Open Source Project).
+(The Android Open Source Project). They bring further AndroidX libraries with them, among
+them Room and SQLite inside WorkManager.
 
 The Apache License 2.0 is compatible with the GNU GPL version 3.
 

@@ -1,8 +1,8 @@
 # Building, testing and installing
 
-This page shows every step from an empty computer to PAPRelay on your phone. It works on
-Linux, macOS and Windows. On Windows, write `gradlew.bat` where this page says `./gradlew`.
+This page goes from an empty computer to PAPRelay on your phone.
 
+The commands are written for a Unix shell: Linux, macOS, or Git Bash or WSL on Windows.
 The tests need no phone and no machine. They use a simulated machine.
 
 ## 1. What you need
@@ -11,34 +11,35 @@ The tests need no phone and no machine. They use a simulated machine.
 |---|---|---|
 | Git | any | getting the source |
 | JDK | 17 or later (the automatic checks use 21) | everything |
-| Android SDK | platform `android-37.0`, build tools `36.0.0` | the app (not needed for the protocol tests) |
-| `adb` (Android platform tools) | any | installing on a phone by USB |
-| Python 3 | any | only for drawing the documentation diagrams again |
+| Android SDK | platform `android-37.0`, build tools `36.0.0` | the app (not for the protocol tests) |
+| Python 3 | any | only to draw the documentation diagrams again |
 
-You do not need to install Gradle. The project downloads the right version by itself the
-first time. The first build needs an internet connection and takes some minutes.
+You do not need to install Gradle. The project downloads the right version the first
+time. The first build needs an internet connection and takes some minutes.
 
 ### The Android SDK
 
-**The easy way:** install [Android Studio](https://developer.android.com/studio) and open
-the `paprelay` folder with it. Android Studio installs the missing parts of the SDK and
-writes the file `local.properties`, which says where the SDK is.
+The easy way: install [Android Studio](https://developer.android.com/studio) and open the
+`paprelay` folder with it. Android Studio installs the missing parts of the SDK and writes
+the file `local.properties`, which says where the SDK is.
 
-**With the command line only:** install the
-[command-line tools](https://developer.android.com/studio#command-line-tools-only), then:
-
-```bash
-sdkmanager "platforms;android-37.0" "build-tools;36.0.0" "platform-tools"
-```
-
-```bash
-sdkmanager --licenses
-```
-
-Then tell the build where the SDK is. Use the folder of your own SDK:
+With the command line only: download the
+[command-line tools](https://developer.android.com/studio#command-line-tools-only) and
+unpack them so that `sdkmanager` is at `$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager`.
+First say where the SDK is. Use the folder of your own SDK:
 
 ```bash
 export ANDROID_HOME="$HOME/Android/Sdk"
+```
+
+`export` lasts for one terminal window. Then install the parts and accept the licences:
+
+```bash
+"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" "platform-tools"
+```
+
+```bash
+"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses
 ```
 
 ## 2. Get the source
@@ -59,14 +60,13 @@ All tests:
 ./gradlew :core:test :as11:test :app:testDebugUnitTest
 ```
 
-Only the protocol and model tests. These need **no Android SDK**, only a JDK:
+Only the protocol and model tests. These need no Android SDK, only a JDK:
 
 ```bash
 ./gradlew :core:test :as11:test -Ppaprelay.skipAndroid=true
 ```
 
-Everything that the automatic checks on GitHub run (tests, lint for both versions, and the
-release build):
+Everything that the automatic checks on GitHub run (tests, lint, and the release build):
 
 ```bash
 ./gradlew :core:test :as11:test :app:testDebugUnitTest :app:lintDebug :app:lintRelease :app:assembleRelease
@@ -77,16 +77,17 @@ the name of the test and the path of a report that you can open in a browser.
 
 ## 4. Make your own signing key
 
-Android installs only signed apps. Make a key once, and keep it. You need the **same key**
-for every later update.
+Android installs only signed apps. Make a key once and keep it. You need the same key for
+every later update.
 
 ```bash
 keytool -genkeypair -v -storetype PKCS12 -keystore "$HOME/paprelay-key.p12" -alias paprelay -keyalg RSA -keysize 4096 -validity 10000
 ```
 
-`keytool` is part of the JDK. It asks for a password and for a name. Remember the password.
+`keytool` is part of the JDK. It asks for a password twice (six characters or more), then
+some questions about your name. You can press Enter for those. At the end, type `yes`.
 
-Never put the key file into the repository. Never send it to anyone.
+Do not put the key file into the repository, and do not send it to anyone.
 
 ## 5. Build the app
 
@@ -94,13 +95,7 @@ Never put the key file into the repository. Never send it to anyone.
 PAPRELAY_KEYSTORE="$HOME/paprelay-key.p12" PAPRELAY_KEYSTORE_PASSWORD="your password" ./gradlew :app:assembleRelease
 ```
 
-The app is now here:
-
-```
-app/build/outputs/apk/release/app-release.apk
-```
-
-The build reads three environment variables:
+The app is now at `app/build/outputs/apk/release/app-release.apk`.
 
 | Variable | Meaning |
 |---|---|
@@ -108,8 +103,11 @@ The build reads three environment variables:
 | `PAPRELAY_KEYSTORE_PASSWORD` | The password of the key file. |
 | `PAPRELAY_KEY_ALIAS` | The name of the key in the file. Only needed if it is not `paprelay`. |
 
-Without `PAPRELAY_KEYSTORE`, the build makes `app-release-unsigned.apk`. That file can be
-checked, but it cannot be installed.
+A password typed on the command line stays in the shell's history. To avoid that, set the
+variables with `export` first, in a terminal that you then close.
+
+Without `PAPRELAY_KEYSTORE` the build makes `app-release-unsigned.apk`. That file cannot
+be installed.
 
 ## 6. Install it on the phone
 
@@ -118,7 +116,7 @@ checked, but it cannot be installed.
 3. Install:
 
 ```bash
-adb install app/build/outputs/apk/release/app-release.apk
+"$ANDROID_HOME/platform-tools/adb" install app/build/outputs/apk/release/app-release.apk
 ```
 
 Without `adb`: copy the file `app-release.apk` to the phone and open it there.
@@ -131,11 +129,10 @@ Then follow [First-time setup](../README.md#first-time-setup).
 ./gradlew :app:assembleDebug
 ```
 
-The debug build is a **test version**. It has the name `com.everysoft.paprelay.debug` and
-can be installed next to the real app. It runs the device check, but it **never
-synchronises**. The reason: Health Connect files every record under the app that wrote it.
-To Health Connect, the debug build is a different app, and every night would be stored
-twice.
+The debug build is a test version. Its name is `com.everysoft.paprelay.debug`, and it can
+be installed next to the real app. It runs the device check, but it does not synchronise.
+Health Connect files every record under the app that wrote it. To Health Connect the debug
+build is a different app, so every night would be stored twice.
 
 To use PAPRelay, build the release version (steps 4 and 5).
 
@@ -144,25 +141,30 @@ To use PAPRelay, build the release version (steps 4 and 5).
 The official releases are signed with a certificate with this SHA-256 fingerprint:
 
 ```
-8E:1A:FB:37:FF:59:27:4A:5C:8D:C5:21:B8:0D:37:83:3C:0C:1F:0A:51:98:A7:D9:DF:5E:8D:AE:EC:F8:98:06
+8e1afb37ff59274a5c8dc521b80d37833c0c1f0a5198a7d9df5e8daeecf89806
 ```
 
-To see the fingerprint of an APK file (`apksigner` is in the SDK folder `build-tools/36.0.0`):
+Other tools print the same value as
+`8E:1A:FB:37:FF:59:27:4A:5C:8D:C5:21:B8:0D:37:83:3C:0C:1F:0A:51:98:A7:D9:DF:5E:8D:AE:EC:F8:98:06`.
+
+To see the fingerprint of a downloaded file, give its name to `apksigner`:
 
 ```bash
-apksigner verify --print-certs paprelay-0.2.0.apk
+"$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs paprelay.apk
 ```
 
 ## If the build fails
 
-| Message | Meaning and solution |
+| Message | What to do |
 |---|---|
 | `SDK location not found` | The build cannot find the Android SDK. Set `ANDROID_HOME` (step 1), or open the project once in Android Studio. |
-| `License for package … not accepted` | Run `sdkmanager --licenses` and accept. |
+| `License for package … not accepted` | Run `sdkmanager --licenses` (step 1) and accept. |
 | `PAPRELAY_KEYSTORE is set, so PAPRELAY_KEYSTORE_PASSWORD must be set too` | Give both variables (step 5). |
 | `keystore password was incorrect` | The password does not match the key file. |
+| `Keystore file '…' not found` | The path in `PAPRELAY_KEYSTORE` is wrong. |
+| `No key with alias '…' found in keystore` | Set `PAPRELAY_KEY_ALIAS` to the name you gave the key. |
 | `INSTALL_FAILED_UPDATE_INCOMPATIBLE` on install | An app with another signature is already installed, for example the official release. Uninstall it first. The data in Health Connect stays. You must pair the machine again. |
-| Lint reports an error | Lint warnings are errors in this project. The message says the file and the line. |
+| Lint reports an error | Lint warnings are errors in this project. The message gives the file and the line. |
 
 ## Drawing the diagrams again
 

@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 name: Report a machine or a phone
 description: Tell us that PAPRelay works, or does not work, with your machine software or your phone.
-labels: [compatibility]
 body:
   - type: markdown
     attributes:
@@ -28,7 +27,7 @@ body:
     id: version
     attributes:
       label: PAPRelay version
-      placeholder: "0.2.0"
+      placeholder: "0.2.1"
     validations:
       required: true
   - type: dropdown
@@ -51,4 +50,11 @@ body:
     id: compared
     attributes:
       label: Did you compare the figures with another source?
-      description: For example with the machine's SD card in OSCAR. Say which figures you compared, for how many nights, and whether they were equal. Do not post the figures themselves.
+      description: For example with the machine's SD card in OSCAR. Say which kinds of figures you compared and whether they were equal. Do not post the figures themselves.
+  - type: checkboxes
+    id: private
+    attributes:
+      label: Privacy
+      options:
+        - label: I attached no capture, no SD-card file, no pairing code and no health values.
+          required: true

@@ -1,16 +1,16 @@
 # Code of conduct
 
-PAPRelay is used and improved by people from many countries, with many languages and
-many levels of experience. Many of them live with a sleep disorder. Everyone is welcome.
+People with different languages and levels of experience are welcome here. Many of us
+live with a sleep disorder.
 
 ## What we expect
 
 - Be kind and patient. Assume that the other person means well.
-- Write simply. Many readers do not read English well.
+- Write in plain words. Many readers do not read English well.
 - Speak about the work, not about the person.
-- Accept that others see things differently. Give reasons, and listen to reasons.
-- Respect privacy. Health data is private. Never share another person's data, and never
-  ask someone to share theirs.
+- Give reasons, and listen to reasons.
+- Respect privacy. Never share another person's health data, and never ask someone to
+  share theirs.
 
 ## What is not accepted
 
@@ -23,19 +23,16 @@ many levels of experience. Many of them live with a sleep disorder. Everyone is 
 
 ## Where this applies
 
-In this repository and in every place where the project is discussed: issues, pull
-requests, reviews and discussions.
+In this repository: issues, pull requests and reviews.
 
 ## If something goes wrong
 
-Tell the maintainer in private. Use the contact details on the maintainer's GitHub profile
-(https://github.com/hahnfeld), or use GitHub's own "Report content" function on the comment.
-Say what happened and where. Your report is kept confidential.
+Use the "Report content" function that GitHub shows on every comment, or write to the
+maintainer in private through the report form under the repository's
+[Security tab](https://github.com/hahnfeld/paprelay/security). Say what happened and where.
 
 The maintainer may edit or remove comments, commits and issues that break these rules, and
 may block a person who continues after a warning.
 
-## Thanks
-
 This text follows the ideas of the
-[Contributor Covenant](https://www.contributor-covenant.org/), version 2.1, in simpler words.
+[Contributor Covenant](https://www.contributor-covenant.org/), version 2.1, in plainer words.

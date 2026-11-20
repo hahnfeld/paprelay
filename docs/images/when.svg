@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 196" width="720" height="196" role="img" aria-label="PAPRelay synchronises when you tap the button, when the phone comes near the machine, and about once an hour.">
-<title>PAPRelay synchronises when you tap the button, when the phone comes near the machine, and about once an hour.</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 178" width="480" height="178" role="img" aria-label="PAPRelay synchronises when you tap the button, when the phone is near the machine, and about every hour.">
+<title>PAPRelay synchronises when you tap the button, when the phone is near the machine, and about every hour.</title>
 <style>
   .paper { fill: #ffffff; stroke: #d0d7de; stroke-width: 1; }
   .ink { fill: none; stroke: #1f2328; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
@@ -15,9 +15,9 @@
   text { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #1f2328; }
   .t { font-size: 16px; }
   .b { font-size: 16px; font-weight: 600; }
-  .s { font-size: 13px; fill: #57606a; }
-  .m { font-size: 11px; }
-  .ms { font-size: 10px; fill: #57606a; }
+  .s { font-size: 14px; fill: #57606a; }
+  .c { font-size: 13px; }
+  .x { font-size: 12px; fill: #57606a; }
   .num { font-size: 14px; font-weight: 700; fill: #ffffff; }
   .on { fill: #ffffff; }
   @media (prefers-color-scheme: dark) {
@@ -31,30 +31,32 @@
     .badline { stroke: #f85149; }
     .onbad { stroke: #0d1117; }
     text { fill: #e6edf3; }
-    .s, .ms { fill: #8b949e; }
+    .s, .x { fill: #8b949e; }
     .num, .on { fill: #0d1117; }
   }
 </style>
-<rect class="paper" x="0.5" y="0.5" width="719" height="195" rx="12"/>
-<rect class="solid" x="54" y="44" width="136" height="30" rx="15"/>
-<text class="m on" x="122" y="63" text-anchor="middle">Synchronise now</text>
-<circle class="solid" cx="202" cy="70" r="4.5"/>
-<circle class="ink" cx="202" cy="70" r="9.3"/>
-<circle class="faint" cx="202" cy="70" r="15"/>
-<rect class="ink" x="283" y="40" width="88" height="38.4" rx="9.6"/>
-<rect class="ink" x="291" y="55.6" width="27" height="15.6" rx="3"/>
-<circle class="ink" cx="304.5" cy="47.8" r="3.9"/>
-<path class="ink" d="M345 44.2V74.2M345 64H371M294.6 83.8H359.4"/>
-<path class="line" d="M382.1 51A8.2 8.2 0 0 1 382.1 65"/>
-<path class="line" d="M386 44.2A16.1 16.1 0 0 1 386 71.8"/>
-<path class="line" d="M390 37.4A24 24 0 0 1 390 78.6"/>
-<rect class="ink" x="415" y="26.3" width="34" height="63.4" rx="6.5"/>
-<path class="ink" d="M426.2 82.5H437.8"/>
-<circle class="ink" cx="590" cy="58" r="30"/>
-<path class="ink" d="M590 41.5V58L602.6 66.4"/>
-<text class="t" x="130" y="128" text-anchor="middle">You tap the button</text>
-<text class="t" x="360" y="128" text-anchor="middle">The phone comes</text>
-<text class="t" x="360" y="149" text-anchor="middle">near the machine</text>
-<text class="t" x="590" y="128" text-anchor="middle">About every hour</text>
-<path class="faint" d="M245 30V170M475 30V170"/>
+<rect class="paper" x="0.5" y="0.5" width="479" height="177" rx="12"/>
+<rect class="solid" x="16" y="34" width="128" height="32" rx="16"/>
+<text class="c on" x="80" y="54.5" text-anchor="middle">Synchronise now</text>
+<circle class="solid" cx="128" cy="76" r="4.2"/>
+<circle class="ink" cx="128" cy="76" r="8.7"/>
+<circle class="faint" cx="128" cy="76" r="14"/>
+<rect class="ink" x="181" y="39.2" width="67" height="29.4" rx="7.4"/>
+<rect class="ink" x="186.9" y="51.2" width="20.7" height="12" rx="2.3"/>
+<circle class="ink" cx="197.2" cy="45.2" r="3"/>
+<path class="ink" d="M228.3 42.4V65.4M228.3 57.6H248M189.7 72.8H239.3"/>
+<path class="line" d="M258.7 46.6A7.5 7.5 0 0 1 258.7 59.4"/>
+<path class="line" d="M262.4 40.3A14.7 14.7 0 0 1 262.4 65.7"/>
+<path class="line" d="M266 34.1A22 22 0 0 1 266 71.9"/>
+<rect class="ink" x="275" y="27.5" width="27" height="51" rx="5.2"/>
+<path class="ink" d="M283.9 72.7H293.1"/>
+<circle class="ink" cx="400" cy="54" r="26"/>
+<path class="ink" d="M400 39.7V54L410.9 61.3"/>
+<text class="t" x="80" y="124" text-anchor="middle">You tap</text>
+<text class="t" x="80" y="145" text-anchor="middle">the button</text>
+<text class="t" x="240" y="124" text-anchor="middle">The phone is</text>
+<text class="t" x="240" y="145" text-anchor="middle">near the machine</text>
+<text class="t" x="400" y="124" text-anchor="middle">About</text>
+<text class="t" x="400" y="145" text-anchor="middle">every hour</text>
+<path class="faint" d="M160 26V152M320 26V152"/>
 </svg>
