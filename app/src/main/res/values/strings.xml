@@ -34,12 +34,12 @@
     <string name="sync_partial">Not every night has been copied yet. PAPRelay will try again.</string>
     <string name="sync_machine_away">The machine did not answer. It may be out of range. PAPRelay will try again.</string>
     <string name="sync_bluetooth_not_allowed">PAPRelay is not allowed to use Bluetooth. Choose Synchronise now and allow it. If Android does not ask, allow Nearby devices in the app settings.</string>
-    <string name="sync_hc_not_allowed">Health Connect does not allow PAPRelay to write what is switched on in Sharing. Allow it, or switch it off there.</string>
+    <string name="sync_hc_not_allowed">Health Connect does not allow PAPRelay to write what is switched on in Sharing. Allow PAPRelay in Health Connect, or switch the item off in Sharing.</string>
     <string name="sync_pairing_rejected">The machine no longer accepts this phone. Open Device check, choose Forget machine, and pair again.</string>
     <string name="sync_wrong_machine">The machine that answered is not the paired machine. Nothing was written.</string>
     <string name="sync_software_not_confirmed">PAPRelay cannot yet read this machine\'s software version. Nothing was written.</string>
     <string name="sync_clock_unreliable">The machine\'s clock cannot be trusted at the moment. PAPRelay will try again.</string>
-    <string name="sync_clock_changed">The machine\'s clock was changed. The times of the nights since the last synchronisation may be wrong. PAPRelay writes no more respiratory rate until you choose to use the machine\'s clock as it is now.</string>
+    <string name="sync_clock_changed">The machine\'s clock was changed. The times of the nights since the last synchronisation may be wrong. PAPRelay stops writing respiratory rate until you choose to use the machine\'s clock as it is now.</string>
     <string name="sync_connection_lost">The connection to the machine was lost. PAPRelay will try again.</string>
     <string name="sync_data_not_understood">PAPRelay could not read some of the data from the machine.</string>
     <string name="sync_hc_failed">Health Connect did not accept the data. PAPRelay will try again.</string>
@@ -256,7 +256,7 @@
     <string name="about_check_heading">Device check</string>
     <string name="about_check">The device check reads from the machine and changes none of its settings or data. Pairing replaces the myAir app\'s connection to the machine. For each thing that is switched on in Sharing, the check writes a made-up test entry to Health Connect and removes it again. An empty source named “PAPRelay (CPAP machine)” stays in the health records.</string>
     <string name="about_disclaimer_heading">Not a medical device</string>
-    <string name="about_disclaimer">PAPRelay is not intended to diagnose, treat, cure or prevent any condition, and must not be used to make diagnosis or treatment decisions. Values may be wrong, late or missing. It does not replace myAir, your equipment provider\'s reporting, or advice from a clinician.</string>
+    <string name="about_disclaimer">PAPRelay is not intended to diagnose, treat, cure or prevent any condition, and must not be used to make diagnosis or treatment decisions. Values may be wrong, late or missing. It does not replace myAir, your equipment provider\'s reporting, or advice from your doctor.</string>
     <string name="about_affiliation">PAPRelay is an independent project. It is not made, endorsed or supported by ResMed. ResMed is the company that makes the machine. PAPRelay is not affiliated with ResMed or Google. ResMed, AirSense and myAir are trademarks of ResMed. Android and Health Connect are trademarks of Google LLC.</string>
 
     <!-- Privacy screen, shown by Health Connect -->

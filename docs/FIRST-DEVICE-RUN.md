@@ -4,7 +4,7 @@ This is the record of the first run against a real machine, and of the compariso
 confirmed the decoders. It also serves as the example of how a machine software version is
 confirmed (see [CONTRIBUTING.md](../CONTRIBUTING.md#a-new-machine-software-version)).
 
-Run on 2026-11-16 with a debug build (`9e84a1e`), a Google Pixel 10 Pro on Android 17, and
+Run on 2026-11-16 with a debug build, a Google Pixel 10 Pro on Android 17, and
 an AirSense 11 AutoSet (software `SW04600.19.8.8.0`, data model `v2.19.0`). Every step of
 the device check passed on the first attempt. The saved report, the downloaded bytes and
 the SD-card files are not kept in this repository.
@@ -46,7 +46,7 @@ same period, read directly from its EDF files.
 
 | What | Compared | Result |
 |---|---|---|
-| Daily summaries | 30 days; on every day with therapy, each index, percentile, duration and mask-on/off time | All equal at the stored resolution. Unused days are empty on both sides |
+| Daily summaries | 30 days: each index, percentile, duration and mask-on/off time | All equal at the stored resolution |
 | Breathing events | Every event of three sessions | Same kind, same order, same duration; times within 1.5 s (the card stores whole seconds) |
 | Per-minute log, length | Three sessions | One sample for each minute of mask-on time on both sides |
 | Per-minute leak and pressures | Against the card's 2-second signals, averaged per minute | Within one step of the per-minute resolution |
@@ -62,8 +62,9 @@ What this established:
   carries mask-on plus 60 s and equals the card's first minute.
 - A breathing event is stamped at its end, with its duration alongside. The card's
   annotations carry the same instant.
-- Zeros are written explicitly in a used day's summary; an absent value means no data. The
-  machine truncates indices to tenths.
+- Zeros are written explicitly in a used day's summary; an absent value means no data. A
+  day without therapy has a duration of zero and nothing else. The machine truncates
+  indices to tenths.
 - Summary field 37 (respiratory flow, 5th and 95th percentile) is a plain value in
   hundredths of L/s, as the reference says.
 - Not confirmed by either source: per-minute inspiratory time and I:E ratio.

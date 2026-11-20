@@ -50,14 +50,14 @@
 <circle class="solid" cx="34" cy="390" r="13"/>
 <text class="num" x="34" y="395" text-anchor="middle">5</text>
 <path class="faint" d="M24 348H456"/>
-<rect class="ink" x="71" y="36.8" width="64" height="28.2" rx="7"/>
-<rect class="ink" x="76.6" y="48.2" width="19.8" height="11.4" rx="2.2"/>
-<circle class="ink" cx="86.5" cy="42.5" r="2.9"/>
-<path class="ink" d="M116.2 39.9V61.9M116.2 54.4H135M79.2 68.9H126.8"/>
-<rect class="ink" x="195" y="27.1" width="24" height="45.8" rx="4.7"/>
-<path class="ink" d="M202.8 67.7H211.2"/>
-<path class="line" d="M144 50H155.8M174.2 50H186"/>
-<text class="x" x="207" y="92" text-anchor="middle">myAir</text>
+<rect class="ink" x="71" y="27.8" width="64" height="28.2" rx="7"/>
+<rect class="ink" x="76.6" y="39.2" width="19.8" height="11.4" rx="2.2"/>
+<circle class="ink" cx="86.5" cy="33.5" r="2.9"/>
+<path class="ink" d="M116.2 30.9V52.9M116.2 45.4H135M79.2 59.9H126.8"/>
+<rect class="ink" x="195" y="19" width="23" height="44" rx="4.5"/>
+<path class="ink" d="M202.5 58H210.5"/>
+<path class="line" d="M144 41H155.8M174.2 41H186"/>
+<text class="s" x="206.5" y="82" text-anchor="middle">myAir</text>
 <text class="t" x="250" y="48" text-anchor="start">In myAir:</text>
 <text class="t" x="250" y="69" text-anchor="start">remove the machine</text>
 <rect class="ink" x="89" y="119.6" width="70" height="30.7" rx="7.7"/>

@@ -43,16 +43,16 @@
 <text class="s" x="47" y="84" text-anchor="middle">Machine</text>
 <path class="ink dash" d="M80 46H95"/>
 <path class="ink" d="M91 39L98 46L91 53"/>
-<rect class="ink" x="102" y="26" width="54" height="40" rx="10"/>
-<text class="b" x="129" y="51.5" text-anchor="middle">Link</text>
-<rect class="ink" x="170" y="26" width="92" height="40" rx="10"/>
-<text class="b" x="216" y="51.5" text-anchor="middle">Protocol</text>
-<path class="ink" d="M158 46L167 46"/>
-<path class="ink" d="M163 42L167 46L163 50"/>
-<rect class="ink" x="276" y="26" width="98" height="40" rx="10"/>
+<rect class="ink" x="102" y="26" width="52" height="40" rx="10"/>
+<text class="b" x="128" y="51.5" text-anchor="middle">Link</text>
+<rect class="ink" x="166" y="26" width="96" height="40" rx="10"/>
+<text class="b" x="214" y="51.5" text-anchor="middle">Protocol</text>
+<path class="ink" d="M154 46L163 46"/>
+<path class="ink" d="M159 42L163 46L159 50"/>
+<rect class="ink" x="274" y="26" width="102" height="40" rx="10"/>
 <text class="b" x="325" y="51.5" text-anchor="middle">Decoders</text>
-<path class="ink" d="M264 46L273 46"/>
-<path class="ink" d="M269 42L273 46L269 50"/>
+<path class="ink" d="M262 46L271 46"/>
+<path class="ink" d="M267 42L271 46L267 50"/>
 <rect class="ink" x="388" y="26" width="68" height="40" rx="10"/>
 <text class="b" x="422" y="51.5" text-anchor="middle">Plans</text>
 <path class="ink" d="M376 46L385 46"/>

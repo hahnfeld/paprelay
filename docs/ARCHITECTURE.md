@@ -56,8 +56,9 @@ encrypts nothing else. The items it can read (`GetItem`) and the logs it can dow
 (`SpoolName`) are closed lists. `As11RequestTest` pins the request types.
 
 No request changes therapy, settings or stored data. Two requests change the pairing on
-the machine: the key exchange, which stores PAPRelay's pairing in place of the one before
-it, and `DiscardPairKey`, which the app does not send at present. **Forget machine**
+the machine: the key exchange, which is expected to store PAPRelay's pairing in place of
+the one before it (not yet confirmed; see [FIRST-DEVICE-RUN.md](FIRST-DEVICE-RUN.md)), and
+`DiscardPairKey`, which the app does not send at present. **Forget machine**
 deletes the pairing on the phone only.
 
 ### Values
@@ -151,7 +152,7 @@ or the new one.
 2. when the phone hears the machine. `ble/PresenceWatch` asks the phone's Bluetooth chip to
    listen for the one stored address at low power and to tell the app once when it is first
    heard;
-3. about once an hour, through WorkManager. This is the fallback, because not every phone
+3. about every hour, through WorkManager. This is the fallback, because not every phone
    supports point 2.
 
 A run also starts when the app is opened and the last run is older than 15 minutes, when
@@ -193,9 +194,8 @@ there through Android's "save as" screen. The drive's own app does the sending.
 
 ### The debug build does not synchronise
 
-Health Connect files records under the app that wrote them. The debug build has another
-application id, so Health Connect would hold every night twice.
-`BuildConfig.SYNC_ENABLED` is false in debug builds. They run the device check only.
+`BuildConfig.SYNC_ENABLED` is false in debug builds, so they run the device check only.
+[BUILDING.md](BUILDING.md#the-debug-build) gives the reason.
 
 ## Screens
 

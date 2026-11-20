@@ -1,7 +1,8 @@
 # Code of conduct
 
 People with different languages and levels of experience are welcome here. Many of us
-live with a sleep disorder.
+live with a sleep disorder. These rules apply to issues, pull requests and reviews in this
+repository.
 
 ## What we expect
 
@@ -20,10 +21,6 @@ live with a sleep disorder.
 - Publishing another person's private information.
 - Sexual language or images.
 - Medical advice presented as fact. This project is not a place for diagnosis or treatment.
-
-## Where this applies
-
-In this repository: issues, pull requests and reviews.
 
 ## If something goes wrong
 

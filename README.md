@@ -7,7 +7,7 @@ It uses Bluetooth. It does not use the internet.
 
 > [!IMPORTANT]
 > PAPRelay is an independent project. It is **not made, endorsed or supported by ResMed**.
-> ResMed is the company that makes the machine. PAPRelay is also not from Google.
+> ResMed is the company that makes the machine. PAPRelay is not from Google either.
 >
 > PAPRelay is **for personal use only**: one person, with their own machine and their own phone.
 >
@@ -33,16 +33,18 @@ synchronising by itself in the background.
 
 - A ResMed AirSense 11 with machine software `SW04600.19.8.8.0`. This is the only version
   that has been checked. With another version, PAPRelay tells you and writes nothing.
+  PAPRelay can read the version only after pairing.
 - A phone with Android 14 or later. Health records need Android 16 or later.
 
-As far as is known, the machine keeps one pairing only. **When you pair PAPRelay, expect
-the myAir app to lose its connection to the machine.** You can pair myAir again later.
+The machine seems to keep one pairing only. **When you pair PAPRelay, expect the myAir app
+to lose its connection to the machine.** If you pair myAir again later, expect PAPRelay to
+lose its connection. Then pair PAPRelay again.
 
 ## Get the app
 
-Download the newest file that ends in `.apk` from the
-[releases page](https://github.com/hahnfeld/paprelay/releases) and open it on the phone.
-Android asks you to allow the installation.
+On the phone, open the [releases page](https://github.com/hahnfeld/paprelay/releases),
+download the newest file that ends in `.apk`, and open it. Android asks you to allow the
+installation.
 
 You can also [build it yourself](docs/BUILDING.md).
 
@@ -61,7 +63,7 @@ Keep the phone within a few metres of the machine.
    too. The machine shows a code with four digits. Type the code in PAPRelay. The code
    works for about two minutes.
 4. Wait. PAPRelay tests every connection. A tick means that the connection works.
-5. Go back and tap **Synchronise now**. After this, PAPRelay synchronises by itself.
+5. Tap **Synchronise now**. After this, PAPRelay synchronises by itself.
 
 ## The home screen
 
@@ -80,6 +82,13 @@ The figures in this picture are examples.
 The lines in the picture change:
 
 ![What the lines in the picture mean.](docs/images/picture.svg)
+
+- Two short lines: not set up yet.
+- A grey line: set up and waiting.
+- A dashed arrow: data is moving.
+- A tick: it worked.
+- A red cross on a line: it did not work.
+- A red cross on the phone: the phone has a problem.
 
 ## Where the data goes
 
@@ -107,9 +116,9 @@ keeps the recent nights, so PAPRelay copies the missing nights then.
 
 ![One night runs from midday to midday. The figures arrive on the phone after the second midday.](docs/images/night.svg)
 
-For the machine, one night runs from midday (12:00) to midday. The machine gives out the
-figures only after the night has ended. So last night's figures arrive **in the
-afternoon**, not in the morning.
+For the machine, one night runs from midday (12:00) to midday. PAPRelay shows a night
+only after it has ended. Until then the machine can still change the figures. So last
+night's figures arrive **in the afternoon**, not in the morning.
 
 ## If something does not work
 
@@ -156,7 +165,7 @@ an attribution term inherited from SomnoTrace. See [LICENSE](LICENSE), [NOTICE](
 "For personal use only" says what PAPRelay is made and tested for. It does not take away
 any right that the licence gives you.
 
-ResMed, AirSense, AutoSet and myAir are trademarks of ResMed. Android and Health Connect
+ResMed, AirSense and myAir are trademarks of ResMed. Android and Health Connect
 are trademarks of Google LLC. All other names belong to their owners. PAPRelay uses these
 names only to say what it works with.
 

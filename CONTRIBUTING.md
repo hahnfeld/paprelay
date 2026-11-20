@@ -87,11 +87,8 @@ in `strings.xml`:
 - Prefer a picture to a sentence.
 
 The pictures in `docs/images` are made by a script and use the shapes of the app's own
-picture (`FlowDiagram.kt`). Change the script, then run it:
-
-```bash
-python3 tools/gen_doc_diagrams.py
-```
+picture (`FlowDiagram.kt`). See
+[Drawing the diagrams again](docs/BUILDING.md#drawing-the-diagrams-again).
 
 ## Pull requests
 

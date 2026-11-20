@@ -39,7 +39,7 @@ records, and that the file is written to a cloud drive from the background.
 - Respiratory rate, one reading for each minute of therapy, written to Health Connect at
   the corrected time. The machine's clock is measured on every connection.
 - Synchronising on request, when the phone hears the machine come into range, and about
-  once an hour.
+  every hour.
 - A device check that tests each connection and can save a report.
 - A reinstall or a repeated run writes over the same records, so no night is written twice.
 

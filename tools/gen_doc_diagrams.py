@@ -300,7 +300,7 @@ def picture():
     s.add('<path class="faint" d="M24 118H456"/>')
     rows = [
         ("none", "Not set up yet"),
-        ("ready", "Set up. Waiting."),
+        ("ready", "Set up and waiting"),
         ("active", "Data is moving"),
         ("ok", "It worked"),
         ("failed", "It did not work"),
@@ -330,10 +330,10 @@ def setup():
 
     # Step 1: the machine and myAir, with the "not set up" line between them.
     y = top
-    mw = s.machine(70, y + 4, 44)
-    pw = s.phone(194, y, 52)
-    s.link(70 + mw + 8, 194 - 8, y + 26, "none")
-    s.text(194 + pw / 2, y + 68, "myAir", "x", "middle")
+    mw = s.machine(70, y - 5, 44)
+    pw = s.phone(194, y - 8, 50)
+    s.link(70 + mw + 8, 194 - 8, y + 17, "none")
+    s.text(194 + pw / 2, y + 58, "myAir", "s", "middle")
     s.lines(label_x, y + 24, ["In myAir:", "remove the machine"])
 
     # Step 2: the machine waits to be paired.
@@ -391,8 +391,8 @@ def home():
 def when():
     s = Svg(178, "PAPRelay synchronises when you tap the button, when the phone is near the machine, and about every hour.")
     centres = [80, 240, 400]
-    s.button(centres[0] - 64, 34, 128, 32, "Synchronise now")
-    s.tap(centres[0] + 48, 76, 14)
+    s.button(centres[0] - 68, 34, 136, 32, "Synchronise now")
+    s.tap(centres[0] + 50, 76, 14)
     mw = s.machine(centres[1] - 60, 30, 46)
     s.waves(centres[1] - 60 + mw + 6, 53, 22)
     s.phone(centres[1] + 34, 24, 58)
@@ -471,7 +471,7 @@ def flow():
     mw = s.machine(20, 28, 36)
     s.text(20 + mw / 2, 84, "Machine", "s", "middle")
     s.link(20 + mw + 6, 98, 46, "active")
-    stages = [("Link", 102, 54), ("Protocol", 170, 92), ("Decoders", 276, 98), ("Plans", 388, 68)]
+    stages = [("Link", 102, 52), ("Protocol", 166, 96), ("Decoders", 274, 102), ("Plans", 388, 68)]
     for index, (title, x, w) in enumerate(stages):
         s.box(x, 26, w, 40, title)
         if index:

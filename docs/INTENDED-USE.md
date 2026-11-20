@@ -1,9 +1,9 @@
 # Intended use
 
 PAPRelay transfers, stores, converts and displays data that a ResMed AirSense 11 has
-already recorded about its own operation. It keeps a copy on the phone and can write a
-copy to Android Health Connect on the same phone, to a file that the user chooses, and to
-another app that the user chooses.
+already recorded. It keeps a copy on the phone and can write a copy to Android Health
+Connect on the same phone, to a file that the user chooses, and to another app that the
+user chooses.
 
 ## For personal use only
 
@@ -53,6 +53,6 @@ has no other place for them. They are not laboratory results.
 PAPRelay is not a medical device. It has not been reviewed, cleared or approved by any
 regulator. It is not intended to diagnose, treat, cure or prevent any condition, and must
 not be used to make diagnosis or treatment decisions. Values may be wrong, late or missing.
-It does not replace myAir, your equipment provider's reporting, or advice from a clinician.
+It does not replace myAir, your equipment provider's reporting, or advice from your doctor.
 
 PAPRelay is provided without warranty of any kind. You use it at your own risk.

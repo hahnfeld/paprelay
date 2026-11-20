@@ -13,7 +13,7 @@ and Android version you used.
 
 Do not attach captures from a real machine, Bluetooth logs, SD-card files or the app's
 private files. They contain health data and what is needed to read it. If such data is
-needed, the maintainer will agree a safe way with you.
+needed, the maintainer will arrange a safe way with you.
 
 This is a small volunteer project. Expect a first answer within about two weeks. There is
 no reward programme. Only the newest release receives fixes.
@@ -33,7 +33,7 @@ these.
 
 ## Out of scope
 
-- The machine's own Bluetooth protocol and firmware. PAPRelay has no connection to the
+- The machine's own Bluetooth protocol and software. PAPRelay has no connection to the
   manufacturer. One known limit of that protocol: its encryption does not authenticate
   each message, so someone who alters the radio traffic can damage a request in transit.
   PAPRelay verifies every download by its hash.
