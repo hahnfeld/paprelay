@@ -470,7 +470,8 @@ fun ChoicesScreen(
         if (recordsBlocked) NotAllowed(onOpenHealthConnect)
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Choice(R.string.choice_respiratory, R.string.choice_respiratory_body, sync.respiratoryRate, enabled = !sync.running, onChange = onRespiratoryRate)
-        if (sync.rateWaiting && !respiratoryBlocked) Secondary(stringResource(R.string.rate_waiting), Modifier.padding(bottom = 14.dp))
+        val ran = sync.lastReport?.outcome.let { it == SyncOutcome.COMPLETE || it == SyncOutcome.PARTIAL }
+        if (sync.rateWaiting && ran && !respiratoryBlocked) Secondary(stringResource(R.string.rate_waiting), Modifier.padding(bottom = 14.dp))
         if (respiratoryBlocked) NotAllowed(onOpenHealthConnect)
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Column(Modifier.fillMaxWidth().padding(vertical = 14.dp)) {

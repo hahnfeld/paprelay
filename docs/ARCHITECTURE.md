@@ -106,7 +106,7 @@ On any other version the rule is stricter, and it does not rely on the machine's
 - **Which sessions are its own.** The first time the engine reads the per-minute log to the
   end under that version, everything the machine then holds counts as older: an earlier
   version may have recorded it. The log is read only while respiratory rate is switched on,
-  so nights recorded before it is switched on count as older too. The software's own sessions are those that begin after the
+  so nights recorded before it is first switched on under that version count as older too. The software's own sessions are those that begin after the
   last minute present then. (Not after "now": a clock that was once set back leaves
   sessions stamped later than now.)
 - **What vouches.** One of its own sessions, 60 minutes or more, in which all seven known
