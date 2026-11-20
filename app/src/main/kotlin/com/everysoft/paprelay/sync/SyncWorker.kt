@@ -11,8 +11,8 @@ import com.everysoft.paprelay.pairing.PairingState
 /**
  * A run handed to the system: the hourly one, one asked for by hand, one begun because the
  * machine was heard, or the one further attempt that may follow that. It always reports
- * success to the system: a machine that is out of range is the ordinary state of affairs
- * while the phone is away from home, and the next run is the retry. What happened is in the
+ * success to the system: a machine that is out of range is normal while the phone is
+ * away from home, and the next run is the retry. What happened is in the
  * app's own record.
  */
 class SyncWorker(context: Context, parameters: WorkerParameters) : CoroutineWorker(context, parameters) {

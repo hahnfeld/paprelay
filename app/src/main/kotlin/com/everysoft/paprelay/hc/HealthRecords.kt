@@ -96,7 +96,7 @@ class HealthRecords(private val context: Context) : NightRecords {
         if (Build.VERSION.SDK_INT < FIRST_VERSION) throw HealthSinkException(notAllowed = false)
         val manager = manager()
         val source = sourceId ?: answered { sources(manager) }.firstOrNull { it.displayName == SOURCE_NAME }?.id?.also { sourceId = it }
-            // It was there when the run began and is gone: the user removed it meanwhile. The next run starts it afresh.
+            // It was there when the run began and is gone: the user removed it meanwhile. The next run makes it again.
             ?: throw HealthSinkException(notAllowed = false)
         // What the night no longer has is cleared away. Mostly none of it was ever there, and a phone that
         // minded being asked for that would otherwise fail every night; that one refusal is passed over.

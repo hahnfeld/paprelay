@@ -213,8 +213,8 @@ class SyncStateUnreadableException(cause: Throwable) : IOException("the synchron
  * change: a crash leaves either the old state or the new one, never a mixture.
  *
  * Losing this file is survivable (record ids come from the machine's own time
- * stamps, so each night is found again, cleared and written afresh), but a state
- * that cannot be read is reported, not replaced, so that damage is not papered over.
+ * stamps, so each night is found again, cleared and written again), but a state
+ * that cannot be read is reported, not replaced, so that damage is not hidden.
  */
 class SyncStore(private val file: File) {
     /** @throws SyncStateUnreadableException if the file exists and is not a state this version wrote. */

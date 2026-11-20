@@ -201,7 +201,7 @@ public object MinuteDecoder {
         }
         // A series that will not decode, or signals that disagree about a record's length, may mean
         // a modulus is wrong, and a wrong modulus can pass in a short record. It may equally be
-        // one record cut short by a power failure. So such a record costs itself, and the doubt
+        // one record cut short by a power failure. So such a record is skipped, and the doubt
         // is passed on with the result: a long record that decoded cleanly beside it stands on
         // its own evidence, and what to make of the short ones is for the caller. (A signal that
         // decodes but holds an impossible value is different again: on confirmed software that

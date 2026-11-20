@@ -197,7 +197,7 @@ class SyncRunner(
      * The machine was heard within minutes of an attempt. If that attempt got no answer at all,
      * one more is worth making once the gap has passed: the phone has probably just come into
      * range. After any other attempt the hearing is let go: a connection that ends makes the
-     * machine be heard afresh, and each run would bring the next.
+     * machine be heard again, and each run would bring the next.
      */
     fun heardTooSoon(waitMs: Long) {
         if (_status.value.lastReport?.outcome == SyncOutcome.MACHINE_AWAY) retryLater(waitMs)
@@ -217,7 +217,7 @@ class SyncRunner(
 
     /**
      * How long a run begun because the machine was heard should wait: not at all, some
-     * milliseconds, or null for no run. Everything came across a short while ago; nothing can
+     * milliseconds, or null for no run. Everything was copied a short while ago; nothing can
      * change until the user has acted; or an attempt was made minutes ago, as happens with a
      * machine at the edge of range that is heard, lost and heard again.
      */
@@ -234,8 +234,8 @@ class SyncRunner(
 
     /**
      * One more attempt in a while, after the machine was heard but could not be reached or
-     * not everything came across: it may have been at the edge of range. One, not a series;
-     * the hourly run is the series.
+     * not everything was copied: it may have been at the edge of range. Only one retry;
+     * the hourly run covers the rest.
      */
     fun retryLater(waitMs: Long = HEARD_GAP_MS) {
         if (!enabled) return
@@ -328,7 +328,7 @@ class SyncRunner(
 
     /**
      * Throws away a record of synchronising that can no longer be read, and starts again.
-     * Every night the machine still holds is then cleared in Health Connect and written afresh.
+     * Every night the machine still holds is then cleared in Health Connect and written again.
      */
     fun startAgain() {
         scope.launch {

@@ -144,7 +144,7 @@ public class Firmware private constructor(public val applicationIdentifier: Stri
  *   zero is an ordinary reading.
  *
  * Evidence, from one AirSense 11 AutoSet on firmware 19.8.8.0 (2026-11-16):
- * three sessions of 123, 202 and 101 minutes, signals 1 to 7 present. With
+ * three sessions, signals 1 to 7 present. With
  * respiratory rate at modulus 8 and minute ventilation at 4 (the reference
  * decoder has them the other way round) every signal of every record has the
  * session's length in minutes. Leak, both pressures, respiratory rate and
@@ -198,8 +198,8 @@ public enum class UsageEvent(public val code: Int) {
 /**
  * Codes in the `TherapyEvents-RespiratoryEvents` log. The numbering has gaps.
  *
- * Seen in a real capture: eight obstructive apnoeas, one central apnoea and two
- * hypopnoeas. An apnoea is written when it ends and stamped with that moment;
+ * Seen in a real capture: obstructive apnoeas, central apnoeas and hypopnoeas.
+ * An apnoea is written when it ends and stamped with that moment;
  * for a hypopnoea, which has no stored length, whether the stamp is its start
  * or its end cannot be told. See [EventRecord]. The other codes are as the
  * reference gives them and have not been seen.

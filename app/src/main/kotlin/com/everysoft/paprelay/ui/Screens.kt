@@ -996,7 +996,7 @@ private fun syncLine(sync: SyncStatus): String {
     }
 }
 
-/** The line of times under the sentence: when it last synchronised, or when everything was last in step. */
+/** The line of times under the sentence: when it last synchronised, or when everything was last up to date. */
 @Composable
 private fun lastTimeLine(sync: SyncStatus): String? {
     if (sync.running || sync.storeUnreadable) return null

@@ -114,9 +114,9 @@ public object Reconcile {
      *   session with no entry.
      * @param zone the phone's time zone now; used only for a session with no entry.
      * @param nowMs the phone's clock, which record versions must never fall behind.
-     * @param force true to write the session again even if the ledger says it is in step:
+     * @param force true to write the session again even if the ledger says it is up to date:
      *   for when the ledger cannot be believed, such as after Health Connect's data was cleared.
-     * @return the change to make, or null if the session is confirmed to be in step already.
+     * @return the change to make, or null if the session is confirmed to be up to date already.
      * @throws IllegalArgumentException if [ledger] is for a different session.
      */
     public fun session(

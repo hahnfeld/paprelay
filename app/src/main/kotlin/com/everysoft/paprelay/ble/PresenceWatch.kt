@@ -19,7 +19,7 @@ import com.everysoft.paprelay.PapRelayApp
  * Has the phone itself notice when the paired machine comes into range, with the app not
  * running: the phone's Bluetooth chip listens for that one address at low power and tells
  * the app once when it is first heard. That is when a synchronisation is worth trying, and
- * it is what brings a night across soon after the phone comes home.
+ * it is what copies a night soon after the phone comes home.
  *
  * This is a help, not the mechanism: not every phone can do it, and the request is lost
  * when Bluetooth is switched off or the phone restarts. The hourly run works without it and
@@ -85,7 +85,7 @@ class PresenceWatch(private val context: Context) {
 class PresenceReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.getIntExtra(BluetoothLeScanner.EXTRA_ERROR_CODE, 0) != 0) {
-            // The phone could not keep the request. It is withdrawn, so that the next run asks afresh
+            // The phone could not keep the request. It is withdrawn, so that the next run asks again
             // instead of being told that an equal request is already in place.
             PresenceWatch(context.applicationContext).stop()
             return

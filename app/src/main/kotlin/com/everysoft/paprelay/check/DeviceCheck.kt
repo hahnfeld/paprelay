@@ -673,7 +673,7 @@ class DeviceCheck(
         } catch (e: CancellationException) {
             throw e
         } catch (e: As11PairingCancelledException) {
-            // The user backed out of typing the code. Nothing failed, least of all the machine.
+            // The user backed out of typing the code. This is not a failure.
             note("  ${code(e)}")
             set(id, StepState.CANCELLED, explain(e))
             false

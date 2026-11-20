@@ -5,15 +5,6 @@ package com.everysoft.paprelay.core
 import java.time.Instant
 
 /**
- * A moment as the machine's own clock recorded it, in milliseconds since the
- * Unix epoch.
- *
- * The machine's clock is set by hand or by its modem and drifts: on the first
- * machine examined it was six minutes fast. A time read from the machine is
- * therefore not a real-world time, and this type keeps the two apart: the only
- * way to an [Instant] is through a measured clock offset.
- */
-/**
  * How far the machine's clock is from true time: what must be added to a
  * [MachineTime] to get the real moment. Negative when the machine's clock is fast.
  *
@@ -38,6 +29,15 @@ public value class ClockOffset private constructor(public val millis: Long) {
     }
 }
 
+/**
+ * A moment as the machine's own clock recorded it, in milliseconds since the
+ * Unix epoch.
+ *
+ * The machine's clock is set by hand or by its modem and drifts: on the first
+ * machine examined it was six minutes fast. A time read from the machine is
+ * therefore not a real-world time, and this type keeps the two apart: the only
+ * way to an [Instant] is through a measured clock offset.
+ */
 @JvmInline
 public value class MachineTime(public val epochMs: Long) : Comparable<MachineTime> {
     /** The real-world moment, given how far the machine's clock was from true time. */

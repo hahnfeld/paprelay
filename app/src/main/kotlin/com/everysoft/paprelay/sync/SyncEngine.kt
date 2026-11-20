@@ -76,7 +76,7 @@ interface HealthSink {
 
     /**
      * Carries out one session's change in Health Connect: its deletions, then its writes.
-     * Returns only when Health Connect has confirmed both. (The ledger is the caller's affair.)
+     * Returns only when Health Connect has confirmed both. The caller updates the ledger.
      *
      * @throws HealthSinkException if any part was not confirmed. Some of it may have been done;
      *   the change is then simply applied again later.
@@ -95,7 +95,7 @@ interface NightRecords {
      * Makes ready to write, once at the start of a run.
      *
      * @return true if nothing of PAPRelay's was there: its place in the health records had to be
-     *   made afresh, so whatever was written before is gone and must be written again.
+     *   made again, so whatever was written before is gone and must be written again.
      * @throws HealthSinkException if the health records could not be reached.
      */
     suspend fun open(): Boolean
@@ -118,7 +118,7 @@ interface NightRecords {
  * and the result is stored. Wherever a run is cut off (the phone leaves the room, the app
  * is killed), what was finished stays finished, what was begun is marked as such and worked
  * out again, and the rest is taken up next time. Nothing here retries: a failed run ends,
- * says why, and the next one starts afresh.
+ * says why, and the next one starts again.
  */
 class SyncEngine(
     private val connector: MachineConnector,
@@ -248,7 +248,7 @@ class SyncEngine(
         if (progress.state.machineTag != tag) {
             // Nothing is remembered yet, or what is remembered is another machine's (its record
             // outlived the forgetting of it). That machine's nights stay in Health Connect, as
-            // forgetting promises; the record of them is of no use here, and this one starts afresh.
+            // forgetting promises; the record of them is of no use here, and this one starts empty.
             progress.state = progress.state.cleared().with(machineTag = tag)
             store.write(progress.state)
         }
@@ -278,12 +278,11 @@ class SyncEngine(
             )
         }
         if (progress.state.rewriteRequested) {
-            // Everything is to be written again: what was passed on may have been cleared, so the
-            // word that it is in step counts for nothing. It is taken back here, once, for both
-            // kinds of record and whichever of them is switched on at the moment; from here on
-            // this is an ordinary run. What it gets through is confirmed and stays so, and what
-            // it does not is still marked next time.
-            // The nights first, so that dying between the two only has this done again.
+            // A rewrite was asked for: Health Connect may have been cleared, so the marks that say
+            // "written" cannot be trusted. Clear them here, once, for nights and for sessions,
+            // whichever of the two is switched on. After that this is an ordinary run: what it
+            // writes is confirmed again, and what it does not reach is still marked next time.
+            // Nights first: if the app dies between the two, this block runs again.
             nights?.let { nightStore ->
                 val kept = readNights(nightStore)
                 if (kept.byDate.values.any { it.recorded != null }) {
@@ -307,8 +306,8 @@ class SyncEngine(
         val recordsFailure = nights(session, firmware, tag, machineNow, progress)
 
         if (!progress.state.respiratoryRate) {
-            // Nothing is written minute by minute. The machine's clock as last noted while it was
-            // is left as it is, so that a clock set in the meantime is still noticed if it is switched on.
+            // Respiratory rate is off, so no per-minute data is written. The stored clock reading
+            // is kept, so that a clock change is still noticed if it is switched on later.
             recordsFailure?.let { throw it }
             return
         }
@@ -376,7 +375,7 @@ class SyncEngine(
             val round = session.pull(SpoolName.ONE_MINUTE, address)
             keepRaw(SpoolName.ONE_MINUTE, round)
             val log = MinuteDecoder.decode(round.data, firmware)
-            // A machine that keeps promising more and sending nothing is not followed for ever.
+            // Stop if the machine keeps saying there is more but sends nothing.
             if (log.entries.isNotEmpty()) {
                 emptyRounds = 0
             } else if (++emptyRounds > MAX_EMPTY_ROUNDS) {
@@ -418,7 +417,7 @@ class SyncEngine(
                 val plan = try {
                     RespiratoryRatePlan.session(record, tag, progress.state.leakLimitLitresPerMinute)
                 } catch (e: IllegalArgumentException) {
-                    // A record no rule was written for (far too long, say) costs itself, like one that cannot be read.
+                    // A record no rule was written for (far too long, say) is skipped, like one that cannot be read.
                     trouble()
                     continue
                 } catch (e: IllegalStateException) {
@@ -494,7 +493,7 @@ class SyncEngine(
         val nightStore = nights ?: return null
         val onDisk = readNights(nightStore)
         if (onDisk.machineTag != null && onDisk.machineTag != tag) {
-            // Another machine's nights are not this one's. They are put aside, not thrown away, and the list starts afresh.
+            // Another machine's nights are not this one's. They are put aside, not thrown away, and the list starts empty.
             nightStore.setAside(PREVIOUS)
         }
         val before = if (onDisk.machineTag == tag) onDisk.byDate else emptyMap()
@@ -582,7 +581,7 @@ class SyncEngine(
         var unsaved = 0
         return try {
             if (records.open() && byDate.values.any { it.recorded != null }) {
-                // PAPRelay's place in the health records was not there and has been made afresh: the
+                // PAPRelay's place in the health records was not there and has been made again: the
                 // user removed it, or Health Connect's data was cleared. Nothing recorded before is
                 // there now, whatever is remembered here.
                 for ((date, stored) in byDate.toMap()) byDate[date] = StoredNight(stored.night, null)
@@ -616,7 +615,7 @@ class SyncEngine(
         }
     }
 
-    /** The nights as kept. A file that cannot be read is put aside under another name, and the list starts afresh. */
+    /** The nights as kept. A file that cannot be read is put aside under another name, and the list starts empty. */
     private fun readNights(nightStore: NightStore): Nights = try {
         nightStore.read()
     } catch (e: NightsUnreadableException) {
