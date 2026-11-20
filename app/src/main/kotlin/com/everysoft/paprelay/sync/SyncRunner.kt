@@ -55,6 +55,8 @@ class SyncStatus(
     val exportFailed: Boolean = false,
     /** The chosen file's name as the user sees it, when it is known. */
     val exportName: String? = null,
+    /** True while respiratory rate is switched on and waits for the machine's software to record a full night. */
+    val rateWaiting: Boolean = false,
 ) {
     fun with(
         running: Boolean = this.running,
@@ -66,7 +68,8 @@ class SyncStatus(
         exportFile: String? = this.exportFile,
         exportFailed: Boolean = this.exportFailed,
         exportName: String? = this.exportName,
-    ) = SyncStatus(running, lastReport, lastCompleteAtMs, storeUnreadable, respiratoryRate, healthRecords, exportFile, exportFailed, exportName)
+        rateWaiting: Boolean = this.rateWaiting,
+    ) = SyncStatus(running, lastReport, lastCompleteAtMs, storeUnreadable, respiratoryRate, healthRecords, exportFile, exportFailed, exportName, rateWaiting)
 }
 
 /**
@@ -311,10 +314,7 @@ class SyncRunner(
      */
     fun acceptMachineClock() {
         scope.launch {
-            // The clock may have been set back past the moment the machine's present software was
-            // first seen, so that moment no longer tells its sessions from older ones. (For software
-            // the per-minute log was not compared on, the next run takes that moment to be then.)
-            change { it.with(clock = null, softwareSinceMs = null).fromTheStart() }
+            change { it.clockAccepted() }
             syncNow()
         }
     }
@@ -511,6 +511,7 @@ class SyncRunner(
                     before.with(
                         lastReport = report, lastCompleteAtMs = stored.lastCompleteAtMs, storeUnreadable = false,
                         respiratoryRate = stored.respiratoryRate, healthRecords = stored.healthRecords, exportFile = stored.exportFile,
+                        rateWaiting = stored.rateWaiting,
                     )
                 }
                 // Damaged: the user is told, and offered a fresh start.

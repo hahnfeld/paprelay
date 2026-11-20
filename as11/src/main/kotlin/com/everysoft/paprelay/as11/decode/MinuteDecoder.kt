@@ -165,7 +165,7 @@ public object MinuteDecoder {
      * A record's series could not be decoded, or contradict each other. Either is what a wrong
      * modulus looks like, and that casts doubt on the short records of the same download.
      */
-    private class LengthDisagreement(message: String) : Exception(message)
+    private class LengthDisagreement(message: String, val startedAt: MachineTime? = null) : Exception(message)
 
     /**
      * @param payload one verified download of the per-minute log.
@@ -199,7 +199,7 @@ public object MinuteDecoder {
                     decoded
                 }
             } catch (e: LengthDisagreement) {
-                sink.fail(e.message!!)
+                sink.fail(e.message!!, startedAt = e.startedAt)
                 doubted = true
             }
         }
@@ -254,7 +254,7 @@ public object MinuteDecoder {
         // certain run and at most the shortest series.
         val atLeast = found.values.maxOf { it.block.certain }
         val atMost = found.values.minOf { it.block.samples.size }
-        if (atLeast > atMost) throw LengthDisagreement("$what: the signals disagree about how many samples there are")
+        if (atLeast > atMost) throw LengthDisagreement("$what: the signals disagree about how many samples there are", start)
 
         // A series still counts towards the record's length when its values cannot be right:
         // where it ends does not depend on what it holds.

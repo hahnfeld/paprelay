@@ -34,11 +34,14 @@ public sealed interface RecordResult<out T> {
      * @property ordinal position among the log's entries, counting from zero.
      * @property severalRecords true when what failed was a container, so that an unknown
      *   number of records is missing, not one.
+     * @property startedAt the record's own start time, where it could still be read. It says
+     *   when the record belongs; nothing else of the record is to be believed.
      */
     public class Failed internal constructor(
         public val ordinal: Int,
         public val reason: String,
         public val severalRecords: Boolean,
+        public val startedAt: MachineTime? = null,
     ) : RecordResult<Nothing>
 }
 
@@ -106,8 +109,8 @@ internal class ResultSink<T> {
         entries += RecordResult.Decoded(value)
     }
 
-    fun fail(reason: String, severalRecords: Boolean = false) {
-        entries += RecordResult.Failed(entries.size, reason, severalRecords)
+    fun fail(reason: String, severalRecords: Boolean = false, startedAt: MachineTime? = null) {
+        entries += RecordResult.Failed(entries.size, reason, severalRecords, startedAt)
     }
 
     /** Runs [decode] for one entry; a decoding failure becomes that entry's result. */

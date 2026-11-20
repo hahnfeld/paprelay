@@ -276,18 +276,16 @@ class SyncEngine(
             // old one; only what begins from now on can show how the new one writes.
             progress.state = progress.state.with(
                 softwareSeen = identity.applicationIdentifier,
-                // On the compared version a first run takes the sessions the machine already holds.
-                // On any other, the moment it was first seen is always kept: nothing recorded before
-                // it is written (see below).
-                softwareSinceMs = if (progress.state.softwareSeen == null && compared) null else machineNow.epochMs,
+                softwareSinceMs = when {
+                    // Not compared: which sessions are its own is settled when its per-minute log is next read (below).
+                    !compared -> null
+                    // The compared version, on a first run, takes the sessions the machine already holds.
+                    progress.state.softwareSeen == null -> null
+                    else -> machineNow.epochMs
+                },
                 // Whatever was vouched for before is not what is running now, even if its name comes back.
                 vouchedSoftware = null,
             )
-        } else if (!compared && progress.state.softwareSinceMs == null) {
-            // When this software was first seen is no longer known: the user accepted a changed
-            // clock, or the state was written by a version that did not keep it. It is taken to
-            // be now, and the software has to be vouched for again.
-            progress.state = progress.state.with(softwareSinceMs = machineNow.epochMs, vouchedSoftware = null)
         }
         if (progress.state.rewriteRequested) {
             // A rewrite was asked for: Health Connect may have been cleared, so the marks that say
@@ -330,10 +328,32 @@ class SyncEngine(
         progress.state = progress.state.with(clock = ClockBaseline(offset.millis, machineNow.epochMs))
         store.write(progress.state)
 
+        // On software that was not compared, a session is the software's own only if it was not yet
+        // on the machine when the per-minute log was first read under that software: what was there
+        // then, an earlier version may have recorded. This is settled once, in a run that reads the
+        // log to its end, and kept as the moment after the last minute then present. (Not as "now":
+        // a clock that was once set back leaves sessions stamped later than now.) It is settled
+        // again if it is missing, or if it lies after the machine's present time, which it can only
+        // do if the clock was set back past it. While it is being settled nothing is the software's
+        // own, and whatever was vouched for has to be vouched for again.
+        val settled = if (compared) null else progress.state.softwareSinceMs?.takeIf { it <= machineNow.epochMs }
+        val settling = !compared && settled == null
+        if (settling && progress.state.vouchedSoftware != null) {
+            progress.state = progress.state.with(vouchedSoftware = null)
+            store.write(progress.state)
+        }
+        // A session whose first minute is before this is not the software's own. Null on the compared version.
+        val ownFrom: Long? = when {
+            compared -> null
+            settling -> Long.MAX_VALUE
+            else -> settled
+        }
+        var presentUntil = machineNow.epochMs
+        var readToEnd = false
+        // Records that failed without saying when they began, met since the last record that could be dated.
+        var undated = 0
         var vouched = progress.state.vouchedSoftware == identity.applicationIdentifier
-        val vouchFrom = progress.state.softwareSinceMs
-        // On software that was not compared, the moment it was first seen: set above, always.
-        val firstSeen = if (compared) null else checkNotNull(vouchFrom) { "no moment at which uncompared software was first seen" }
+        val vouchFrom = if (compared) progress.state.softwareSinceMs else null
         val from = maxOf(EARLIEST_START_MS, progress.state.resumeFromMs?.let { it - OVERLAP_MS } ?: (machineNow.epochMs - FIRST_WINDOW_MS))
         var address: SpoolAddress = SpoolAddress.FromMachineTime(from)
         var rounds = 0
@@ -399,8 +419,8 @@ class SyncEngine(
             // Something in this download failed the way a misread layout would. A long record that
             // decoded cleanly beside it answers the doubt: the layout is being read as it is meant,
             // and what failed was that one record. With none, the short records are not believed.
-            // (On software that was not compared, a record from before it was first seen answers nothing.)
-            val doubtful = log.doubted && log.decoded.none { it.sampleCount >= VOUCH_SAMPLES && (firstSeen == null || it.firstMinuteEnd.epochMs >= firstSeen) }
+            // (On software that was not compared, a record that is not the software's own answers nothing.)
+            val doubtful = log.doubted && log.decoded.none { it.sampleCount >= VOUCH_SAMPLES && (ownFrom == null || it.firstMinuteEnd.epochMs >= ownFrom) }
             for (entry in log.entries) {
                 // A stop asked for from outside is heard between sessions, never inside one.
                 currentCoroutineContext().ensureActive()
@@ -410,18 +430,48 @@ class SyncEngine(
                     // written (one unreadable night must not hold up every night that follows),
                     // but the place to resume from stays before it, so that it is read again.
                     is RecordResult.Failed -> {
-                        trouble()
+                        val began = entry.startedAt?.epochMs
+                        when {
+                            ownFrom == null -> trouble()
+                            // Not the software's own: it would not be written if it could be read.
+                            began != null && began < ownFrom -> Unit
+                            // No telling yet when it was recorded. The log is in time order: what follows will say.
+                            began == null -> undated++
+                            else -> trouble()
+                        }
                         continue
                     }
                 }
                 newest = record.firstMinuteEnd.epochMs
-                if (firstSeen != null && record.firstMinuteEnd.epochMs < firstSeen) {
-                    // It began before this software was first seen, so which software recorded it is
-                    // not known, and with moduli that are only assumed that is not good enough. It is
-                    // not written, now or later; what was written of it before stays as it is.
+                if (settling) presentUntil = maxOf(presentUntil, record.lastMinuteEnd.epochMs + 1)
+                if (ownFrom != null && record.firstMinuteEnd.epochMs < ownFrom) {
+                    // Not the software's own, so which software recorded it is not known, and with
+                    // moduli that are only assumed that is not good enough to write it. Whatever
+                    // failed just before it is older still.
+                    undated = 0
+                    // One thing is known of a session that has an entry in the ledger: this app wrote
+                    // it before, under software it had reason to trust. Its bytes have not changed, so
+                    // it is kept in order as usual (written again if that was asked for, or finished
+                    // if a write was cut short). Nothing else of that age is touched, now or later.
+                    val known = try {
+                        RespiratoryRatePlan.session(record, tag, progress.state.leakLimitLitresPerMinute) as? SessionPlan.Planned
+                    } catch (e: IllegalArgumentException) {
+                        null
+                    } catch (e: IllegalStateException) {
+                        null
+                    }
+                    if (known != null && progress.state.ledger[known.readings.key] != null) {
+                        write(known)
+                        progress.sessions++
+                    }
                     if (!troubled && waiting.isEmpty()) lastBeforeTrouble = newest
                     checkpoint()
                     continue
+                }
+                if (undated > 0) {
+                    // What failed came after everything older, so it is the software's own.
+                    undated = 0
+                    trouble()
                 }
                 if (machineNow.epochMs - record.lastMinuteEnd.epochMs in -FUTURE_ALLOWANCE_MS until SETTLE_MS) {
                     // Its last minute has only just been recorded: the session may still be going on.
@@ -454,11 +504,13 @@ class SyncEngine(
                             record.sampleCount >= VOUCH_SAMPLES && (vouchFrom == null || record.firstMinuteEnd.epochMs >= vouchFrom)
                         } else {
                             // Nothing was compared for this software, so the record alone has to show that
-                            // it is read as it was meant: an hour or more, every known signal readable and
-                            // of one length (a signal with an impossible value is not among the readable),
-                            // and nothing else in the download that failed the way a misread layout would.
-                            // (It began after the software was first seen, or it would not have got this far.)
-                            record.sampleCount >= STRICT_VOUCH_SAMPLES && !log.doubted && record.signals.containsAll(KNOWN_SIGNALS)
+                            // it is read as it was meant: an hour or more, with every known signal readable.
+                            // All seven then agree on its length, and none holds a value the machine cannot
+                            // report (a signal that does is not among the readable); with a modulus wrong,
+                            // one or the other fails. It is the software's own, or it would not have got
+                            // this far, and it must not be stamped later than now.
+                            record.sampleCount >= STRICT_VOUCH_SAMPLES && record.signals.containsAll(KNOWN_SIGNALS) &&
+                                record.lastMinuteEnd.epochMs <= machineNow.epochMs + FUTURE_ALLOWANCE_MS
                         }
                         if (!vouched && canVouch) {
                             vouched = true
@@ -486,11 +538,25 @@ class SyncEngine(
                 checkpoint()
             }
             checkpoint()
-            address = SpoolAddress.Continuation(round.next ?: break)
+            val next = round.next
+            if (next == null) {
+                readToEnd = true
+                break
+            }
+            address = SpoolAddress.Continuation(next)
         }
-        // Nothing long enough came to vouch for the software: the short sessions wait for the next run.
+        // A failure with nothing after it to date it by is taken to be the software's own. (While the
+        // software's own sessions are being settled, everything on the machine is older.)
+        if (undated > 0 && !settling) trouble()
+        if (settling && readToEnd) {
+            // Everything now on the machine was there before the software's own sessions begin.
+            progress.state = progress.state.with(softwareSinceMs = presentUntil)
+        }
+        // Nothing long enough came to vouch for the software: the sessions wait for the next run. On
+        // the compared version that is a run that did not finish. On any other it is how things stand
+        // until the software has recorded a full night, and nothing has gone wrong.
         val unvouched = waiting.isNotEmpty()
-        if (unvouched) trouble()
+        if (unvouched && compared) trouble()
         // Where the next run begins: at the newest session (it may still be in progress and grow),
         // or, if something could not be dealt with, before it, so that it is read again. Where the
         // trouble came before any session that could be dealt with, the place stays where it was.
@@ -498,10 +564,11 @@ class SyncEngine(
         // that still cannot be read when it is that old stops being asked for, or every run would
         // read months of history again for its sake.
         val resume = when {
-            // Sessions that are only waiting for the software to be vouched for can be read; they are
-            // never given up for being old.
-            unvouched -> lastBeforeTrouble ?: progress.state.resumeFromMs
-            troubled -> minOf(
+            // On the compared version, sessions that are only waiting for the software to be vouched
+            // for can be read; they are never given up for being old. On any other, the wait may
+            // have no end (software whose sessions never vouch), so it is bounded like the rest.
+            unvouched && compared -> lastBeforeTrouble ?: progress.state.resumeFromMs
+            unvouched || troubled -> minOf(
                 maxOf(lastBeforeTrouble ?: progress.state.resumeFromMs ?: Long.MIN_VALUE, machineNow.epochMs - HOLD_LIMIT_MS),
                 newest ?: Long.MAX_VALUE,
             )
@@ -711,8 +778,9 @@ class SyncEngine(
 
         /**
          * The same, for software the per-minute log was not compared on. With every known signal
-         * present, a wrong modulus leaves no realistic chance that a record this long still decodes
-         * with all of them the same length.
+         * readable, a record this long that was decoded with a wrong modulus practically always
+         * shows it: its signals disagree about its length, or one of them holds a value the
+         * machine cannot report.
          */
         const val STRICT_VOUCH_SAMPLES = 60
 

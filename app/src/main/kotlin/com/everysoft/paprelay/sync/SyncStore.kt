@@ -4,6 +4,7 @@ package com.everysoft.paprelay.sync
 
 import com.everysoft.paprelay.core.ClockOffset
 import com.everysoft.paprelay.core.MachineTime
+import com.everysoft.paprelay.as11.decode.Firmware
 import com.everysoft.paprelay.core.sync.LedgerEntry
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -141,10 +142,15 @@ class SyncState(
     /** The machine software last seen, by its full identifier. */
     val softwareSeen: String? = null,
     /**
-     * The machine's time when [softwareSeen] was first seen. Only a session that began after it
-     * was certainly recorded by this software, and can vouch for it; on software the per-minute
-     * log was not compared on, only such a session is written at all. Null on the compared
-     * version when no other software was ever seen: then the sessions the machine holds are taken.
+     * From when, by the machine's clock, sessions are taken to be [softwareSeen]'s own.
+     *
+     * On the compared version: the moment that software was first seen in place of another.
+     * Only a session that began after it can vouch. Null when no other software was ever seen,
+     * and after the user has accepted a changed clock: then any long session vouches.
+     *
+     * On any other version: the moment after the last minute that was on the machine when its
+     * per-minute log was first read to the end. Only a session that began after it is the
+     * software's own, can vouch, and is newly written. Null until that has happened.
      */
     val softwareSinceMs: Long? = null,
     /** Whether the machine's per-minute respiratory rate is written to Health Connect. Off unless switched on. */
@@ -198,6 +204,29 @@ class SyncState(
     /** With every session to be read again from as far back as the machine holds. */
     fun fromTheStart(): SyncState =
         with(resumeFromMs = null)
+
+    /** Whether the per-minute log of the software last seen was compared, so that its moduli are known. Null if none was seen. */
+    private val softwareCompared: Boolean? get() = softwareSeen?.let { Firmware.reportedByMachine(it).perMinuteCompared }
+
+    /**
+     * After the user has the machine's clock taken as it is now. The clock is measured afresh and
+     * the sessions are read again.
+     *
+     * On the compared version the moment its software was first seen is dropped: the clock may
+     * have been set back past it, and then it no longer tells its sessions from older ones. On
+     * any other version that moment is kept. It marks what was on the machine before the
+     * software's own sessions, and those sessions keep the stamps they have; if the clock was
+     * set back past it, the engine sees that and settles it again.
+     */
+    fun clockAccepted(): SyncState =
+        with(clock = null, softwareSinceMs = if (softwareCompared == false) softwareSinceMs else null).fromTheStart()
+
+    /**
+     * True while respiratory rate is switched on and nothing of it is written yet, because the
+     * machine's software is not the compared one and has not yet recorded a full night that
+     * decoded cleanly.
+     */
+    val rateWaiting: Boolean get() = respiratoryRate && softwareCompared == false && vouchedSoftware != softwareSeen
 
     companion object {
         val EMPTY = SyncState(null, emptyMap(), null, null, null, null, null, false)

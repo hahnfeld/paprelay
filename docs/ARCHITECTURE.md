@@ -98,15 +98,33 @@ writes no session until one long session has decoded cleanly under the software 
 machine reports. The code calls this "vouching", and it is asked for again whenever the
 identifier changes.
 
-| | Compared version (19.8.8.0) | Any other version |
-|---|---|---|
-| What vouches | A session of 30 minutes or more | A session of 60 minutes or more in which all seven known signals are readable and agree on its length, in a download where no record failed |
-| Which session may vouch | After a change of build, one that began after the change was seen | One that began after this version was first seen |
-| Sessions from before the version was first seen | Written, once it is vouched for | Never written |
-| After the user accepts a changed clock | As before | The version counts as first seen now, and must be vouched for again |
+On the compared version a session of 30 minutes or more vouches. After a change of
+identifier it must be a session that began after the change was seen.
 
-On another version this means that respiratory rate starts with the first full night after
-PAPRelay has seen that version, and that the nights before it are not filled in.
+On any other version the rule is stricter, and it does not rely on the machine's clock:
+
+- **Which sessions are its own.** The first time the engine reads the per-minute log to the
+  end under that version, everything the machine then holds counts as older: an earlier
+  version may have recorded it. The software's own sessions are those that begin after the
+  last minute present then. (Not after "now": a clock that was once set back leaves
+  sessions stamped later than now.)
+- **What vouches.** One of its own sessions, 60 minutes or more, in which all seven known
+  signals are readable, and which is not stamped later than now. With a wrong constant one
+  of the signals then practically always disagrees about the length, or holds a value the
+  machine cannot report.
+- **Older sessions.** They are never newly written. A session that PAPRelay already wrote
+  under trusted software stays in its care: it is written again after "Write everything
+  again", and a write that was cut short is finished.
+- **Damaged records.** A record that cannot be decoded is dated by its own start time, or
+  else by the records around it. One from before the software's own sessions is ignored;
+  one among them is reported like any night that cannot be read.
+- **Changed clock.** When the user accepts a changed clock, what is the software's own
+  stays as it was. If the clock was set back past that point, it is settled again, and the
+  software must be vouched for again.
+
+Until the software is vouched for, respiratory rate waits. That is not a failure: the run
+ends as complete, and the home screen and the Sharing page say that respiratory rate
+starts after the next full night.
 
 Software whose identifier has another form is not read: the engine stops with
 `SOFTWARE_NOT_CONFIRMED` and writes nothing.
@@ -118,8 +136,8 @@ Known limits:
   that.
 - The machine does not say which software recorded a session. On the compared version,
   sessions that an earlier version recorded are read with its constants.
-- If another version does use other constants, no session ever vouches. With respiratory
-  rate switched on, every run then ends as `PARTIAL`.
+- If another version does use other constants, no session ever vouches, and respiratory
+  rate keeps waiting. The nightly figures are not affected.
 
 ### Clocks
 
