@@ -40,5 +40,4 @@ PAPRelay now copies each night's figures, not only respiratory rate.
 - A device check that tests each connection and can save a report.
 - A reinstall or a repeated run writes over the same records, so no night is written twice.
 
-Tested with an AirSense 11 AutoSet (software `SW04600.19.8.8.0`) and a Pixel 10 Pro
-(Android 17). Decoding was checked against the same nights on the machine's SD card.
+Decoding was checked against the same nights on the machine's SD card.

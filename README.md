@@ -16,8 +16,6 @@ It uses Bluetooth. It does not use the internet.
 >
 > There is no warranty.
 
-PAPRelay is new. It was tested with one machine and one phone.
-
 ## What it does
 
 - It reads the nights that the machine has stored: hours of use, AHI (breathing events

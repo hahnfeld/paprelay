@@ -81,13 +81,12 @@ Three things are derived from the stored integers:
 
 ### Only checked machine software
 
-The manufacturer does not publish the layouts of the stored logs. They were confirmed on
-one machine against the files on its SD card. Another software version could use another
+The manufacturer does not publish the layouts of the stored logs. They were confirmed
+against the files on the machine's SD card. Another software version could use another
 layout, and the per-minute log can then decode to values that are wrong but plausible.
 
-`Firmware` therefore accepts only software 19.8.8.0 of the AirSense 11 (any build of it;
-one build on one AutoSet was compared). With any other version the engine stops with
-`SOFTWARE_NOT_CONFIRMED` and writes nothing.
+`Firmware` therefore accepts only software 19.8.8.0 of the AirSense 11 (any build of it).
+With any other version the engine stops with `SOFTWARE_NOT_CONFIRMED` and writes nothing.
 
 For the per-minute log there is a second check. On the first run, and after a software
 change, a session of at least 30 minutes must decode cleanly before any other session is
