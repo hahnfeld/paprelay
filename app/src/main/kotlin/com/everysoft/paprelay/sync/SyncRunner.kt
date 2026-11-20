@@ -15,7 +15,6 @@ import androidx.work.WorkManager
 import com.everysoft.paprelay.BuildConfig
 import com.everysoft.paprelay.as11.SpoolName
 import com.everysoft.paprelay.as11.SpoolRound
-import com.everysoft.paprelay.as11.decode.Firmware
 import com.everysoft.paprelay.ble.MachineClaim
 import com.everysoft.paprelay.ble.PresenceWatch
 import com.everysoft.paprelay.core.nights.Night
@@ -41,12 +40,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.abs
 
-/**
- * Whether respiratory rate can be read from the software last seen on the machine. Not known
- * until the machine has been seen once; until then nothing is said against it.
- */
-internal fun rateReadableFrom(softwareSeen: String?): Boolean = softwareSeen?.let { Firmware.reportedByMachine(it).perMinuteAccepted } ?: true
-
 /** What the screen needs to know about synchronising. */
 class SyncStatus(
     val running: Boolean,
@@ -62,15 +55,7 @@ class SyncStatus(
     val exportFailed: Boolean = false,
     /** The chosen file's name as the user sees it, when it is known. */
     val exportName: String? = null,
-    /** False when the machine's software, as last seen, is one whose respiratory rate is not read. */
-    val rateReadable: Boolean = true,
 ) {
-    /**
-     * Whether respiratory rate is to be written as things stand: switched on, and readable from the
-     * machine's software. The switch itself is kept as the user left it, for when it can be read again.
-     */
-    val rateWanted: Boolean get() = respiratoryRate && rateReadable
-
     fun with(
         running: Boolean = this.running,
         lastReport: SyncReport? = this.lastReport,
@@ -81,8 +66,7 @@ class SyncStatus(
         exportFile: String? = this.exportFile,
         exportFailed: Boolean = this.exportFailed,
         exportName: String? = this.exportName,
-        rateReadable: Boolean = this.rateReadable,
-    ) = SyncStatus(running, lastReport, lastCompleteAtMs, storeUnreadable, respiratoryRate, healthRecords, exportFile, exportFailed, exportName, rateReadable)
+    ) = SyncStatus(running, lastReport, lastCompleteAtMs, storeUnreadable, respiratoryRate, healthRecords, exportFile, exportFailed, exportName)
 }
 
 /**
@@ -328,7 +312,8 @@ class SyncRunner(
     fun acceptMachineClock() {
         scope.launch {
             // The clock may have been set back past the moment the machine's present software was
-            // first seen, so that moment no longer tells its sessions from older ones.
+            // first seen, so that moment no longer tells its sessions from older ones. (For software
+            // the per-minute log was not compared on, the next run takes that moment to be then.)
             change { it.with(clock = null, softwareSinceMs = null).fromTheStart() }
             syncNow()
         }
@@ -526,7 +511,6 @@ class SyncRunner(
                     before.with(
                         lastReport = report, lastCompleteAtMs = stored.lastCompleteAtMs, storeUnreadable = false,
                         respiratoryRate = stored.respiratoryRate, healthRecords = stored.healthRecords, exportFile = stored.exportFile,
-                        rateReadable = rateReadableFrom(stored.softwareSeen),
                     )
                 }
                 // Damaged: the user is told, and offered a fresh start.

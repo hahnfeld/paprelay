@@ -94,9 +94,9 @@ Open **Sharing** to choose.
   CPAP data, so the nights appear there under lab results, from "PAPRelay (CPAP machine)".
   They are not laboratory results.
 - Respiratory rate: off at the start. It is one value for each minute of therapy. Leave it
-  off if a watch or a ring already writes your respiratory rate. For now PAPRelay reads it
-  from machine software 19.8.8.0 only. After the first synchronisation the app tells you
-  if your machine has another version.
+  off if a watch or a ring already writes your respiratory rate. With a machine
+  software version other than 19.8.8.0, respiratory rate starts with the first full night
+  after PAPRelay has seen that version.
 - Table of nights: one file (CSV) with one line for each night. You choose where it is
   kept, for example on a cloud drive.
 - Share: sends the recent nights as text to an app that you choose.

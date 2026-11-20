@@ -94,29 +94,33 @@ public enum class SummaryMetric(
 
 /**
  * The software a machine reports itself to be running, as the thing that
- * decides which of its data is read.
+ * decides how far its data is believed.
  *
  * The layouts, moduli and factors in this file were checked against one real
- * machine and its SD card: an AirSense 11 AutoSet on software 19.8.8.0. What
- * is read from other software follows from how each log can go wrong:
+ * machine and its SD card: an AirSense 11 AutoSet on software 19.8.8.0. Data
+ * is also read from every other version whose identifier has the form of that
+ * machine's (`SW04600`, a version, a build), on the assumption that it is laid
+ * out the same. The assumption is not relied on alone:
  *
- *  - The daily summaries and the event logs are tagged fields. They are read
- *    from every version whose identifier has the form of that machine's
- *    (`SW04600`, a version, a build), on the assumption that the fields mean
- *    the same. Each summary value is still checked for sense, and a metric
- *    whose percentiles are not exactly the ones known is left out.
+ *  - The daily summaries and the event logs are tagged fields. Each summary
+ *    value is checked for sense, and a metric whose percentiles are not exactly
+ *    the ones known is left out.
  *  - The per-minute log is compressed with a modulus for each signal, and with
- *    a wrong modulus it can decode to values that are wrong but plausible. It
- *    is read only from the version it was compared on.
+ *    a wrong modulus it can decode to values that are wrong but plausible,
+ *    mostly in short records. Whoever uses it for a version that was not
+ *    compared ([perMinuteCompared] is false) must first see a long record of
+ *    that version decode with every known signal in agreement, and must not
+ *    use what an earlier version may have recorded. The synchronising engine
+ *    does both.
  *
  * Software whose identifier has another form is not read at all.
  */
 public class Firmware private constructor(public val applicationIdentifier: String) {
-    /** Whether the summaries and event logs of this software are read. */
+    /** Whether data from this software is read. */
     public val layoutsAccepted: Boolean get() = applicationIdentifier.length <= MAX_LENGTH && ACCEPTED.matches(applicationIdentifier)
 
-    /** Whether the per-minute log of this software is read: only that of the version it was compared on. */
-    public val perMinuteAccepted: Boolean get() = PER_MINUTE.matches(applicationIdentifier)
+    /** Whether this is the version the per-minute log was compared on, so that its moduli are known and not assumed. */
+    public val perMinuteCompared: Boolean get() = COMPARED.matches(applicationIdentifier)
 
     public companion object {
         /** Far longer than any identifier seen, and well within what is kept of it between synchronisations. */
@@ -126,7 +130,7 @@ public class Firmware private constructor(public val applicationIdentifier: Stri
         private val ACCEPTED = Regex("SW04600(\\.[0-9A-Za-z]{1,40}){2,8}")
 
         /** Software 19.8.8.0, any build. */
-        private val PER_MINUTE = Regex("SW04600\\.19\\.8\\.8\\.0\\.[0-9a-f]{1,40}")
+        private val COMPARED = Regex("SW04600\\.19\\.8\\.8\\.0\\.[0-9a-f]{1,40}")
 
         /**
          * @param applicationIdentifier the `ApplicationIdentifier` the machine gave **in the

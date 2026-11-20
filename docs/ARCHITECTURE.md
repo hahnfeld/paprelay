@@ -82,35 +82,44 @@ Three things are derived from the stored integers:
 ### Machine software versions
 
 The manufacturer does not publish the layouts of the stored logs. They were confirmed
-against the files on the machine's SD card, on software 19.8.8.0. What is read from other
-software follows from how each log can go wrong (`Firmware` in `As11Scales.kt`):
+against the files on the machine's SD card, on software 19.8.8.0. Data is also read from
+every other version whose identifier has the form of the compared machine's (`SW04600`, a
+version, a build), on the assumption that it is laid out the same (`Firmware` in
+`As11Scales.kt`). The assumption is not relied on alone.
 
-- The daily summary is made of tagged fields. It is read from every version whose
-  identifier has the form of the compared machine's (`SW04600`, a version, a build), on
-  the assumption that the fields mean the same. Each value is still checked before it is
-  passed on. A day of the wrong length, or with a session count that does not match, is
-  left out whole. A figure above its upper limit, or a metric that does not have exactly
-  the percentiles known for it, is left out alone.
-- The per-minute log is compressed with a constant for each signal. With a wrong constant
-  it can decode to values that are wrong but plausible, mostly in short sessions. It is
-  read only while the machine runs the version it was compared on. On another version
-  respiratory rate is not written, and the app says so.
+The daily summary is made of tagged fields. Each value is checked before it is passed on.
+A day of the wrong length, or with a session count that does not match, is left out whole.
+A figure above its upper limit, or a metric that does not have exactly the percentiles
+known for it, is left out alone.
 
-The engine has one more check for the per-minute log. On the first run, and whenever the
-machine's software identifier has changed, no session is written until a session of at
-least 30 minutes has decoded with its signals agreeing on its length. After a change it
-must be a session that began after the change was seen. The code calls this "vouching".
+The per-minute log is compressed with a constant for each signal. With a wrong constant it
+can decode to values that are wrong but plausible, mostly in short sessions. So the engine
+writes no session until one long session has decoded cleanly under the software the
+machine reports. The code calls this "vouching", and it is asked for again whenever the
+identifier changes.
 
-A known limit: the machine does not say which software recorded a session. Sessions that
-an earlier version recorded are read with the compared version's constants once the
-machine runs the compared version. On a first run, and after the user accepts a changed
-clock, an older session can also do the vouching.
+| | Compared version (19.8.8.0) | Any other version |
+|---|---|---|
+| What vouches | A session of 30 minutes or more | A session of 60 minutes or more in which all seven known signals are readable and agree on its length, in a download where no record failed |
+| Which session may vouch | After a change of build, one that began after the change was seen | One that began after this version was first seen |
+| Sessions from before the version was first seen | Written, once it is vouched for | Never written |
+| After the user accepts a changed clock | As before | The version counts as first seen now, and must be vouched for again |
+
+On another version this means that respiratory rate starts with the first full night after
+PAPRelay has seen that version, and that the nights before it are not filled in.
 
 Software whose identifier has another form is not read: the engine stops with
 `SOFTWARE_NOT_CONFIRMED` and writes nothing.
 
-What these checks cannot catch is a version that keeps the fields and changes what a field
-means, for example its scale. Only a comparison with a second source shows that.
+Known limits:
+
+- The checks test the framing, not the meaning. A version that keeps the fields and the
+  constants and changes a scale would pass. Only a comparison with a second source shows
+  that.
+- The machine does not say which software recorded a session. On the compared version,
+  sessions that an earlier version recorded are read with its constants.
+- If another version does use other constants, no session ever vouches. With respiratory
+  rate switched on, every run then ends as `PARTIAL`.
 
 ### Clocks
 

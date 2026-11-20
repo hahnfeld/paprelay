@@ -121,9 +121,10 @@ class ClockBaseline(val offsetMs: Long, val machineMs: Long)
  * @property rewriteRequested true when every session is to be written again whatever the
  *   ledger says. The next run turns it into a ledger whose every entry is marked as begun.
  * @property vouchedSoftware the machine software, by its full identifier, from which a long
- *   session has been read cleanly. Until there is one, short sessions are not written: a
- *   few minutes can be read "successfully" from a layout that is not the expected one, and
- *   a long session cannot.
+ *   session has been read cleanly. Until there is one, no session is written: a few minutes
+ *   can be read "successfully" from a layout that is not the expected one, and a long
+ *   session cannot. What counts as long and clean is stricter for software the per-minute
+ *   log was not compared on (see the synchronising engine).
  */
 class SyncState(
     val machineTag: String?,
@@ -140,9 +141,10 @@ class SyncState(
     /** The machine software last seen, by its full identifier. */
     val softwareSeen: String? = null,
     /**
-     * The machine's time when [softwareSeen] was first seen in place of another. Only a session
-     * that began after it was certainly recorded by this software, and can vouch for it. Null
-     * when no other software was ever seen: then nothing says which sessions are older.
+     * The machine's time when [softwareSeen] was first seen. Only a session that began after it
+     * was certainly recorded by this software, and can vouch for it; on software the per-minute
+     * log was not compared on, only such a session is written at all. Null on the compared
+     * version when no other software was ever seen: then the sessions the machine holds are taken.
      */
     val softwareSinceMs: Long? = null,
     /** Whether the machine's per-minute respiratory rate is written to Health Connect. Off unless switched on. */

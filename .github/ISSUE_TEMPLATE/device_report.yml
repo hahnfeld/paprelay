@@ -37,7 +37,7 @@ body:
       options:
         - Everything works
         - Pairing works, but PAPRelay says that it cannot read this machine's software
-        - The nightly figures work, but respiratory rate is not available
+        - The nightly figures work, but respiratory rate does not arrive
         - Pairing does not work
         - Something else
     validations:

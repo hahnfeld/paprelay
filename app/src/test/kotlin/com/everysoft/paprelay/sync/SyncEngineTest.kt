@@ -38,14 +38,30 @@ class SyncEngineTest {
     private var machineAhead = 361_600L
     private val machineNow get() = phoneNow + machineAhead
 
-    /** A session on the machine: its first minute's stamp, and a rate and leak for each minute. */
-    private class Night(val firstMinuteEnd: Long, val rates: IntArray, val leaks: IntArray = IntArray(rates.size) { 2 }, val kind: Long = 1)
+    /**
+     * A session on the machine: its first minute's stamp, and a rate and leak for each minute.
+     * [whole] gives it all seven signals a real session has; without it, the three these tests need.
+     */
+    private class Night(
+        val firstMinuteEnd: Long,
+        val rates: IntArray,
+        val leaks: IntArray = IntArray(rates.size) { 2 },
+        val kind: Long = 1,
+        val whole: Boolean = false,
+    )
 
     private fun Proto.night(night: Night) {
+        val count = night.rates.size
         message(5) {
             message(1) { varint(1, night.kind); varint(2, night.firstMinuteEnd); bytes(3, riceBlock(night.leaks, 4)) }
-            message(3) { varint(1, night.kind); varint(2, night.firstMinuteEnd); bytes(3, riceBlock(pressure(night.rates.size), 2)) }
+            if (night.whole) message(2) { varint(1, night.kind); varint(2, night.firstMinuteEnd); bytes(3, riceBlock(IntArray(count) { 50 + it % 3 }, 4)) }
+            message(3) { varint(1, night.kind); varint(2, night.firstMinuteEnd); bytes(3, riceBlock(pressure(count), 2)) }
             message(4) { varint(1, night.kind); varint(2, night.firstMinuteEnd); bytes(3, riceBlock(night.rates, 8)) }
+            if (night.whole) {
+                message(5) { varint(1, night.kind); varint(2, night.firstMinuteEnd); bytes(3, riceBlock(IntArray(count) { 38 + it % 4 }, 4)) }
+                message(6) { varint(1, night.kind); varint(2, night.firstMinuteEnd); bytes(3, riceBlock(IntArray(count) { 18 + it % 2 }, 4)) }
+                message(7) { varint(1, night.kind); varint(2, night.firstMinuteEnd); bytes(3, riceBlock(IntArray(count) { 12 + it % 5 }, 4)) }
+            }
             varint(15, 1)
         }
     }
@@ -626,33 +642,170 @@ class SyncEngineTest {
         assertHolds(listOf(nap, later, long, brief))
     }
 
+    private val uncompared = "SW04600.20.1.0.0.abcdef"
+
     @Test
-    fun `on another version of the machine's software no respiratory rate is read, and what was written stays`() = runTest {
+    fun `on software that was not compared, nothing recorded before it was first seen is written`() = runTest {
+        // A machine full of sessions, any of which an earlier version may have recorded.
+        machine.applicationIdentifier = uncompared
+        val old = Night(machineNow - 30 * hour, rates(400), whole = true)
+        val small = Night(machineNow - 3 * hour, rates(10, base = 60), whole = true)
+        machine.nights = listOf(old, small)
+        val report = engine.sync()!!
+        // Nothing is wrong, and nothing is written: not even the long one may vouch.
+        assertEquals(SyncOutcome.COMPLETE, report.outcome)
+        assertEquals(0, report.readingsWritten)
+        assertHolds(emptyList())
+        assertNull(store.read().vouchedSoftware)
+        val firstSeen = store.read().softwareSinceMs
+        assertTrue(firstSeen != null && firstSeen > small.firstMinuteEnd)
+        // The place to go on from has moved past them, so that they are not read for ever.
+        assertEquals(small.firstMinuteEnd, store.read().resumeFromMs)
+
+        // So it stays, and the moment the software was first seen does not move.
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertHolds(emptyList())
+        assertEquals(firstSeen, store.read().softwareSinceMs)
+    }
+
+    @Test
+    fun `on software that was not compared, an hour of it decoding whole vouches for what it recorded`() = runTest {
+        machine.applicationIdentifier = uncompared
+        val old = Night(machineNow - 30 * hour, rates(400), whole = true)
+        machine.nights = listOf(old)
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+
+        // A short session it recorded waits.
+        phoneNow += 12 * hour
+        val short = Night(machineNow - 2 * hour, rates(20, base = 60), whole = true)
+        machine.nights = listOf(old, short)
+        assertEquals(SyncOutcome.PARTIAL, engine.sync()!!.outcome)
+        assertHolds(emptyList())
+
+        // Three quarters of an hour is not enough for software nothing is known of.
+        phoneNow += 12 * hour
+        val middling = Night(machineNow - 3 * hour, rates(45, base = 48), whole = true)
+        machine.nights = listOf(old, short, middling)
+        assertEquals(SyncOutcome.PARTIAL, engine.sync()!!.outcome)
+        assertHolds(emptyList())
+        assertNull(store.read().vouchedSoftware)
+
+        // A night is. What waited is written with it; what came before the software was seen never is.
+        phoneNow += 12 * hour
+        val night = Night(machineNow - 8 * hour, rates(300, base = 50), whole = true)
+        machine.nights = listOf(old, short, middling, night)
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertHolds(listOf(short, middling, night))
+        assertEquals(uncompared, store.read().vouchedSoftware)
+
+        // From then on its short sessions are written as they come.
+        phoneNow += 12 * hour
+        val nap = Night(machineNow - hour, rates(15, base = 44), whole = true)
+        machine.nights = listOf(short, middling, night, nap)
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertHolds(listOf(short, middling, night, nap))
+    }
+
+    @Test
+    fun `on software that was not compared, a session that is not whole and clean vouches for nothing`() = runTest {
+        machine.applicationIdentifier = uncompared
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+
+        // Long, but with three of the seven signals: their agreeing proves little.
+        phoneNow += 12 * hour
+        val thin = Night(machineNow - 8 * hour, rates(300))
+        machine.nights = listOf(thin)
+        assertEquals(SyncOutcome.PARTIAL, engine.sync()!!.outcome)
+        assertHolds(emptyList())
+
+        // Long and whole, with a leak no machine reports: something is not read as it was meant.
+        phoneNow += 24 * hour
+        val absurd = Night(machineNow - 8 * hour, rates(300, base = 50), leaks = IntArray(300) { 101 }, whole = true)
+        machine.nights = listOf(thin, absurd)
+        assertEquals(SyncOutcome.PARTIAL, engine.sync()!!.outcome)
+        assertHolds(emptyList())
+
+        // Long, whole and clean, beside a record whose signals disagree about its length.
+        phoneNow += 24 * hour
+        val clean = Night(machineNow - 8 * hour, rates(300, base = 46), whole = true)
+        machine.nights = listOf(thin, absurd, clean)
+        machine.torn = clean.firstMinuteEnd - 2 * hour
+        assertEquals(SyncOutcome.PARTIAL, engine.sync()!!.outcome)
+        assertHolds(emptyList())
+        assertNull(store.read().vouchedSoftware)
+
+        // The same night with nothing torn beside it.
+        machine.torn = null
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertHolds(listOf(thin, absurd, clean))
+        assertEquals(uncompared, store.read().vouchedSoftware)
+    }
+
+    @Test
+    fun `when the machine is updated to software that was not compared, only what follows is written`() = runTest {
         val under = Night(machineNow - 8 * hour, rates(400))
         machine.nights = listOf(under)
         assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
         assertHolds(listOf(under))
-        val resumeFrom = store.read().resumeFromMs
 
-        // The machine is updated. Sessions follow, one of them long enough to vouch for anything.
+        // A night that the phone did not fetch before the update: which software recorded it is not known.
         phoneNow += 24 * hour
-        machine.applicationIdentifier = "SW04600.20.1.0.0.abcdef"
-        val short = Night(machineNow - 9 * hour, rates(10, base = 60))
-        val night = Night(machineNow - 7 * hour, rates(300, base = 50))
-        machine.nights = listOf(under, short, night)
-        val report = engine.sync()!!
-        // Nothing is wrong, and nothing of the new software's per-minute log is passed on.
-        assertEquals(SyncOutcome.COMPLETE, report.outcome)
-        assertEquals(0, report.readingsWritten)
-        assertHolds(listOf(under))
-        assertEquals("SW04600.20.1.0.0.abcdef", store.read().softwareSeen)
-        assertNull(store.read().vouchedSoftware)
-        assertEquals(resumeFrom, store.read().resumeFromMs)
-
-        // So it stays, however often it runs.
-        phoneNow += hour
+        val between = Night(machineNow - 8 * hour, rates(300, base = 50), whole = true)
+        machine.applicationIdentifier = uncompared
+        machine.nights = listOf(under, between)
         assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
         assertHolds(listOf(under))
+        assertNull(store.read().vouchedSoftware)
+
+        // The first night after it vouches, and is written. The one between is not, then or later.
+        phoneNow += 24 * hour
+        val after = Night(machineNow - 8 * hour, rates(310, base = 46), whole = true)
+        machine.nights = listOf(under, between, after)
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertHolds(listOf(under, after))
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertHolds(listOf(under, after))
+    }
+
+    @Test
+    fun `on software that was not compared, accepting a changed clock means it is vouched for again`() = runTest {
+        machine.applicationIdentifier = uncompared
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        phoneNow += 24 * hour
+        val night = Night(machineNow - 8 * hour, rates(300, base = 50), whole = true)
+        machine.nights = listOf(night)
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertHolds(listOf(night))
+        assertEquals(uncompared, store.read().vouchedSoftware)
+
+        // The clock was set, and the user has the machine's clock used as it is: what "before the
+        // software was seen" means is gone with it.
+        phoneNow += 12 * hour
+        val short = Night(machineNow - 2 * hour, rates(10, base = 60), whole = true)
+        machine.nights = listOf(night, short)
+        store.write(store.read().with(clock = null, softwareSinceMs = null).fromTheStart())
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        // The long night already written does not vouch a second time, and the short one is not written.
+        assertHolds(listOf(night))
+        assertNull(store.read().vouchedSoftware)
+        assertTrue(store.read().softwareSinceMs!! > short.firstMinuteEnd)
+    }
+
+    @Test
+    fun `a record of uncompared software that does not say when it was first seen is not believed`() = runTest {
+        // As a version of the app that kept no such moment could have left it.
+        store.write(switchedOn.with(softwareSeen = uncompared, vouchedSoftware = uncompared))
+        machine.applicationIdentifier = uncompared
+        val old = Night(machineNow - 30 * hour, rates(400), whole = true)
+        val small = Night(machineNow - 3 * hour, rates(10, base = 60), whole = true)
+        machine.nights = listOf(old, small)
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertHolds(emptyList())
+        assertNull(store.read().vouchedSoftware)
+        assertTrue(store.read().softwareSinceMs != null)
     }
 
     @Test

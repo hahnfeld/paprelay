@@ -10,6 +10,7 @@ import com.everysoft.paprelay.as11.SpoolName
 import com.everysoft.paprelay.as11.SpoolRound
 import com.everysoft.paprelay.as11.decode.Firmware
 import com.everysoft.paprelay.as11.decode.MinuteDecoder
+import com.everysoft.paprelay.as11.decode.MinuteSignal
 import com.everysoft.paprelay.as11.decode.RecordResult
 import com.everysoft.paprelay.as11.decode.SpoolDecodeException
 import com.everysoft.paprelay.as11.decode.SummaryDecoder
@@ -268,15 +269,25 @@ class SyncEngine(
             val days = abs(machineNow.epochMs - before.machineMs) / DAY_MS
             abs(offset.millis - before.offsetMs) > CLOCK_STEP_MS + days * DRIFT_PER_DAY_MS
         } ?: false
+        // Whether the per-minute log's moduli are known for this software, or only assumed.
+        val compared = firmware.perMinuteCompared
         if (progress.state.softwareSeen != identity.applicationIdentifier) {
             // Other software than last time. Sessions already on the machine were recorded by the
             // old one; only what begins from now on can show how the new one writes.
             progress.state = progress.state.with(
                 softwareSeen = identity.applicationIdentifier,
-                softwareSinceMs = if (progress.state.softwareSeen == null) null else machineNow.epochMs,
+                // On the compared version a first run takes the sessions the machine already holds.
+                // On any other, the moment it was first seen is always kept: nothing recorded before
+                // it is written (see below).
+                softwareSinceMs = if (progress.state.softwareSeen == null && compared) null else machineNow.epochMs,
                 // Whatever was vouched for before is not what is running now, even if its name comes back.
                 vouchedSoftware = null,
             )
+        } else if (!compared && progress.state.softwareSinceMs == null) {
+            // When this software was first seen is no longer known: the user accepted a changed
+            // clock, or the state was written by a version that did not keep it. It is taken to
+            // be now, and the software has to be vouched for again.
+            progress.state = progress.state.with(softwareSinceMs = machineNow.epochMs, vouchedSoftware = null)
         }
         if (progress.state.rewriteRequested) {
             // A rewrite was asked for: Health Connect may have been cleared, so the marks that say
@@ -306,11 +317,9 @@ class SyncEngine(
         // clock correction and nothing that follows can hold them up; and they are what matters most.
         val recordsFailure = nights(session, firmware, tag, machineNow, progress)
 
-        if (!progress.state.respiratoryRate || !firmware.perMinuteAccepted) {
-            // Respiratory rate is off, or this software's per-minute log is not one that is read:
-            // no per-minute data is asked for or written, and what was written before stays as it
-            // is. The stored clock reading is kept, so that a clock change is still noticed when
-            // respiratory rate is read again.
+        if (!progress.state.respiratoryRate) {
+            // Respiratory rate is off, so no per-minute data is written. The stored clock reading
+            // is kept, so that a clock change is still noticed if it is switched on later.
             recordsFailure?.let { throw it }
             return
         }
@@ -323,6 +332,8 @@ class SyncEngine(
 
         var vouched = progress.state.vouchedSoftware == identity.applicationIdentifier
         val vouchFrom = progress.state.softwareSinceMs
+        // On software that was not compared, the moment it was first seen: set above, always.
+        val firstSeen = if (compared) null else checkNotNull(vouchFrom) { "no moment at which uncompared software was first seen" }
         val from = maxOf(EARLIEST_START_MS, progress.state.resumeFromMs?.let { it - OVERLAP_MS } ?: (machineNow.epochMs - FIRST_WINDOW_MS))
         var address: SpoolAddress = SpoolAddress.FromMachineTime(from)
         var rounds = 0
@@ -388,7 +399,8 @@ class SyncEngine(
             // Something in this download failed the way a misread layout would. A long record that
             // decoded cleanly beside it answers the doubt: the layout is being read as it is meant,
             // and what failed was that one record. With none, the short records are not believed.
-            val doubtful = log.doubted && log.decoded.none { it.sampleCount >= VOUCH_SAMPLES }
+            // (On software that was not compared, a record from before it was first seen answers nothing.)
+            val doubtful = log.doubted && log.decoded.none { it.sampleCount >= VOUCH_SAMPLES && (firstSeen == null || it.firstMinuteEnd.epochMs >= firstSeen) }
             for (entry in log.entries) {
                 // A stop asked for from outside is heard between sessions, never inside one.
                 currentCoroutineContext().ensureActive()
@@ -403,6 +415,14 @@ class SyncEngine(
                     }
                 }
                 newest = record.firstMinuteEnd.epochMs
+                if (firstSeen != null && record.firstMinuteEnd.epochMs < firstSeen) {
+                    // It began before this software was first seen, so which software recorded it is
+                    // not known, and with moduli that are only assumed that is not good enough. It is
+                    // not written, now or later; what was written of it before stays as it is.
+                    if (!troubled && waiting.isEmpty()) lastBeforeTrouble = newest
+                    checkpoint()
+                    continue
+                }
                 if (machineNow.epochMs - record.lastMinuteEnd.epochMs in -FUTURE_ALLOWANCE_MS until SETTLE_MS) {
                     // Its last minute has only just been recorded: the session may still be going on.
                     // It is left until it has ended, so that a night is written once, whole, and
@@ -430,7 +450,16 @@ class SyncEngine(
                 when (plan) {
                     is SessionPlan.Unplanned -> if (plan.minutesUnknown) trouble()
                     is SessionPlan.Planned -> {
-                        val canVouch = record.sampleCount >= VOUCH_SAMPLES && (vouchFrom == null || record.firstMinuteEnd.epochMs >= vouchFrom)
+                        val canVouch = if (compared) {
+                            record.sampleCount >= VOUCH_SAMPLES && (vouchFrom == null || record.firstMinuteEnd.epochMs >= vouchFrom)
+                        } else {
+                            // Nothing was compared for this software, so the record alone has to show that
+                            // it is read as it was meant: an hour or more, every known signal readable and
+                            // of one length (a signal with an impossible value is not among the readable),
+                            // and nothing else in the download that failed the way a misread layout would.
+                            // (It began after the software was first seen, or it would not have got this far.)
+                            record.sampleCount >= STRICT_VOUCH_SAMPLES && !log.doubted && record.signals.containsAll(KNOWN_SIGNALS)
+                        }
                         if (!vouched && canVouch) {
                             vouched = true
                             progress.state = progress.state.with(vouchedSoftware = identity.applicationIdentifier)
@@ -679,6 +708,16 @@ class SyncEngine(
 
         /** Sessions of at least this many minutes show that a software version's data is read correctly. */
         const val VOUCH_SAMPLES = 30
+
+        /**
+         * The same, for software the per-minute log was not compared on. With every known signal
+         * present, a wrong modulus leaves no realistic chance that a record this long still decodes
+         * with all of them the same length.
+         */
+        const val STRICT_VOUCH_SAMPLES = 60
+
+        /** The signals whose place and modulus are known. A record that vouches for uncompared software has them all. */
+        private val KNOWN_SIGNALS = MinuteSignal.entries.filter { it.layoutConfirmed }.toSet()
 
         /** A session whose last minute is more recent than this may still be in progress, and waits. */
         const val SETTLE_MS = 10L * 60 * 1000

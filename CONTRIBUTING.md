@@ -107,9 +107,8 @@ like the rest of PAPRelay.
 ## Machines and software versions
 
 The layouts of the stored data were compared with an SD card on one software version,
-19.8.8.0. PAPRelay reads the nightly figures from other versions with the same layouts and
-its own checks. It reads respiratory rate from the compared version only.
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#machine-software-versions) gives the reasons.
+19.8.8.0. PAPRelay reads other versions with the same layouts and its own checks.
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#machine-software-versions) describes them.
 
 You can help with a comparison on your version:
 
@@ -121,8 +120,7 @@ You can help with a comparison on your version:
    compared and whether they were equal.
 3. Do not attach downloads from the machine or SD-card files. They are your health data.
 
-A comparison of the per-minute data is what allows respiratory rate to be read from a
-further version. It is then added to `PER_MINUTE` in
+A version whose per-minute data was compared can be added to `COMPARED` in
 `as11/src/main/kotlin/com/everysoft/paprelay/as11/decode/As11Scales.kt`, with a test.
 
 If PAPRelay says "PAPRelay cannot yet read this machine's software", the machine's software

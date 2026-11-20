@@ -31,7 +31,7 @@ class PapRelayApp : Application() {
         DeviceCheck(
             this, scope, pairingStore, scanner, healthConnect, healthRecords,
             recordsWanted = { sync.status.value.healthRecords },
-            vitalsWanted = { sync.status.value.rateWanted },
+            vitalsWanted = { sync.status.value.respiratoryRate },
             claim,
         ) { sync.forget() }
     }

@@ -252,17 +252,6 @@ class NightSyncTest {
     }
 
     @Test
-    fun `on another version the nights are passed on with respiratory rate switched on, and its log is not asked for`() = runTest {
-        machine.days = week()
-        machine.applicationIdentifier = "SW04600.20.1.0.0.abcdef"
-        store.write(SyncState.EMPTY.with(respiratoryRate = true))
-        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
-        assertEquals(6, nightStore.read().byDate.size)
-        assertEquals(weekRecords, records.held.size)
-        assertEquals(setOf(SpoolName.SUMMARY), machine.asked.map { it.first }.toSet())
-    }
-
-    @Test
     fun `with health records switched off or not there, the nights are kept and nothing is passed on`() = runTest {
         machine.days = week()
         store.write(SyncState.EMPTY.with(healthRecords = false))

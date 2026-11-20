@@ -9,7 +9,7 @@ class FirmwareTest {
     private fun accepted(identifier: String) = Firmware.reportedByMachine(identifier).layoutsAccepted
 
     @Test
-    fun `summaries are read from every version whose identifier has the known form`() {
+    fun `data is read from every version whose identifier has the known form`() {
         val same = listOf(
             "SW04600.19.8.8.0.dced143ae", "SW04600.19.8.9.0.dced143ae", "SW04600.20.0.0.0.abc", "SW04600.21.1",
             "SW04600.19.8.8.01.x", "SW04600.19.8.8.0.1.abc", "SW04600.19.8.8.0.ABCDEF", "SW04600.1.2.3.4.5.6.7.8",
@@ -38,12 +38,19 @@ class FirmwareTest {
     }
 
     @Test
-    fun `the per-minute log is read from the compared version alone, which is one whose summaries are read`() {
-        val compared = Firmware.reportedByMachine("SW04600.19.8.8.0.dced143ae")
-        assertTrue(compared.perMinuteAccepted && compared.layoutsAccepted)
-        val newer = Firmware.reportedByMachine("SW04600.20.0.0.0.abc")
-        assertTrue(!newer.perMinuteAccepted && newer.layoutsAccepted)
-        val other = Firmware.reportedByMachine("SW04700.19.8.8.0.abc")
-        assertTrue(!other.perMinuteAccepted && !other.layoutsAccepted)
+    fun `only software 19_8_8_0 counts as the version the per-minute log was compared on`() {
+        fun compared(identifier: String) = Firmware.reportedByMachine(identifier).perMinuteCompared
+        assertTrue(compared("SW04600.19.8.8.0.dced143ae"))
+        assertTrue(compared("SW04600.19.8.8.0.0123456789"))
+        val others = listOf(
+            // One part of the version different, each in turn; an extra part; a build that is not lower-case hexadecimal.
+            "SW04600.18.8.8.0.abc", "SW04600.20.8.8.0.abc", "SW04600.19.9.8.0.abc", "SW04600.19.8.9.0.abc", "SW04600.19.8.8.1.abc",
+            "SW04600.19.8.8.01.abc", "SW04600.19.8.8.0.1.abc", "SW04600.19.8.8.0.ABC", "SW04600.19.8.8.0.xyz", "SW04600.19.8.8.0.",
+            "SW04700.19.8.8.0.abc", "xSW04600.19.8.8.0.abc", "SW04600.19.8.8.0.abc\nSW04600.19.8.8.0.abc", "",
+        )
+        for (identifier in others) assertTrue(!compared(identifier), identifier)
+        // The compared version is one whose data is read; the rule for it is the narrower of the two.
+        assertTrue(Firmware.reportedByMachine("SW04600.19.8.8.0.dced143ae").layoutsAccepted)
+        assertTrue(Firmware.reportedByMachine("SW04600.20.0.0.0.abc").layoutsAccepted)
     }
 }
