@@ -96,8 +96,8 @@ Open **Sharing** to choose.
 - Respiratory rate: off at the start. It is one value for each minute of therapy. Leave it
   off if a watch or a ring already writes your respiratory rate. With machine
   software other than version 19.8.8.0, respiratory rate starts with the first night of an
-  hour or more after you first switch it on, or after the machine's software changes.
-  Earlier nights are not written. Until then the app says that it waits.
+  hour or more after you first switch it on, after the machine's software changes, or
+  after PAPRelay was installed again. Earlier nights are not written. Until then the app says that it waits.
 - Table of nights: one file (CSV) with one line for each night. You choose where it is
   kept, for example on a cloud drive.
 - Share: sends the recent nights as text to an app that you choose.

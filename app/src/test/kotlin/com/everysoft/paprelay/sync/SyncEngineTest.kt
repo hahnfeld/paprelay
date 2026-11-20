@@ -52,11 +52,12 @@ class SyncEngineTest {
 
     private fun Proto.night(night: Night) {
         val count = night.rates.size
-        // A record whose series state no start time, as a damaged one might be.
+        // A record whose series state no start time, or whose first series states another, as a damaged one might be.
         val stated = night.firstMinuteEnd != machine.dropStart
+        val misstated = machine.misstated?.takeIf { it.first == night.firstMinuteEnd }?.second
         fun Proto.series(field: Int, samples: IntArray, modulus: Int) = message(field) {
             varint(1, night.kind)
-            if (stated) varint(2, night.firstMinuteEnd)
+            if (stated) varint(2, if (field == 1 && misstated != null) misstated else night.firstMinuteEnd)
             bytes(3, riceBlock(samples, modulus))
         }
         message(5) {
@@ -106,6 +107,9 @@ class SyncEngineTest {
 
         /** The start of a session whose series state no start time, or null for none. */
         var dropStart: Long? = null
+
+        /** A session whose first series states another start time: (its start, the start stated). */
+        var misstated: Pair<Long, Long>? = null
         val starts = ArrayList<Long>()
         var connections = 0
         private var reads = 0
@@ -864,6 +868,26 @@ class SyncEngineTest {
         machine.dropStart = lastOdd.firstMinuteEnd
         machine.nights = listOf(own, nap, lastOdd)
         assertEquals(SyncOutcome.PARTIAL, engine.sync()!!.outcome)
+    }
+
+    @Test
+    fun `a record whose series state different start times is not dated by either`() = runTest {
+        machine.applicationIdentifier = uncompared
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        phoneNow += 24 * hour
+        val night = Night(machineNow - 8 * hour, rates(300, base = 50), whole = true)
+        machine.nights = listOf(night)
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+
+        // A night of the software's own whose first series states a start from long before.
+        phoneNow += 24 * hour
+        val damaged = Night(machineNow - 8 * hour, rates(300, base = 46), whole = true)
+        val next = Night(machineNow - 2 * hour, rates(20, base = 44), whole = true)
+        machine.misstated = damaged.firstMinuteEnd to night.firstMinuteEnd - 48 * hour
+        machine.nights = listOf(night, damaged, next)
+        // It could not be read, and that is said: it is not taken for an older record.
+        assertEquals(SyncOutcome.PARTIAL, engine.sync()!!.outcome)
+        assertHolds(listOf(night, next))
     }
 
     @Test

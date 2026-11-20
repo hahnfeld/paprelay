@@ -217,16 +217,17 @@ public object MinuteDecoder {
     private class Series(val start: MachineTime, val block: SampleBlock)
 
     /**
-     * The start time of a record that could not be decoded, read from its first series that
-     * states one, or null if none does. It says only when the record belongs.
+     * The start time of a record that could not be decoded: the one its series state, if every
+     * series that states one states the same. Null otherwise, so that a damaged time is not taken
+     * for when the record belongs. It says nothing else about the record.
      */
     private fun startOf(body: ByteArray): MachineTime? = try {
-        ProtoReader.read(body).asSequence()
+        val stated = ProtoReader.read(body)
             .filter { signalByField[it.number] != null }
             .mapNotNull { it.bytes }
-            .mapNotNull { series -> ProtoReader.read(series).firstOrNull { it.number == START && it.wireType == ProtoReader.VARINT } }
-            .firstOrNull()
-            ?.let { timestamp(it.value, "a record's start") }
+            .mapNotNull { series -> ProtoReader.read(series).firstOrNull { it.number == START && it.wireType == ProtoReader.VARINT }?.value }
+            .toSet()
+        stated.singleOrNull()?.let { timestamp(it, "a record's start") }
     } catch (e: SpoolDecodeException) {
         null
     }
