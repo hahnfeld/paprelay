@@ -627,22 +627,32 @@ class SyncEngineTest {
     }
 
     @Test
-    fun `another version of the same software is read, once a long session has vouched for it`() = runTest {
-        machine.applicationIdentifier = "SW04600.20.1.0.0.abcdef"
-        // A short session alone does not show how this version lays out its data.
-        val short = Night(machineNow - 3 * hour, rates(10, base = 60))
-        machine.nights = listOf(short)
-        assertEquals(SyncOutcome.PARTIAL, engine.sync()!!.outcome)
-        assertHolds(emptyList())
-        assertNull(store.read().vouchedSoftware)
-
-        // A long one does, and the short one is written with it.
-        phoneNow += 12 * hour
-        val night = Night(machineNow - 6 * hour, rates(300, base = 50))
-        machine.nights = listOf(short, night)
+    fun `on another version of the machine's software no respiratory rate is read, and what was written stays`() = runTest {
+        val under = Night(machineNow - 8 * hour, rates(400))
+        machine.nights = listOf(under)
         assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
-        assertHolds(listOf(short, night))
-        assertEquals("SW04600.20.1.0.0.abcdef", store.read().vouchedSoftware)
+        assertHolds(listOf(under))
+        val resumeFrom = store.read().resumeFromMs
+
+        // The machine is updated. Sessions follow, one of them long enough to vouch for anything.
+        phoneNow += 24 * hour
+        machine.applicationIdentifier = "SW04600.20.1.0.0.abcdef"
+        val short = Night(machineNow - 9 * hour, rates(10, base = 60))
+        val night = Night(machineNow - 7 * hour, rates(300, base = 50))
+        machine.nights = listOf(under, short, night)
+        val report = engine.sync()!!
+        // Nothing is wrong, and nothing of the new software's per-minute log is passed on.
+        assertEquals(SyncOutcome.COMPLETE, report.outcome)
+        assertEquals(0, report.readingsWritten)
+        assertHolds(listOf(under))
+        assertEquals("SW04600.20.1.0.0.abcdef", store.read().softwareSeen)
+        assertNull(store.read().vouchedSoftware)
+        assertEquals(resumeFrom, store.read().resumeFromMs)
+
+        // So it stays, however often it runs.
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertHolds(listOf(under))
     }
 
     @Test

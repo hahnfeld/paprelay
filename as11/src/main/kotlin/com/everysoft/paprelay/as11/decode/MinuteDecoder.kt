@@ -171,11 +171,11 @@ public object MinuteDecoder {
      * @param payload one verified download of the per-minute log.
      * @param firmware the software of the machine the download came from.
      * @throws SpoolDecodeException if the download as a whole is not this log, or comes from
-     *   software whose data is not read ([Firmware.layoutsAccepted]).
+     *   software whose per-minute log is not read ([Firmware.perMinuteAccepted]).
      */
     public fun decode(payload: ByteArray, firmware: Firmware): DecodedLog<MinuteRecord> {
-        if (!firmware.layoutsAccepted) {
-            throw SpoolDecodeException("per-minute log: this machine's software is not one whose data is read")
+        if (!firmware.perMinuteAccepted) {
+            throw SpoolDecodeException("per-minute log: this log is not read from this machine's software version")
         }
         val sink = ResultSink<MinuteRecord>()
         var doubted = false
@@ -204,8 +204,8 @@ public object MinuteDecoder {
         // one record cut short by a power failure. So such a record is skipped, and the doubt
         // is passed on with the result: a long record that decoded cleanly beside it stands on
         // its own evidence, and what to make of the short ones is for the caller. (A signal that
-        // decodes but holds an impossible value is different again: on confirmed software that
-        // is a marker this version does not know, and it costs only that signal.)
+        // decodes but holds an impossible value is different again: on the software this log is
+        // read from, that is a marker this version does not know, and it costs only that signal.)
         return sink.finish(layoutAccepted = true, doubted = doubted)
     }
 

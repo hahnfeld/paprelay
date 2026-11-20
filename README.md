@@ -94,7 +94,8 @@ Open **Sharing** to choose.
   CPAP data, so the nights appear there under lab results, from "PAPRelay (CPAP machine)".
   They are not laboratory results.
 - Respiratory rate: off at the start. It is one value for each minute of therapy. Leave it
-  off if a watch or a ring already writes your respiratory rate.
+  off if a watch or a ring already writes your respiratory rate. For now PAPRelay reads it
+  from machine software 19.8.8.0 only; the page tells you if your machine has another.
 - Table of nights: one file (CSV) with one line for each night. You choose where it is
   kept, for example on a cloud drive.
 - Share: sends the recent nights as text to an app that you choose.
@@ -123,6 +124,7 @@ night's figures arrive **in the afternoon**, not in the morning.
 | "The machine no longer accepts this phone." | Open **Device check**, choose **Forget machine**, and pair again. |
 | "PAPRelay cannot yet read this machine's software." | PAPRelay reads the AirSense 11 only. If your machine is an AirSense 11, please [report it](CONTRIBUTING.md#machines-and-software-versions). |
 | Last night is missing in the morning. | This is normal. The figures arrive after midday. |
+| "Not every night has been copied yet." for several days, or "PAPRelay could not read some of the data from the machine." | Open **Device check**, run it, save the report, and [report the problem](https://github.com/hahnfeld/paprelay/issues). |
 | Health Connect shows nothing. | Open **Sharing** and check the switches. In Health Connect, allow PAPRelay to write. Phones with Android 14 or 15 have no health records. |
 | PAPRelay stops after some months. | Android pauses apps that you do not open. In the app settings, turn off the switch for unused apps. |
 

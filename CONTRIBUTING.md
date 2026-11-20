@@ -106,10 +106,10 @@ like the rest of PAPRelay.
 
 ## Machines and software versions
 
-PAPRelay reads every software version of the AirSense 11. The layouts of the stored data
-were compared with an SD card on one version (19.8.8.0). For other versions PAPRelay
-relies on its own checks, described in
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#machine-software-versions).
+The layouts of the stored data were compared with an SD card on one software version,
+19.8.8.0. PAPRelay reads the nightly figures from other versions with the same layouts and
+its own checks. It reads respiratory rate from the compared version only.
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#machine-software-versions) gives the reasons.
 
 You can help with a comparison on your version:
 
@@ -121,8 +121,12 @@ You can help with a comparison on your version:
    compared and whether they were equal.
 3. Do not attach downloads from the machine or SD-card files. They are your health data.
 
-If PAPRelay says "PAPRelay cannot yet read this machine's software", the machine reports
-software of another kind (its identifier does not begin `SW04600`). Open an issue with the
+A comparison of the per-minute data is what allows respiratory rate to be read from a
+further version. It is then added to `PER_MINUTE` in
+`as11/src/main/kotlin/com/everysoft/paprelay/as11/decode/As11Scales.kt`, with a test.
+
+If PAPRelay says "PAPRelay cannot yet read this machine's software", the machine's software
+identifier does not have the form `SW04600`, a version and a build. Open an issue with the
 saved report.
 
 [docs/FIRST-DEVICE-RUN.md](docs/FIRST-DEVICE-RUN.md) shows such a comparison.

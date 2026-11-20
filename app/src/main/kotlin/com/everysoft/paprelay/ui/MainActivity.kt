@@ -272,7 +272,7 @@ private fun Root(app: PapRelayApp) {
             recordsSupported = recordsSupported,
             // Switched on and not allowed (the permission was taken away), or just tried and refused.
             recordsBlocked = recordsSupported && (sync.healthRecords && !recordsAllowed || refusedChoice == PENDING_RECORDS),
-            respiratoryBlocked = sync.respiratoryRate && !respiratoryAllowed || refusedChoice == PENDING_RESPIRATORY,
+            respiratoryBlocked = sync.rateReadable && (sync.respiratoryRate && !respiratoryAllowed || refusedChoice == PENDING_RESPIRATORY),
             onRecords = { on ->
                 refusedChoice = ""
                 if (on) request(PENDING_RECORDS) else app.sync.setHealthRecords(false)

@@ -51,10 +51,7 @@ enum class SyncOutcome {
     /** The machine that answered is not the one that was paired. */
     WRONG_MACHINE,
 
-    /**
-     * The machine's software is of a line whose data this version does not read. (Another version
-     * of the line it does read is not this: that is read, and vouched for by its own data.)
-     */
+    /** The machine's software is not one whose data this version reads ([com.everysoft.paprelay.as11.decode.Firmware.layoutsAccepted]). */
     SOFTWARE_NOT_CONFIRMED,
 
     /** The machine's clock could not be read consistently, so no time can be trusted. */

@@ -306,9 +306,11 @@ class SyncEngine(
         // clock correction and nothing that follows can hold them up; and they are what matters most.
         val recordsFailure = nights(session, firmware, tag, machineNow, progress)
 
-        if (!progress.state.respiratoryRate) {
-            // Respiratory rate is off, so no per-minute data is written. The stored clock reading
-            // is kept, so that a clock change is still noticed if it is switched on later.
+        if (!progress.state.respiratoryRate || !firmware.perMinuteAccepted) {
+            // Respiratory rate is off, or this software's per-minute log is not one that is read:
+            // no per-minute data is asked for or written, and what was written before stays as it
+            // is. The stored clock reading is kept, so that a clock change is still noticed when
+            // respiratory rate is read again.
             recordsFailure?.let { throw it }
             return
         }

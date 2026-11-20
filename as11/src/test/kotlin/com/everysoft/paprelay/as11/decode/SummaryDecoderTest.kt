@@ -222,6 +222,23 @@ class SummaryDecoderTest {
     }
 
     @Test
+    fun `a metric whose percentiles are not exactly the ones known is left out`() {
+        // One more than the layout has: which value is which can no longer be told.
+        val more = night { message(21) { varint(2, 500); varint(3, 600); varint(4, 700); varint(5, 800) } }
+        assertEquals(setOf(SummaryMetric.MEAN_MASK_PRESSURE), more.misreadMetrics)
+        assertTrue(SummaryMetric.MEAN_MASK_PRESSURE !in more.metrics)
+        // One fewer.
+        val fewer = night { message(21) { varint(2, 500); varint(3, 600) } }
+        assertEquals(setOf(SummaryMetric.MEAN_MASK_PRESSURE), fewer.misreadMetrics)
+        assertTrue(SummaryMetric.MEAN_MASK_PRESSURE !in fewer.metrics)
+        // As known: read. And the night's other metrics stand in every case.
+        val whole = night { message(21) { varint(2, 500); varint(3, 600); varint(4, 700) } }
+        assertTrue(whole.misreadMetrics.isEmpty() && SummaryMetric.MEAN_MASK_PRESSURE in whole.metrics)
+        assertEquals(night().metrics.keys, more.metrics.keys)
+        assertEquals(night().metrics.keys, fewer.metrics.keys)
+    }
+
+    @Test
     fun `another version of the same software line is read like the one the layouts were checked on`() {
         val log = SummaryDecoder.decode(proto { night() }, Firmware.reportedByMachine("SW04600.20.1.0.0.abc"))
         assertTrue(log.layoutAccepted)
@@ -275,11 +292,15 @@ class SummaryDecoderTest {
             varint(60, 8) // a field of unknown meaning may repeat
             bytes(61, byteArrayOf(1, 2, 3))
             fixed32(62, 9)
-            message(23) { varint(2, 675); varint(9, 1) } // minute ventilation with an unknown sub-field
+            message(23) { varint(2, 675); varint(3, 800); varint(4, 900); varint(9, 1) } // minute ventilation with an unknown sub-field
         }
         assertEquals(1 + 5, record.unknownFields)
         assertEquals(7, record.storedIntegers[60])
-        assertEquals(BigDecimal("6.75"), record.metrics.getValue(SummaryMetric.MINUTE_VENTILATION).getValue(Percentile.P50).exact())
+        // An unknown field of the record is skipped. One inside a metric means the metric is laid
+        // out some other way, and it is set aside.
+        assertEquals(setOf(SummaryMetric.MINUTE_VENTILATION), record.misreadMetrics)
+        assertTrue(SummaryMetric.MINUTE_VENTILATION !in record.metrics)
+        assertEquals(night().metrics.keys, record.metrics.keys)
     }
 
     @Test

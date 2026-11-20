@@ -463,7 +463,13 @@ fun ChoicesScreen(
         )
         if (recordsBlocked) NotAllowed(onOpenHealthConnect)
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Choice(R.string.choice_respiratory, R.string.choice_respiratory_body, sync.respiratoryRate, enabled = !sync.running, onChange = onRespiratoryRate)
+        Choice(
+            title = R.string.choice_respiratory,
+            body = if (sync.rateReadable) R.string.choice_respiratory_body else R.string.choice_respiratory_unsupported,
+            checked = sync.rateReadable && sync.respiratoryRate,
+            enabled = sync.rateReadable && !sync.running,
+            onChange = onRespiratoryRate,
+        )
         if (respiratoryBlocked) NotAllowed(onOpenHealthConnect)
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Column(Modifier.fillMaxWidth().padding(vertical = 14.dp)) {

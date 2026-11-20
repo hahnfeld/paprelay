@@ -15,6 +15,7 @@ import androidx.work.WorkManager
 import com.everysoft.paprelay.BuildConfig
 import com.everysoft.paprelay.as11.SpoolName
 import com.everysoft.paprelay.as11.SpoolRound
+import com.everysoft.paprelay.as11.decode.Firmware
 import com.everysoft.paprelay.ble.MachineClaim
 import com.everysoft.paprelay.ble.PresenceWatch
 import com.everysoft.paprelay.core.nights.Night
@@ -55,6 +56,8 @@ class SyncStatus(
     val exportFailed: Boolean = false,
     /** The chosen file's name as the user sees it, when it is known. */
     val exportName: String? = null,
+    /** False when the machine's software, as last seen, is one whose respiratory rate is not read. */
+    val rateReadable: Boolean = true,
 ) {
     fun with(
         running: Boolean = this.running,
@@ -66,7 +69,8 @@ class SyncStatus(
         exportFile: String? = this.exportFile,
         exportFailed: Boolean = this.exportFailed,
         exportName: String? = this.exportName,
-    ) = SyncStatus(running, lastReport, lastCompleteAtMs, storeUnreadable, respiratoryRate, healthRecords, exportFile, exportFailed, exportName)
+        rateReadable: Boolean = this.rateReadable,
+    ) = SyncStatus(running, lastReport, lastCompleteAtMs, storeUnreadable, respiratoryRate, healthRecords, exportFile, exportFailed, exportName, rateReadable)
 }
 
 /**
@@ -510,6 +514,8 @@ class SyncRunner(
                     before.with(
                         lastReport = report, lastCompleteAtMs = stored.lastCompleteAtMs, storeUnreadable = false,
                         respiratoryRate = stored.respiratoryRate, healthRecords = stored.healthRecords, exportFile = stored.exportFile,
+                        // Not known until the machine has been seen once; until then nothing is said against it.
+                        rateReadable = stored.softwareSeen?.let { Firmware.reportedByMachine(it).perMinuteAccepted } ?: true,
                     )
                 }
                 // Damaged: the user is told, and offered a fresh start.

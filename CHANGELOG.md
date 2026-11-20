@@ -6,9 +6,10 @@ Newest first. Before 1.0, any release may change behaviour.
 
 First public release.
 
-- PAPRelay now reads every software version of the AirSense 11, not only the one that was
-  compared with an SD card. The per-minute data of a new version is written only after a
-  long session has decoded cleanly.
+- PAPRelay no longer stops when the machine has another software version. It reads the
+  nightly figures from every version. Respiratory rate is still read from version 19.8.8.0
+  only, and the Sharing page says so on another version.
+- A nightly figure is left out if its set of percentiles is not the one PAPRelay knows.
 - The About screen says that PAPRelay is for personal use only and is not made, endorsed
   or supported by ResMed.
 - Some sentences in the app are clearer, and two are corrected: a changed machine clock

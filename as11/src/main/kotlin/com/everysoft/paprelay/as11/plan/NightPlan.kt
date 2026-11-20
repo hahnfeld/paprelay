@@ -18,8 +18,8 @@ import java.time.ZoneOffset
 /**
  * Turns one of the machine's daily Summary records into a [Night].
  *
- * Nothing is computed: each figure is one the machine stored, taken only from what the
- * decoder has confirmed, and a figure the decoder set aside as misread is left out.
+ * Nothing is computed: each figure is one the machine stored, taken only from the fields
+ * that were compared with an SD card, and a figure the decoder set aside as misread is left out.
  */
 public object NightPlan {
     private val indices: Map<SummaryIndex, NightFigure> = mapOf(

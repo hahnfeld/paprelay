@@ -60,8 +60,9 @@ public class SummaryRecord internal constructor(
     /** Indices the record carries with a value that cannot be right; they are not in [indices]. */
     public val misreadIndices: Set<SummaryIndex>,
     /**
-     * The metrics that were read and whose layout and factor the SD card has confirmed
-     * ([SummaryMetric.confirmed]). See [misreadMetrics] for those that were present but left out.
+     * The metrics that were read and whose layout and factor the SD card confirmed on the
+     * compared software ([SummaryMetric.confirmed]). See [misreadMetrics] for those that were
+     * present but left out.
      */
     public val metrics: Map<SummaryMetric, Map<Percentile, Quantity>>,
     /**
@@ -72,7 +73,8 @@ public class SummaryRecord internal constructor(
     /**
      * Metrics the record carries whose values cannot be right, and which are therefore not in
      * [metrics]: percentiles that fall where they should rise, a value that is negative or
-     * absurdly large, or a zero where zero is impossible (an oximeter figure with no oximeter).
+     * absurdly large, a zero where zero is impossible (an oximeter figure with no oximeter),
+     * or a set of percentiles other than the one the metric is known to have.
      */
     public val misreadMetrics: Set<SummaryMetric>,
     /**
@@ -252,14 +254,22 @@ public object SummaryDecoder {
 
     private class Read(val unknown: Int, val readable: Boolean)
 
-    /** Fills [into] from one metric body. Not [Read.readable] if a value cannot be a measurement. */
+    /**
+     * Fills [into] from one metric body. Not [Read.readable] if a value cannot be a measurement,
+     * or if the body does not hold exactly the sub-fields of the metric's layout.
+     */
     private fun percentiles(metric: SummaryMetric, body: ByteArray, what: String, into: MutableMap<Percentile, Quantity>): Read {
         var unknown = 0
         var readable = true
         for (field in ProtoReader.read(body)) {
             val percentile = metric.layout.bySubField[field.number]
             when {
-                percentile == null -> unknown++
+                // A sub-field this layout does not have means the metric is laid out some other way
+                // (in another software version, say), and which value is which can no longer be told.
+                percentile == null -> {
+                    unknown++
+                    readable = false
+                }
                 field.wireType != ProtoReader.VARINT -> wrongType("$what, $metric", field)
                 percentile in into -> repeated("$what, $metric", field.number)
                 else -> {
@@ -268,6 +278,9 @@ public object SummaryDecoder {
                 }
             }
         }
+        // The same if a sub-field the layout has is missing. (A body with nothing in it at all is a
+        // metric the record says nothing about; that is for the caller.)
+        if (into.isNotEmpty() && into.size != metric.layout.bySubField.size) readable = false
         return Read(unknown, readable)
     }
 }

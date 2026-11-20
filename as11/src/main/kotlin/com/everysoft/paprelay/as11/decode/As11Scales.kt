@@ -94,30 +94,39 @@ public enum class SummaryMetric(
 
 /**
  * The software a machine reports itself to be running, as the thing that
- * decides whether its data is read.
+ * decides which of its data is read.
  *
  * The layouts, moduli and factors in this file were checked against one real
- * machine and its SD card: an AirSense 11 AutoSet on software 19.8.8.0. Other
- * versions of the same software line (identifiers that begin `SW04600`) are
- * read with the same layouts. That they share them is an assumption, not
- * something that has been seen, so it is not relied on alone:
+ * machine and its SD card: an AirSense 11 AutoSet on software 19.8.8.0. What
+ * is read from other software follows from how each log can go wrong:
  *
- *  - the daily summaries are tagged fields, and each value is checked for sense
- *    before it is passed on;
- *  - the per-minute log can decode to wrong but plausible values when a modulus
- *    differs, so whoever uses it must first see a long record decode with all
- *    its signals in agreement (the synchronising engine does: it calls this
- *    vouching, and asks for it again whenever the software changes).
+ *  - The daily summaries and the event logs are tagged fields. They are read
+ *    from every version whose identifier has the form of that machine's
+ *    (`SW04600`, a version, a build), on the assumption that the fields mean
+ *    the same. Each summary value is still checked for sense, and a metric
+ *    whose percentiles are not exactly the ones known is left out.
+ *  - The per-minute log is compressed with a modulus for each signal, and with
+ *    a wrong modulus it can decode to values that are wrong but plausible. It
+ *    is read only from the version it was compared on.
  *
- * Software of any other line is not read.
+ * Software whose identifier has another form is not read at all.
  */
 public class Firmware private constructor(public val applicationIdentifier: String) {
-    /** Whether data from this software is read: any version of the software line the layouts were checked on. */
-    public val layoutsAccepted: Boolean get() = ACCEPTED.matches(applicationIdentifier)
+    /** Whether the summaries and event logs of this software are read. */
+    public val layoutsAccepted: Boolean get() = applicationIdentifier.length <= MAX_LENGTH && ACCEPTED.matches(applicationIdentifier)
+
+    /** Whether the per-minute log of this software is read: only that of the version it was compared on. */
+    public val perMinuteAccepted: Boolean get() = PER_MINUTE.matches(applicationIdentifier)
 
     public companion object {
-        /** `ApplicationIdentifier` forms of that software line: `SW04600`, then the parts of a version and a build. */
+        /** No longer than what is kept of it between synchronisations. */
+        private const val MAX_LENGTH = 64
+
+        /** `SW04600`, then the parts of a version and a build. */
         private val ACCEPTED = Regex("SW04600(\\.[0-9A-Za-z]{1,40}){2,8}")
+
+        /** Software 19.8.8.0, any build. */
+        private val PER_MINUTE = Regex("SW04600\\.19\\.8\\.8\\.0\\.[0-9a-f]{1,40}")
 
         /**
          * @param applicationIdentifier the `ApplicationIdentifier` the machine gave **in the
