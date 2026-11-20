@@ -212,8 +212,9 @@ class SyncStateUnreadableException(cause: Throwable) : IOException("the synchron
  * Keeps [SyncState] in one small file, replaced whole and atomically on every
  * change: a crash leaves either the old state or the new one, never a mixture.
  *
- * Losing this file is survivable (record ids come from the machine's own time
- * stamps, so each night is found again, cleared and written again), but a state
+ * Losing this file is survivable: the Sharing choices go back to their defaults, and
+ * record ids come from the machine's own time stamps, so once respiratory rate is
+ * switched on again each session is found, cleared and written again. But a state
  * that cannot be read is reported, not replaced, so that damage is not hidden.
  */
 class SyncStore(private val file: File) {

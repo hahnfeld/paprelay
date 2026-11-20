@@ -49,7 +49,7 @@ same period, read directly from its EDF files.
 | Daily summaries | 30 days: each index, percentile, duration and mask-on/off time | All equal at the stored resolution |
 | Breathing events | Every event of three sessions | Same kind, same order, same duration; times within 1.5 s (the card stores whole seconds) |
 | Per-minute log, length | Three sessions | One sample for each minute of mask-on time on both sides |
-| Per-minute leak and pressures | Against the card's 2-second signals, averaged per minute | Within one step of the per-minute resolution |
+| Per-minute leak, pressures and minute ventilation | Against the card's 2-second signals, averaged per minute | Within one step of the per-minute resolution |
 | Per-minute respiratory rate | Same | Mean difference 0.13 to 0.28 breaths/min; within 0.5 on 94.6 % of the minutes. The machine's per-minute figure is its own average, not a resample of the 2-second signal, so exact equality is not expected |
 
 What this established:
@@ -60,8 +60,9 @@ What this established:
 - The machine pads a compressed block with ones.
 - A per-minute sample is stamped at the end of its minute: the first sample of a session
   carries mask-on plus 60 s and equals the card's first minute.
-- A breathing event is stamped at its end, with its duration alongside. The card's
-  annotations carry the same instant.
+- An apnoea is stamped at its end, with its duration alongside. The card's annotations
+  carry the same instant. A hypopnoea has no stored duration, and whether its stamp is its
+  start or its end cannot be told.
 - Zeros are written explicitly in a used day's summary; an absent value means no data. A
   day without therapy has a duration of zero and nothing else. The machine truncates
   indices to tenths.

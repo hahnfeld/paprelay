@@ -10,13 +10,12 @@ import com.everysoft.paprelay.core.MachineTime
  * One entry of an event log, as stored.
  *
  * What is known, from one capture compared with the same machine's SD card
- * (AirSense 11 AutoSet, firmware 19.8.8.0; eleven breathing events and twelve
- * usage events):
+ * (AirSense 11 AutoSet, firmware 19.8.8.0):
  *
  *  - The record holds two time stamps, and in every event seen they were the
  *    same instant. A record in which they differ is refused, because what the
  *    difference would mean is not known.
- *  - For an obstructive or central apnoea (eight and one were seen) that
+ *  - For an obstructive or central apnoea (both were seen) that
  *    instant is when it **ended**: the machine reports an apnoea once it is
  *    over, with its length in [durationMs]. The SD card carries the same
  *    instant and the same length, and its own format documents that instant

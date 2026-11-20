@@ -55,10 +55,11 @@ or erase data. PAPRelay cannot send them: `As11Request` is a sealed class, and t
 encrypts nothing else. The items it can read (`GetItem`) and the logs it can download
 (`SpoolName`) are closed lists. `As11RequestTest` pins the request types.
 
-No request changes therapy, settings or stored data. Two requests change the pairing on
-the machine: the key exchange, which is expected to store PAPRelay's pairing in place of
-the one before it (not yet confirmed; see [FIRST-DEVICE-RUN.md](FIRST-DEVICE-RUN.md)), and
-`DiscardPairKey`, which the app does not send at present. **Forget machine**
+No request changes therapy, settings or stored data. The pairing on the machine is changed
+by the key exchange (`StartKeyExchange`, `ConfirmKeyExchange`), which stores PAPRelay's
+pairing, as far as is known in place of the one before it (not yet confirmed; see
+[FIRST-DEVICE-RUN.md](FIRST-DEVICE-RUN.md)). `DiscardPairKey` would remove it; the app
+does not send it at present. **Forget machine**
 deletes the pairing on the phone only.
 
 ### Values
@@ -89,8 +90,9 @@ one build on one AutoSet was compared). With any other version the engine stops 
 `SOFTWARE_NOT_CONFIRMED` and writes nothing.
 
 For the per-minute log there is a second check. On the first run, and after a software
-change, a session of at least 30 minutes must decode cleanly before shorter sessions are
-trusted. The code calls this "vouching".
+change, a session of at least 30 minutes must decode cleanly before any other session is
+written. After a software change it must be a session that began after the change was
+seen. The code calls this "vouching".
 
 ### Clocks
 
@@ -102,8 +104,10 @@ the machine's clock and the phone's (`MachineTime`, `ClockOffset`).
   period. The date does not move when the phone travels.
 - If the machine's clock was changed, the engine stops writing respiratory rate and asks
   the user (`CLOCK_CHANGED`). The nightly figures are still written, because they are dated
-  by the machine's calendar. If two different days claim one date, neither is written.
-  The comparison is made only while respiratory rate is switched on.
+  by the machine's calendar. If a different day claims a date that is already kept, the
+  kept night stays and the new one is not taken. If two different days in one download
+  claim the same date, neither is taken. The clock comparison is made only while
+  respiratory rate is switched on.
 - If the phone's own clock is clearly wrong, nothing is written (`PHONE_CLOCK_WRONG`).
 
 ### No duplicates: fixed names and a ledger
@@ -136,7 +140,7 @@ The app keeps these files in its private storage. Android backup is switched off
 | File | Holds | If it is missing or damaged |
 |---|---|---|
 | `pairing.bin` | The pairing secret, encrypted with a key in the Android Keystore (StrongBox when the phone has it) | The machine must be paired again. |
-| `nonces.txt` | Hashes of the session nonces already seen, so that a recorded session cannot be replayed | Missing: it starts empty. Unreadable: the session fails with a storage error. |
+| `nonces.txt` | Hashes of the session nonces already seen, so that a recorded session cannot be replayed | Missing: it starts empty. Unreadable: the session fails with a storage error. Damaged lines are dropped. |
 | `sync.json` | The ledger, the point to resume from, the last report, the Sharing settings | Missing: PAPRelay starts as if new, with the Sharing settings at their defaults. Damaged: reported, not replaced. The user chooses **Start again**, which deletes the file. |
 | `nights.json` | The nights | Renamed and kept; the list is built again from the machine. |
 | `raw/`, `check/` | The downloaded bytes of recent runs and of the last device check, unencrypted | Not needed for synchronising. Deleted by **Forget machine**. |
@@ -155,8 +159,10 @@ or the new one.
 3. about every hour, through WorkManager. This is the fallback, because not every phone
    supports point 2.
 
-A run also starts when the app is opened and the last run is older than 15 minutes, when
-a Sharing switch is turned on, and once more after a run that was cut short.
+A run also starts when the app is opened and the last run is older than 15 minutes, and
+when a Sharing switch is turned on. One more run follows a background run that lost the
+connection, a run where the machine was heard but did not answer, and (after about eleven
+minutes) a run that left out a session that had only just ended.
 
 Being out of range is normal, not an error (`MACHINE_AWAY`). A run that is cut off resumes
 at its last checkpoint. A run is limited to eight minutes; a longer backlog continues in

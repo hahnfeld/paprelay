@@ -262,7 +262,8 @@ class SyncEngine(
         val (machineNow, offset) = measureClock(session)
         // A clock that has been set since the last run puts the nights recorded in between out
         // of reach: there is no telling which of them carry the old time and which the new.
-        // Nothing is written until the user has said how to treat them.
+        // No respiratory rate is written until the user has said how to treat them. The nightly
+        // figures are dated by the machine's calendar and are still written (below).
         val clockChanged = progress.state.clock?.let { before ->
             val days = abs(machineNow.epochMs - before.machineMs) / DAY_MS
             abs(offset.millis - before.offsetMs) > CLOCK_STEP_MS + days * DRIFT_PER_DAY_MS

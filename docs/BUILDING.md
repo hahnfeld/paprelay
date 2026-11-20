@@ -103,8 +103,14 @@ The app is now at `app/build/outputs/apk/release/app-release.apk`.
 | `PAPRELAY_KEYSTORE_PASSWORD` | The password of the key file. |
 | `PAPRELAY_KEY_ALIAS` | The name of the key in the file. Only needed if it is not `paprelay`. |
 
-A password typed on the command line stays in the shell's history. To avoid that, set the
-variables with `export` first, in a terminal that you then close.
+A password typed on the command line stays in the shell's history. To avoid that, let the
+shell ask for it. Type the password and press Enter; nothing is shown:
+
+```bash
+read -rs PAPRELAY_KEYSTORE_PASSWORD && export PAPRELAY_KEYSTORE_PASSWORD
+```
+
+Then run the build with only `PAPRELAY_KEYSTORE` in front.
 
 Without `PAPRELAY_KEYSTORE` the build makes `app-release-unsigned.apk`. That file cannot
 be installed.

@@ -327,8 +327,10 @@ class SyncRunner(
     }
 
     /**
-     * Throws away a record of synchronising that can no longer be read, and starts again.
-     * Every night the machine still holds is then cleared in Health Connect and written again.
+     * Throws away a record of synchronising that can no longer be read, and starts as if new.
+     * The Sharing choices go back to their defaults (respiratory rate off, no file). The nights
+     * keep their own marks and are not written again. Respiratory rate is cleared and written
+     * again once it is switched on again.
      */
     fun startAgain() {
         scope.launch {

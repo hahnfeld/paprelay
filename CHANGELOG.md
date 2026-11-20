@@ -8,8 +8,8 @@ First public release.
 
 - The About screen says that PAPRelay is for personal use only and is not made, endorsed
   or supported by ResMed.
-- Some sentences in the app are clearer. The sentence about a changed machine clock now
-  says that only respiratory rate is held back.
+- Some sentences in the app are clearer, and two are corrected: a changed machine clock
+  holds back only respiratory rate, and **Start again** resets the switches in Sharing.
 - Documentation for users and contributors, with line diagrams.
 
 ## 0.2.0 (2026-11-16)

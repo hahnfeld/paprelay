@@ -16,9 +16,8 @@ It uses Bluetooth. It does not use the internet.
 >
 > There is no warranty.
 
-PAPRelay is new. It was tested with one machine and one phone. Two things have not yet
-been confirmed on a real phone: writing health records to Health Connect, and
-synchronising by itself in the background.
+PAPRelay is new. Pairing, the device check and the decoding were tested with one machine
+and one phone. Synchronising to Health Connect has not yet been confirmed on a real phone.
 
 ## What it does
 
@@ -59,9 +58,9 @@ Keep the phone within a few metres of the machine.
 2. On the machine, choose **More**, then **myAir App**, then **Connect**. The machine now
    waits for the phone.
 3. In PAPRelay, tap **Pair the machine**. Allow "Nearby devices"; this is Android's name
-   for Bluetooth. Android then asks if PAPRelay may write to Health Connect. Allow this
-   too. The machine shows a code with four digits. Type the code in PAPRelay. The code
-   works for about two minutes.
+   for Bluetooth. On Android 16 or later, Android then asks if PAPRelay may write to Health
+   Connect. Allow this too. The machine shows a code with four digits. Type the code in
+   PAPRelay. The code works for about two minutes.
 4. Wait. PAPRelay tests every connection. A tick means that the connection works.
 5. Tap **Synchronise now**. After this, PAPRelay synchronises by itself.
 

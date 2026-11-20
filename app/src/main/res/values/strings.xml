@@ -43,7 +43,7 @@
     <string name="sync_connection_lost">The connection to the machine was lost. PAPRelay will try again.</string>
     <string name="sync_data_not_understood">PAPRelay could not read some of the data from the machine.</string>
     <string name="sync_hc_failed">Health Connect did not accept the data. PAPRelay will try again.</string>
-    <string name="sync_store_unreadable">PAPRelay cannot read its record of what it has written. Choose Start again. PAPRelay then writes every night again.</string>
+    <string name="sync_store_unreadable">PAPRelay cannot read its record of what it has written. Choose Start again. PAPRelay then starts with a new record. The switches in Sharing go back to their first settings. Check them afterwards.</string>
     <string name="sync_phone_clock_wrong">This phone\'s clock is wrong. Set the phone\'s date and time to automatic. Nothing was written.</string>
     <string name="sync_internal">PAPRelay had an internal error. It will try again.</string>
     <string name="debug_no_sync">This test version does not synchronise. It only checks the connections.</string>
