@@ -257,7 +257,7 @@
     <string name="about_check">The device check reads from the machine and changes none of its settings or data. Pairing replaces the myAir app\'s connection to the machine. For each thing that is switched on in Sharing, the check writes a made-up test entry to Health Connect and removes it again. An empty source named “PAPRelay (CPAP machine)” stays in the health records.</string>
     <string name="about_disclaimer_heading">Not a medical device</string>
     <string name="about_disclaimer">PAPRelay is not intended to diagnose, treat, cure or prevent any condition, and must not be used to make diagnosis or treatment decisions. Values may be wrong, late or missing. It does not replace myAir, your equipment provider\'s reporting, or advice from your doctor.</string>
-    <string name="about_affiliation">PAPRelay is an independent project. It is not made, endorsed or supported by ResMed. ResMed is the company that makes the machine. PAPRelay is not affiliated with ResMed or Google. ResMed, AirSense and myAir are trademarks of ResMed. Android and Health Connect are trademarks of Google LLC.</string>
+    <string name="about_affiliation">PAPRelay is an independent project. It is not made, endorsed or supported by ResMed (the manufacturer of the machine) or by Google, and it is not affiliated with them. ResMed, AirSense and myAir are trademarks of ResMed. Android and Health Connect are trademarks of Google LLC.</string>
 
     <!-- Privacy screen, shown by Health Connect -->
     <string name="privacy_title">Privacy</string>

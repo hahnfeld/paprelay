@@ -22,7 +22,7 @@ software.
 ## Not from the manufacturer
 
 PAPRelay is an independent project. It is not made, endorsed, supported or approved by
-ResMed, the company that makes the machine. It is not affiliated with ResMed or Google.
+ResMed (the manufacturer of the machine) or by Google, and it is not affiliated with them.
 It contains no code from ResMed. It talks to the machine over the machine's own Bluetooth
 interface, with the pairing code that the machine shows to its owner.
 

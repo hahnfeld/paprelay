@@ -6,8 +6,8 @@ It uses Bluetooth. It does not use the internet.
 ![The machine sends data to the phone by Bluetooth. The phone passes it on to Health Connect, to a file, or to another app.](docs/images/overview.svg)
 
 > [!IMPORTANT]
-> PAPRelay is an independent project. It is **not made, endorsed or supported by ResMed**.
-> ResMed is the company that makes the machine. PAPRelay is not from Google either.
+> PAPRelay is an independent project. It is **not made, endorsed or supported by ResMed**
+> (the manufacturer of the machine) or by Google.
 >
 > PAPRelay is **for personal use only**: one person, with their own machine and their own phone.
 >
