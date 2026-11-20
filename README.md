@@ -16,8 +16,7 @@ It uses Bluetooth. It does not use the internet.
 >
 > There is no warranty.
 
-PAPRelay is new. Pairing, the device check and the decoding were tested with one machine
-and one phone. Synchronising to Health Connect has not yet been confirmed on a real phone.
+PAPRelay is new. It was tested with one machine and one phone.
 
 ## What it does
 

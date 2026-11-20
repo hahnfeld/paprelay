@@ -30,9 +30,6 @@ PAPRelay now copies each night's figures, not only respiratory rate.
 - Respiratory rate is now a switch under **Sharing**, off by default. An installation that
   was already writing it continues to do so.
 
-Not yet confirmed on a real phone: that Health Connect accepts and shows the health
-records, and that the file is written to a cloud drive from the background.
-
 ## 0.1.0 (2026-11-16)
 
 - Pairing with a ResMed AirSense 11 over Bluetooth, with the code from the machine's screen.
