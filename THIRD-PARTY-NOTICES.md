@@ -44,8 +44,8 @@ OTHER DEALINGS IN THE SOFTWARE.
 
 PAPRelay links the following libraries, all under the Apache License 2.0:
 Kotlin standard library and kotlinx.coroutines, kotlinx.serialization (JetBrains);
-AndroidX Core, Activity, Lifecycle, Compose, Room, DataStore, WorkManager and
-Health Connect client (The Android Open Source Project).
+AndroidX Core, Activity, Lifecycle, Compose, WorkManager and Health Connect client
+(The Android Open Source Project).
 
 The Apache License 2.0 is compatible with the GNU GPL version 3.
 

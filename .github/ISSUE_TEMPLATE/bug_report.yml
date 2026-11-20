@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Report a problem
+description: Something does not work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you. Short, simple sentences are fine.
+
+        **Do not attach** Bluetooth logs, Android bug reports, SD-card files, pairing codes, serial numbers or screenshots that show your health values. They are private.
+        For a security problem, do not use this form. See SECURITY.md.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: Say what you did, what you expected, and what you saw. Copy the sentence that PAPRelay showed.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: PAPRelay version
+      description: Open About in the app.
+      placeholder: "0.2.0"
+    validations:
+      required: true
+  - type: input
+    id: phone
+    attributes:
+      label: Phone and Android version
+      placeholder: "Pixel 10 Pro, Android 17"
+    validations:
+      required: true
+  - type: input
+    id: machine
+    attributes:
+      label: Machine and its software version
+      description: The saved report from Device check names the software version.
+      placeholder: "AirSense 11 AutoSet, SW04600.19.8.8.0"
+  - type: textarea
+    id: report
+    attributes:
+      label: Report from the device check
+      description: In PAPRelay, open Device check, run it, choose Save report, and attach or paste the file here. The report holds no pairing key, no full serial number and no Bluetooth address.
+  - type: checkboxes
+    id: private
+    attributes:
+      label: Privacy
+      options:
+        - label: I attached no capture, no SD-card file, no pairing code and no health values.
+          required: true

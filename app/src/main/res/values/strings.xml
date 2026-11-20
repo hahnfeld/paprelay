@@ -252,12 +252,12 @@
     <string name="about_attribution" translatable="false">Based on SomnoTrace, originally created by Ilya Kruchinin (https://github.com/ilyakruchinin).</string>
     <string name="about_licence">Copyright © 2026 PAPRelay contributors. PAPRelay is free software under the GNU General Public License, version 3 or later, with an attribution term inherited from SomnoTrace. It comes with absolutely no warranty. You may redistribute it under the terms of that licence; the source code is available from the project\'s repository.</string>
     <string name="about_intended_use_heading">Intended use</string>
-    <string name="about_intended_use">PAPRelay transfers, stores, converts and displays data your machine has already recorded. It does not interpret the data, raise alerts, give advice or control the machine.</string>
+    <string name="about_intended_use">PAPRelay is for personal use: your own machine, your own phone, your own data. It transfers, stores, converts and displays data your machine has already recorded. It does not interpret the data, raise alerts, give advice or control the machine.</string>
     <string name="about_check_heading">Device check</string>
     <string name="about_check">The device check reads from the machine and changes none of its settings or data. Pairing replaces the myAir app\'s connection to the machine. For each thing that is switched on in Sharing, the check writes a made-up test entry to Health Connect and removes it again. An empty source named PAPRelay stays in the health records.</string>
     <string name="about_disclaimer_heading">Not a medical device</string>
     <string name="about_disclaimer">PAPRelay is not intended to diagnose, treat, cure or prevent any condition, and must not be used to make diagnosis or treatment decisions. Values may be wrong, late or missing. It does not replace myAir, your equipment provider\'s reporting, or advice from a clinician.</string>
-    <string name="about_affiliation">PAPRelay is an independent project. It is not affiliated with or endorsed by ResMed or Google. ResMed, AirSense and myAir are trademarks of ResMed. Android and Health Connect are trademarks of Google LLC.</string>
+    <string name="about_affiliation">PAPRelay is an independent project. It is not made, endorsed or supported by ResMed, the manufacturer of the machine, or by Google. ResMed, AirSense and myAir are trademarks of ResMed. Android and Health Connect are trademarks of Google LLC.</string>
 
     <!-- Privacy screen, shown by Health Connect -->
     <string name="privacy_title">Privacy</string>

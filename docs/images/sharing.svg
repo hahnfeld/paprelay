@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 362" width="720" height="362" role="img" aria-label="The four choices on the Sharing page: nightly figures to the health records in Health Connect, switched on; respiratory rate to Health Connect, switched off; a table of nights in a file you choose; and sharing the recent nights as text.">
+<title>The four choices on the Sharing page: nightly figures to the health records in Health Connect, switched on; respiratory rate to Health Connect, switched off; a table of nights in a file you choose; and sharing the recent nights as text.</title>
+<style>
+  .paper { fill: #ffffff; stroke: #d0d7de; stroke-width: 1; }
+  .ink { fill: none; stroke: #1f2328; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+  .thin { fill: none; stroke: #1f2328; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .line { fill: none; stroke: #6e7781; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+  .faint { fill: none; stroke: #afb8c1; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .dash { stroke-dasharray: 7 7; }
+  .solid { fill: #1f2328; stroke: none; }
+  .hole { fill: #ffffff; stroke: none; }
+  .bad { fill: #cf222e; stroke: none; }
+  .badline { fill: none; stroke: #cf222e; stroke-width: 2.4; stroke-linecap: round; }
+  .onbad { fill: none; stroke: #ffffff; stroke-width: 2.4; stroke-linecap: round; }
+  text { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #1f2328; }
+  .t { font-size: 16px; }
+  .b { font-size: 16px; font-weight: 600; }
+  .s { font-size: 13px; fill: #57606a; }
+  .m { font-size: 11px; }
+  .ms { font-size: 10px; fill: #57606a; }
+  .num { font-size: 14px; font-weight: 700; fill: #ffffff; }
+  .on { fill: #ffffff; }
+  @media (prefers-color-scheme: dark) {
+    .paper { fill: #0d1117; stroke: #30363d; }
+    .ink, .thin { stroke: #e6edf3; }
+    .line { stroke: #8b949e; }
+    .faint { stroke: #484f58; }
+    .solid { fill: #e6edf3; }
+    .hole { fill: #0d1117; }
+    .bad { fill: #f85149; }
+    .badline { stroke: #f85149; }
+    .onbad { stroke: #0d1117; }
+    text { fill: #e6edf3; }
+    .s, .ms { fill: #8b949e; }
+    .num, .on { fill: #0d1117; }
+  }
+</style>
+<rect class="paper" x="0.5" y="0.5" width="719" height="361" rx="12"/>
+<rect class="solid" x="60" y="39" width="46" height="26" rx="13"/>
+<circle class="hole" cx="93" cy="52" r="8.5"/>
+<path class="ink" d="M176.5 67.8C153.2 55.5 155 37.9 169.1 37.9C173.5 37.9 176.5 41.4 176.5 45C176.5 41.4 179.4 37.9 183.9 37.9C197.9 37.9 199.8 55.5 176.5 67.8Z"/>
+<text class="b" x="222" y="46" text-anchor="start">Nightly figures → health records</text>
+<text class="s" x="222" y="66" text-anchor="start">Hours of use, AHI, leak, pressure. In Health Connect.</text>
+<text class="s" x="222" y="84" text-anchor="start">Needs Android 16 or later. On at the start.</text>
+<path class="faint" d="M40 98H680"/>
+<rect class="line" x="60" y="123" width="46" height="26" rx="13"/>
+<circle class="line" cx="73" cy="136" r="6.5"/>
+<path class="ink" d="M176.5 151.8C153.2 139.5 155 121.9 169.1 121.9C173.5 121.9 176.5 125.4 176.5 129C176.5 125.4 179.4 121.9 183.9 121.9C197.9 121.9 199.8 139.5 176.5 151.8Z"/>
+<text class="b" x="222" y="130" text-anchor="start">Respiratory rate → Health Connect</text>
+<text class="s" x="222" y="150" text-anchor="start">One value for each minute of therapy.</text>
+<text class="s" x="222" y="168" text-anchor="start">Off at the start.</text>
+<path class="faint" d="M40 182H680"/>
+<rect class="thin" x="40" y="206" width="86" height="28" rx="14"/>
+<text class="m" x="83" y="224" text-anchor="middle">Choose…</text>
+<path class="ink" d="M160 200H181.8L192 210.2V242H160Z"/>
+<path class="thin" d="M181.8 200V210.2H192"/>
+<path class="thin" d="M166.4 220.2H185.6"/>
+<path class="thin" d="M166.4 226.9H185.6"/>
+<path class="thin" d="M166.4 233.6H185.6"/>
+<text class="b" x="222" y="214" text-anchor="start">Table of nights → a file</text>
+<text class="s" x="222" y="234" text-anchor="start">One line for each night (CSV).</text>
+<text class="s" x="222" y="252" text-anchor="start">You choose the place: the phone, or a cloud drive.</text>
+<path class="faint" d="M40 266H680"/>
+<rect class="thin" x="40" y="290" width="86" height="28" rx="14"/>
+<text class="m" x="83" y="308" text-anchor="middle">Share</text>
+<path class="ink" d="M165.6 305L188.4 292.8M165.6 305L188.4 317.2"/>
+<circle class="hole" cx="165.6" cy="305" r="6.9"/>
+<circle class="ink" cx="165.6" cy="305" r="4.9"/>
+<circle class="hole" cx="188.4" cy="292.8" r="6.9"/>
+<circle class="ink" cx="188.4" cy="292.8" r="4.9"/>
+<circle class="hole" cx="188.4" cy="317.2" r="6.9"/>
+<circle class="ink" cx="188.4" cy="317.2" r="4.9"/>
+<text class="b" x="222" y="298" text-anchor="start">Share → another app</text>
+<text class="s" x="222" y="318" text-anchor="start">The recent nights as text.</text>
+<text class="s" x="222" y="336" text-anchor="start">You choose the app each time.</text>
+</svg>

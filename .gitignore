@@ -7,7 +7,7 @@ local.properties
 captures/
 
 # Never commit device captures or signing material. Real captures contain the
-# pairing key, the machine serial and therapy data (see docs/TESTING.md).
+# pairing key, the machine serial and therapy data (see CONTRIBUTING.md).
 *.btsnoop
 *.cfa
 *.pcap

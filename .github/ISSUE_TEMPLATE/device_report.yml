@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Report a machine or a phone
+description: Tell us that PAPRelay works, or does not work, with your machine software or your phone.
+labels: [compatibility]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        PAPRelay trusts only machine software that has been checked. Your report helps to add more.
+
+        **Do not attach** downloads from the machine, SD-card files or Bluetooth logs. They are your health data. Read "A new machine software version" in CONTRIBUTING.md.
+  - type: input
+    id: machine
+    attributes:
+      label: Machine and its software version
+      description: The saved report from Device check names the software version.
+      placeholder: "AirSense 11 AutoSet, SW04600.19.8.8.0"
+    validations:
+      required: true
+  - type: input
+    id: phone
+    attributes:
+      label: Phone and Android version
+      placeholder: "Pixel 10 Pro, Android 17"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: PAPRelay version
+      placeholder: "0.2.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options:
+        - Everything works
+        - Pairing works, but PAPRelay says that it cannot read this software version
+        - Pairing does not work
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Report from the device check
+      description: In PAPRelay, open Device check, run it, choose Save report, and attach or paste the file here.
+  - type: textarea
+    id: compared
+    attributes:
+      label: Did you compare the figures with another source?
+      description: For example with the machine's SD card in OSCAR. Say which figures you compared, for how many nights, and whether they were equal. Do not post the figures themselves.

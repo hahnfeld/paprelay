@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 366" width="720" height="366" role="img" aria-label="How data moves through PAPRelay: from the machine over the Bluetooth link, through the protocol client, the decoders and the plans, into the sync engine, which keeps the nights on the phone and passes them to Health Connect, a file, and the screen.">
+<title>How data moves through PAPRelay: from the machine over the Bluetooth link, through the protocol client, the decoders and the plans, into the sync engine, which keeps the nights on the phone and passes them to Health Connect, a file, and the screen.</title>
+<style>
+  .paper { fill: #ffffff; stroke: #d0d7de; stroke-width: 1; }
+  .ink { fill: none; stroke: #1f2328; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+  .thin { fill: none; stroke: #1f2328; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .line { fill: none; stroke: #6e7781; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+  .faint { fill: none; stroke: #afb8c1; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .dash { stroke-dasharray: 7 7; }
+  .solid { fill: #1f2328; stroke: none; }
+  .hole { fill: #ffffff; stroke: none; }
+  .bad { fill: #cf222e; stroke: none; }
+  .badline { fill: none; stroke: #cf222e; stroke-width: 2.4; stroke-linecap: round; }
+  .onbad { fill: none; stroke: #ffffff; stroke-width: 2.4; stroke-linecap: round; }
+  text { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #1f2328; }
+  .t { font-size: 16px; }
+  .b { font-size: 16px; font-weight: 600; }
+  .s { font-size: 13px; fill: #57606a; }
+  .m { font-size: 11px; }
+  .ms { font-size: 10px; fill: #57606a; }
+  .num { font-size: 14px; font-weight: 700; fill: #ffffff; }
+  .on { fill: #ffffff; }
+  @media (prefers-color-scheme: dark) {
+    .paper { fill: #0d1117; stroke: #30363d; }
+    .ink, .thin { stroke: #e6edf3; }
+    .line { stroke: #8b949e; }
+    .faint { stroke: #484f58; }
+    .solid { fill: #e6edf3; }
+    .hole { fill: #0d1117; }
+    .bad { fill: #f85149; }
+    .badline { stroke: #f85149; }
+    .onbad { stroke: #0d1117; }
+    text { fill: #e6edf3; }
+    .s, .ms { fill: #8b949e; }
+    .num, .on { fill: #0d1117; }
+  }
+</style>
+<rect class="paper" x="0.5" y="0.5" width="719" height="365" rx="12"/>
+<rect class="ink" x="41" y="45.2" width="82" height="35.8" rx="9"/>
+<rect class="ink" x="48.4" y="59.8" width="25.2" height="14.6" rx="2.8"/>
+<circle class="ink" cx="61" cy="52.5" r="3.6"/>
+<path class="ink" d="M98.8 49.1V77.1M98.8 67.6H123M51.8 86.1H112.2"/>
+<text class="s" x="82" y="108" text-anchor="middle">Machine</text>
+<path class="ink dash" d="M132.0 62H152.0"/>
+<path class="ink" d="M148 55L155 62L148 69"/>
+<rect class="ink" x="158.0" y="40" width="112" height="46" rx="10"/>
+<text class="b" x="214" y="61" text-anchor="middle">Link</text>
+<text class="ms" x="214" y="77" text-anchor="middle">app/ble</text>
+<path class="ink" d="M273.0 63H286.0"/>
+<path class="ink" d="M284 58L289 63L284 68"/>
+<rect class="ink" x="292.0" y="40" width="112" height="46" rx="10"/>
+<text class="b" x="348" y="61" text-anchor="middle">Protocol</text>
+<text class="ms" x="348" y="77" text-anchor="middle">as11</text>
+<path class="ink" d="M407.0 63H420.0"/>
+<path class="ink" d="M418 58L423 63L418 68"/>
+<rect class="ink" x="426.0" y="40" width="112" height="46" rx="10"/>
+<text class="b" x="482" y="61" text-anchor="middle">Decoders</text>
+<text class="ms" x="482" y="77" text-anchor="middle">as11/decode</text>
+<path class="ink" d="M541.0 63H554.0"/>
+<path class="ink" d="M552 58L557 63L552 68"/>
+<rect class="ink" x="560.0" y="40" width="112" height="46" rx="10"/>
+<text class="b" x="616" y="61" text-anchor="middle">Plans</text>
+<text class="ms" x="616" y="77" text-anchor="middle">as11/plan</text>
+<path class="ink" d="M616 89V132"/>
+<path class="ink" d="M610 126L616 134L622 126"/>
+<rect class="ink" x="200" y="136" width="480" height="70" rx="10"/>
+<text class="b" x="216" y="162" text-anchor="start">Sync engine</text>
+<text class="ms" x="322" y="162" text-anchor="start">app/sync</text>
+<text class="s" x="216" y="182" text-anchor="start">Keeps the nights. Works out what is new or changed.</text>
+<text class="s" x="216" y="198" text-anchor="start">Remembers what it wrote, so nothing is written twice.</text>
+<rect class="line" x="40" y="136" width="136" height="70" rx="10"/>
+<text class="b" x="108" y="162" text-anchor="middle">On the phone</text>
+<text class="ms" x="108" y="181" text-anchor="middle">pairing key · nights</text>
+<text class="ms" x="108" y="196" text-anchor="middle">record of writes</text>
+<path class="line" d="M178 171H198"/>
+<path class="ink" d="M250 209V236"/>
+<path class="ink" d="M244 230L250 238L256 230"/>
+<path class="ink" d="M250 285.8C226.7 273.5 228.5 255.9 242.6 255.9C247 255.9 250 259.4 250 263C250 259.4 252.9 255.9 257.4 255.9C271.4 255.9 273.3 273.5 250 285.8Z"/>
+<text class="b" x="250" y="314" text-anchor="middle">Health Connect</text>
+<text class="s" x="250" y="331" text-anchor="middle">health records, vitals</text>
+<path class="ink" d="M430 209V236"/>
+<path class="ink" d="M424 230L430 238L436 230"/>
+<path class="ink" d="M414 250H435.8L446 260.2V292H414Z"/>
+<path class="thin" d="M435.8 250V260.2H446"/>
+<path class="thin" d="M420.4 270.2H439.6"/>
+<path class="thin" d="M420.4 276.9H439.6"/>
+<path class="thin" d="M420.4 283.6H439.6"/>
+<text class="b" x="430" y="314" text-anchor="middle">A file</text>
+<text class="s" x="430" y="331" text-anchor="middle">the table of nights</text>
+<path class="ink" d="M598 209V236"/>
+<path class="ink" d="M592 230L598 238L604 230"/>
+<rect class="ink" x="587" y="248.9" width="22" height="42.2" rx="4.3"/>
+<path class="ink" d="M594.2 286.3H601.8"/>
+<text class="b" x="598" y="314" text-anchor="middle">The screen</text>
+<text class="s" x="598" y="331" text-anchor="middle">last night, the list</text>
+</svg>

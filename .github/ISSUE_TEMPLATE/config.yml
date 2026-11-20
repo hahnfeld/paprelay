@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security problem in private
+    url: https://github.com/hahnfeld/paprelay/security/advisories/new
+    about: Do not open a public issue for a security problem. Use this form instead.
+  - name: Questions about your therapy
+    url: https://github.com/hahnfeld/paprelay/blob/main/docs/INTENDED-USE.md
+    about: PAPRelay cannot give medical advice. Please ask your doctor or your equipment provider.

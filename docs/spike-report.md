@@ -1,5 +1,9 @@
 # First device run (M1)
 
+A record of the first run against a real machine, and of the comparison that confirmed
+the decoders. It is kept as an example of how a machine software version is confirmed
+(see [CONTRIBUTING.md](../CONTRIBUTING.md#a-new-machine-software-version)).
+
 Run on 2026-11-16 with build `9e84a1e` (debug), a Google Pixel 10 Pro on
 Android 17, and an AirSense 11 AutoSet (firmware `SW04600.19.8.8.0`, data
 model `v2.19.0`). Every step of the device check passed on the first attempt.
@@ -48,7 +52,7 @@ repository.
 |---|---|---|
 | Daily summaries | 30 days; on the 12 days with therapy, every index, percentile, duration and mask-on/off time: 554 values, 28 sessions | All equal at the stored resolution. Unused days are empty on both sides |
 | Breathing events | 11 events over three sessions | Same kind, same order, same duration; times within 1.5 s (the card stores whole seconds) |
-| Per-minute log, length | Three sessions | One sample per minute of mask-on time on both sides: 123, 202 and 101 |
+| Per-minute log, length | Three sessions | One sample per minute of mask-on time on both sides, in every session |
 | Per-minute leak and pressures | Against the card's 2-second signals, averaged per minute | Within one step of the per-minute resolution |
 | Per-minute respiratory rate | Same | Mean difference 0.13 to 0.28 breaths/min; within 0.5 on 94.6 % of 426 minutes. The machine's per-minute figure is its own average, not a resample of the 2-second signal, so exact equality is not expected |
 
