@@ -97,7 +97,7 @@ private fun Root(app: PapRelayApp) {
     val uiScope = rememberCoroutineScope()
 
     /** The Health Connect permissions that what is switched on needs. */
-    fun wanted(respiratoryRate: Boolean = sync.respiratoryRate, healthRecords: Boolean = sync.healthRecords): Set<String> = buildSet {
+    fun wanted(respiratoryRate: Boolean = sync.rateWanted, healthRecords: Boolean = sync.healthRecords): Set<String> = buildSet {
         if (respiratoryRate) add(app.healthConnect.writePermission)
         if (healthRecords && recordsSupported) add(app.healthRecords.writePermission)
     }
@@ -115,7 +115,7 @@ private fun Root(app: PapRelayApp) {
         if (refusedChoice == PENDING_RECORDS && recordsAllowed || refusedChoice == PENDING_RESPIRATORY && respiratoryAllowed) refusedChoice = ""
     }
     // On first showing, and again whenever a check or a synchronisation finishes or a choice changes.
-    LaunchedEffect(running, sync.running, sync.respiratoryRate, sync.healthRecords) { if (!running && !sync.running) refreshHealth() }
+    LaunchedEffect(running, sync.running, sync.rateWanted, sync.healthRecords) { if (!running && !sync.running) refreshHealth() }
 
     // The user may change things in system settings and come back.
     DisposableEffect(Unit) {
@@ -272,7 +272,7 @@ private fun Root(app: PapRelayApp) {
             recordsSupported = recordsSupported,
             // Switched on and not allowed (the permission was taken away), or just tried and refused.
             recordsBlocked = recordsSupported && (sync.healthRecords && !recordsAllowed || refusedChoice == PENDING_RECORDS),
-            respiratoryBlocked = sync.rateReadable && (sync.respiratoryRate && !respiratoryAllowed || refusedChoice == PENDING_RESPIRATORY),
+            respiratoryBlocked = sync.rateReadable && (sync.rateWanted && !respiratoryAllowed || refusedChoice == PENDING_RESPIRATORY),
             onRecords = { on ->
                 refusedChoice = ""
                 if (on) request(PENDING_RECORDS) else app.sync.setHealthRecords(false)

@@ -380,6 +380,9 @@ class MinuteDecoderTest {
         val others = listOf(
             // Other versions of the same software, whose summaries are read.
             "SW04600.19.8.9.0.dced143ae", "SW04600.20.0.0.0.abc", "SW04600.19.8.8.01.x", "SW04600.19.8.8.0.1.abc",
+            // One part of the version different, each in turn; and a build that is not lower-case hexadecimal.
+            "SW04600.18.8.8.0.abc", "SW04600.20.8.8.0.abc", "SW04600.19.9.8.0.abc", "SW04600.19.8.8.1.abc",
+            "SW04600.19.8.8.0.ABC", "SW04600.19.8.8.0.xyz",
             "SW04601.19.8.8.0.x", "", "19.8.8.0",
             // The right prefix is not enough, nor the right text somewhere inside, nor another case.
             "SW04600.19.8.8.0.", "SW04600.19.8.8.0.abc\nSW04600.20.0.0.0.abc", "xSW04600.19.8.8.0.abc", "sw04600.19.8.8.0.abc",

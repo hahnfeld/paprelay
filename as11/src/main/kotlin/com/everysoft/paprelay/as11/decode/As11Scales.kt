@@ -119,7 +119,7 @@ public class Firmware private constructor(public val applicationIdentifier: Stri
     public val perMinuteAccepted: Boolean get() = PER_MINUTE.matches(applicationIdentifier)
 
     public companion object {
-        /** No longer than what is kept of it between synchronisations. */
+        /** Far longer than any identifier seen, and well within what is kept of it between synchronisations. */
         private const val MAX_LENGTH = 64
 
         /** `SW04600`, then the parts of a version and a build. */

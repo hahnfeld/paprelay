@@ -6,9 +6,9 @@ Newest first. Before 1.0, any release may change behaviour.
 
 First public release.
 
-- PAPRelay no longer stops when the machine has another software version. It reads the
-  nightly figures from every version. Respiratory rate is still read from version 19.8.8.0
-  only, and the Sharing page says so on another version.
+- PAPRelay no longer stops when an AirSense 11 has another software version. It now reads
+  the nightly figures there too. Respiratory rate is still read from version 19.8.8.0
+  only; the app says so on another version.
 - A nightly figure is left out if its set of percentiles is not the one PAPRelay knows.
 - The About screen says that PAPRelay is for personal use only and is not made, endorsed
   or supported by ResMed.

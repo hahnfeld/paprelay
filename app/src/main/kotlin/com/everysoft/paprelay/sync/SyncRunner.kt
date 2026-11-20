@@ -41,6 +41,12 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.abs
 
+/**
+ * Whether respiratory rate can be read from the software last seen on the machine. Not known
+ * until the machine has been seen once; until then nothing is said against it.
+ */
+internal fun rateReadableFrom(softwareSeen: String?): Boolean = softwareSeen?.let { Firmware.reportedByMachine(it).perMinuteAccepted } ?: true
+
 /** What the screen needs to know about synchronising. */
 class SyncStatus(
     val running: Boolean,
@@ -59,6 +65,12 @@ class SyncStatus(
     /** False when the machine's software, as last seen, is one whose respiratory rate is not read. */
     val rateReadable: Boolean = true,
 ) {
+    /**
+     * Whether respiratory rate is to be written as things stand: switched on, and readable from the
+     * machine's software. The switch itself is kept as the user left it, for when it can be read again.
+     */
+    val rateWanted: Boolean get() = respiratoryRate && rateReadable
+
     fun with(
         running: Boolean = this.running,
         lastReport: SyncReport? = this.lastReport,
@@ -514,8 +526,7 @@ class SyncRunner(
                     before.with(
                         lastReport = report, lastCompleteAtMs = stored.lastCompleteAtMs, storeUnreadable = false,
                         respiratoryRate = stored.respiratoryRate, healthRecords = stored.healthRecords, exportFile = stored.exportFile,
-                        // Not known until the machine has been seen once; until then nothing is said against it.
-                        rateReadable = stored.softwareSeen?.let { Firmware.reportedByMachine(it).perMinuteAccepted } ?: true,
+                        rateReadable = rateReadableFrom(stored.softwareSeen),
                     )
                 }
                 // Damaged: the user is told, and offered a fresh start.

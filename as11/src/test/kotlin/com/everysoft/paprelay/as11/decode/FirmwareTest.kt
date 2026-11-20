@@ -31,7 +31,7 @@ class FirmwareTest {
     }
 
     @Test
-    fun `an identifier longer than what is kept of it is not read`() {
+    fun `an over-long identifier is not read`() {
         val longest = "SW04600.19.8.8.0." + "a".repeat(40) + "." + "b".repeat(6)
         assertTrue(longest.length == 64 && accepted(longest))
         assertTrue(!accepted(longest + "b"))

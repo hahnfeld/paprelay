@@ -69,7 +69,7 @@ A measurement is kept as the integer that the machine stored, with its scale and
 compared on these integers, so two runs over the same data give the same result.
 
 PAPRelay does not estimate or score, and does not recompute a clinical index such as AHI.
-A value that cannot be read with certainty is left out. An empty cell is not a guessed zero.
+A value that fails a check is left out. An empty cell is not a guessed zero.
 
 Three things are derived from the stored integers:
 
@@ -88,17 +88,23 @@ software follows from how each log can go wrong (`Firmware` in `As11Scales.kt`):
 - The daily summary is made of tagged fields. It is read from every version whose
   identifier has the form of the compared machine's (`SW04600`, a version, a build), on
   the assumption that the fields mean the same. Each value is still checked before it is
-  passed on: the length of the day, the session count, an upper limit for each figure, and
-  that a metric has exactly the percentiles known for it. A value that fails is left out.
+  passed on. A day of the wrong length, or with a session count that does not match, is
+  left out whole. A figure above its upper limit, or a metric that does not have exactly
+  the percentiles known for it, is left out alone.
 - The per-minute log is compressed with a constant for each signal. With a wrong constant
   it can decode to values that are wrong but plausible, mostly in short sessions. It is
-  read only from the version it was compared on. On another version respiratory rate is
-  not written, and the Sharing page says so.
+  read only while the machine runs the version it was compared on. On another version
+  respiratory rate is not written, and the app says so.
 
-Within the compared version the engine has one more check for the per-minute log: on the
-first run, and when the build changes, a session of at least 30 minutes must decode with
-its signals agreeing on its length before shorter sessions are written. The code calls
-this "vouching".
+The engine has one more check for the per-minute log. On the first run, and whenever the
+machine's software identifier has changed, no session is written until a session of at
+least 30 minutes has decoded with its signals agreeing on its length. After a change it
+must be a session that began after the change was seen. The code calls this "vouching".
+
+A known limit: the machine does not say which software recorded a session. Sessions that
+an earlier version recorded are read with the compared version's constants once the
+machine runs the compared version. On a first run, and after the user accepts a changed
+clock, an older session can also do the vouching.
 
 Software whose identifier has another form is not read: the engine stops with
 `SOFTWARE_NOT_CONFIRMED` and writes nothing.

@@ -291,6 +291,10 @@ fun HomeScreen(
             if (healthMissing && sync.lastReport?.outcome != SyncOutcome.HEALTH_CONNECT_NOT_ALLOWED) {
                 Secondary(stringResource(R.string.sync_hc_not_allowed), Modifier.padding(top = 12.dp))
             }
+            // Switched on, and stopped by the machine's software: said here too, or it would stop unnoticed.
+            if (sync.respiratoryRate && !sync.rateReadable) {
+                Secondary(stringResource(R.string.choice_respiratory_unsupported), Modifier.padding(top = 12.dp))
+            }
             if (sync.exportFile != null && sync.exportFailed) {
                 Secondary(stringResource(R.string.choice_file_failed), Modifier.padding(top = 12.dp))
             }
@@ -466,8 +470,9 @@ fun ChoicesScreen(
         Choice(
             title = R.string.choice_respiratory,
             body = if (sync.rateReadable) R.string.choice_respiratory_body else R.string.choice_respiratory_unsupported,
-            checked = sync.rateReadable && sync.respiratoryRate,
-            enabled = sync.rateReadable && !sync.running,
+            // Shown as it was left. While it cannot be read it can be switched off, not on.
+            checked = sync.respiratoryRate,
+            enabled = !sync.running && (sync.rateReadable || sync.respiratoryRate),
             onChange = onRespiratoryRate,
         )
         if (respiratoryBlocked) NotAllowed(onOpenHealthConnect)

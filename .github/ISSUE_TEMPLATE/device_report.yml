@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        The stored data was compared with an SD card on one software version. Your report tells us how PAPRelay does on others.
+        The stored data was compared with an SD card on one software version. Your report tells us if PAPRelay works on other versions.
 
         **Do not attach** downloads from the machine, SD-card files or Bluetooth logs. They are your health data. Read "Machines and software versions" in CONTRIBUTING.md.
   - type: input

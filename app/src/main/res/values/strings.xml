@@ -79,7 +79,7 @@
     <string name="choice_records_unsupported">Health records are not available on this phone. They need Health Connect on Android 16 or later.</string>
     <string name="choice_not_allowed">Health Connect does not allow PAPRelay to write this. Open Health Connect and allow it, then switch this on.</string>
     <string name="choice_respiratory">Respiratory rate to Health Connect</string>
-    <string name="choice_respiratory_unsupported">PAPRelay cannot yet read respiratory rate from this machine\'s software version. The nightly figures are not affected.</string>
+    <string name="choice_respiratory_unsupported">PAPRelay cannot yet read respiratory rate from this machine\'s software version. The nightly figures are still copied.</string>
     <string name="choice_respiratory_body">One value for each minute of therapy. Leave this off if another device already writes your respiratory rate.</string>
     <string name="choice_file">Table of nights</string>
     <string name="choice_file_body">A file with one line for each night, kept up to date where you choose. If you keep it on a cloud drive, other programs can read it there. PAPRelay itself sends nothing: it hands the file to the place you chose.</string>
