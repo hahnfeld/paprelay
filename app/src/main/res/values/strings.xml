@@ -113,7 +113,12 @@
 
     <!-- Pairing status under the picture -->
     <string name="machine_unpaired">Not paired</string>
-    <string name="machine_unpaired_hint">First, remove the machine from the myAir app on this phone. Then, on the machine, choose More, then myAir App, then Connect.</string>
+    <!-- The three steps of pairing, shown as a numbered list under "Not paired". One step each. -->
+    <string name="pair_step_1">Remove the machine from the myAir app.</string>
+    <string name="pair_step_2">On the machine, choose More › myAir App › Connect.</string>
+    <string name="pair_step_3">Tap Pair the machine.</string>
+    <!-- The number in front of a step in a numbered list. %1$d is the number. -->
+    <string name="list_number">%1$d.</string>
     <string name="machine_paired">AirSense 11 · serial ending %1$s</string>
     <string name="machine_paired_unknown">AirSense 11</string>
     <string name="machine_unreadable">Pair the machine again</string>

@@ -68,10 +68,15 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.CollectionInfo
+import androidx.compose.ui.semantics.CollectionItemInfo
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.collectionInfo
+import androidx.compose.ui.semantics.collectionItemInfo
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -85,6 +90,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import com.everysoft.paprelay.BuildConfig
 import com.everysoft.paprelay.R
@@ -657,6 +663,30 @@ private fun Choice(glyph: GlyphKind, @StringRes title: Int, @StringRes body: Int
 }
 
 /**
+ * Steps to follow in order, numbered, one to a line, in the secondary text style. A step that
+ * wraps keeps its lines under its own text, not under the number; the room for the number grows
+ * with the font size. A screen reader reads them as a list, one step at a time, with the number.
+ */
+@Composable
+private fun NumberedSteps(steps: List<Int>, modifier: Modifier = Modifier) {
+    val numberWidth = with(LocalDensity.current) { 20.sp.toDp() }
+    Column(modifier.semantics { collectionInfo = CollectionInfo(rowCount = steps.size, columnCount = 1) }) {
+        steps.forEachIndexed { index, step ->
+            Row(
+                Modifier
+                    .padding(top = if (index == 0) 0.dp else 2.dp)
+                    .semantics(mergeDescendants = true) {
+                        collectionItemInfo = CollectionItemInfo(rowIndex = index, rowSpan = 1, columnIndex = 0, columnSpan = 1)
+                    },
+            ) {
+                Secondary(stringResource(R.string.list_number, index + 1), Modifier.widthIn(min = numberWidth))
+                Secondary(stringResource(step), Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+/**
  * The machine, or why there is none. [pairingHint] false leaves out the advice on how to pair,
  * where a failed check under it already gives the advice that fits.
  */
@@ -666,7 +696,7 @@ private fun MachineLine(pairing: PairingState, pairingHint: Boolean = true) {
         PairingState.Loading -> Text(stringResource(R.string.machine_loading), style = MaterialTheme.typography.titleMedium)
         PairingState.Absent -> {
             Text(stringResource(R.string.machine_unpaired), style = MaterialTheme.typography.titleMedium)
-            if (pairingHint) Secondary(stringResource(R.string.machine_unpaired_hint), Modifier.padding(top = 4.dp))
+            if (pairingHint) NumberedSteps(listOf(R.string.pair_step_1, R.string.pair_step_2, R.string.pair_step_3), Modifier.padding(top = 4.dp))
         }
         PairingState.Unreadable -> {
             Text(stringResource(R.string.machine_unreadable), style = MaterialTheme.typography.titleMedium)

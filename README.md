@@ -48,10 +48,10 @@ Keep the phone within a few metres of the machine.
 
 ![The five steps of the setup, as pictures.](docs/images/setup.svg)
 
-1. In the myAir app, remove the machine. If the phone's Bluetooth settings list the
+1. Remove the machine from the myAir app. If the phone's Bluetooth settings list the
    machine, remove ("forget") it there too.
-2. On the machine, choose **More**, then **myAir App**, then **Connect**. The machine now
-   waits for the phone.
+2. On the machine, choose **More** › **myAir App** › **Connect**. The machine now waits for
+   the phone.
 3. In PAPRelay, tap **Pair the machine**. Allow "Nearby devices"; this is Android's name
    for Bluetooth. On Android 16 or later, Android then asks if PAPRelay may write to Health
    Connect. Allow this too. The machine shows a code with four digits. Type the code in

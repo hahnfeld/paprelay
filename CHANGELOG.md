@@ -13,6 +13,8 @@ Newest first. Before 1.0, any release may change behaviour.
 - The home screen leads to **Nights**, **Sharing** and **Device check** with rows that have
   small drawings. About is the **i** at the top. **Sharing** has the same drawings beside
   its items. **Nights** says when there are no nights yet.
+- Before a machine is paired, the home screen shows the three steps of pairing as a
+  numbered list.
 
 ## 0.2.2 (2026-11-20)
 
