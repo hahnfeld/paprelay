@@ -11,6 +11,7 @@ import android.health.connect.HealthConnectManager
 import android.health.connect.MedicalResourceId
 import android.health.connect.UpsertMedicalResourceRequest
 import android.health.connect.datatypes.FhirResource.FHIR_RESOURCE_TYPE_OBSERVATION
+import android.health.connect.datatypes.FhirResource.FHIR_RESOURCE_TYPE_PATIENT
 import android.health.connect.datatypes.FhirVersion
 import android.health.connect.datatypes.MedicalDataSource
 import android.net.Uri
@@ -104,6 +105,20 @@ class HealthRecords(private val context: Context) : NightRecords {
         for (chunk in resources.chunked(CHUNK)) {
             // Health Connect says how many it stored. Fewer than were sent is not a success.
             if (answered { upsert(manager, source, chunk) } != chunk.size) throw HealthSinkException(notAllowed = false)
+        }
+    }
+
+    // The person's name and date of birth, in the one Patient record the observations name. Its text is never logged either.
+    override suspend fun writePatient(patient: FhirResource?): Unit = guarded {
+        if (Build.VERSION.SDK_INT < FIRST_VERSION) throw HealthSinkException(notAllowed = false)
+        val manager = manager()
+        val source = sourceId ?: answered { sources(manager) }.firstOrNull { it.displayName == SOURCE_NAME }?.id?.also { sourceId = it }
+            ?: throw HealthSinkException(notAllowed = false)
+        if (patient == null) {
+            // Removing one that is not there is no failure.
+            tidy { remove(manager, source, listOf(FhirObservations.PATIENT_ID), FHIR_RESOURCE_TYPE_PATIENT) }
+        } else if (answered { upsert(manager, source, listOf(patient)) } != 1) {
+            throw HealthSinkException(notAllowed = false)
         }
     }
 
@@ -242,8 +257,8 @@ class HealthRecords(private val context: Context) : NightRecords {
     }
 
     @RequiresApi(FIRST_VERSION)
-    private suspend fun remove(manager: HealthConnectManager, source: String, ids: List<String>) {
-        val resourceIds = ids.map { MedicalResourceId(source, FHIR_RESOURCE_TYPE_OBSERVATION, it) }
+    private suspend fun remove(manager: HealthConnectManager, source: String, ids: List<String>, type: Int = FHIR_RESOURCE_TYPE_OBSERVATION) {
+        val resourceIds = ids.map { MedicalResourceId(source, type, it) }
         call<Void?> { receiver -> manager.deleteMedicalResources(resourceIds, Runnable::run, receiver) }
     }
 

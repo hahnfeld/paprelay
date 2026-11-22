@@ -21,15 +21,15 @@ no reward programme. Only the newest release receives fixes.
 ## What counts
 
 - A way to make PAPRelay send the machine a request that changes therapy, settings or data.
-- A way for another app or another Bluetooth device to obtain the pairing secret or health
-  data from PAPRelay.
+- A way for another app or another Bluetooth device to obtain the pairing secret, the name
+  and date of birth, or health data from PAPRelay.
 - A way to make PAPRelay accept a device that is not the paired machine.
 - A way to make PAPRelay write values to Health Connect, or to the files in the chosen
   folder, that the machine did not record.
 - A way to make PAPRelay read, change or delete a file in the chosen folder other than its
   own two files.
-- Health data, a full serial number, a Bluetooth address or a key in a log or in the saved
-  report.
+- Health data, a name or date of birth, a full serial number, a Bluetooth address or a key
+  in a log or in the saved report.
 
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) describes how PAPRelay is built to prevent
 these.

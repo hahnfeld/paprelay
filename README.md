@@ -171,7 +171,7 @@ the next synchronisation, the machine's own night replaces the night so far.
 
 Open **Sharing** to choose where the data goes.
 
-![The Sharing page: a switch for nightly figures to health records, shown on; a switch for respiratory rate to Health Connect, shown off; Files of nights and events with the button Choose a folder; and the button Share the recent nights as text.](docs/images/sharing.svg)
+![The Sharing page: a switch for nightly figures to health records, shown on, with the row Name and date of birth, not added, below it; a switch for respiratory rate to Health Connect, shown off; Files of nights and events with the button Choose a folder; and the button Share the recent nights as text.](docs/images/sharing.svg)
 
 - **Nightly figures to health records** (on at first). PAPRelay writes usage, AHI, leak,
   pressure and breathing for each night to the health records in Health Connect. Health
@@ -179,6 +179,13 @@ Open **Sharing** to choose where the data goes.
   "PAPRelay (CPAP machine)". They are not laboratory results. The breathing events and the
   figures that describe the machine (humidifier, heated tube, blower) go only to the two
   files.
+- **Name and date of birth** (not added at first), below the health records. Google Health
+  shows these records only when they belong to a person with a name and a date of birth.
+  Tap the row, type your given names and family name, choose your date of birth, and tap
+  **Save**. PAPRelay then writes one patient record with them to the health records, and
+  every nightly record names it. **Remove** deletes them from the phone. When **Nightly figures
+  to health records** is switched on, PAPRelay then writes the nightly records again without
+  them, and deletes the patient record. Forgetting the machine does not delete them.
 - **Respiratory rate to Health Connect** (off at first). One value for each minute of
   therapy. Leave it off if a watch or a ring already writes your respiratory rate. On
   machine software 19.8.8.0, it starts once the machine holds a session of 30 minutes or
@@ -223,9 +230,42 @@ The names below are from Health Connect on Android 16. Some phones use other nam
 The nightly figures are filed under lab results because Health Connect has no other place
 for them. They are not laboratory results (see [Intended use](docs/INTENDED-USE.md)).
 
-Health Connect shows the records. The Google Health app shows "Medical data cannot be
-synced" for them, with the reason that the data "does not contain a name or date of
-birth". The records contain no name and no date of birth.
+To see the records in the Google Health app, read the next section.
+
+### See the records in Google Health
+
+Google Health shows the records only when they name a person with a name and a date of
+birth.
+
+1. In PAPRelay, open **Sharing**, tap **Name and date of birth**, and add your name and date
+   of birth. [Where the data goes](#where-the-data-goes) explains what this does, and
+   [Privacy](#privacy) gives its limits. If **Nightly figures to health records** is on, tap
+   **Synchronise now** on the home screen. PAPRelay then writes the records again with your
+   name.
+2. Open Google Health. Tap **Health**, then under **Medical** tap **Lab results**.
+
+   ![The Health tab of Google Health: under Medical, a grid of tiles. Lab results shows 100 entries; Allergies, Conditions, Medications, Pregnancy and Procedures show No data. Number 2 marks Lab results and the Health tab. The count is an example.](docs/images/gh-medical.svg)
+
+3. Tap **PAPRelay (CPAP machine)** to show only PAPRelay's records. Each card is one
+   figure, with its latest value and the number of nights that have it ("30 results").
+
+   ![The Lab results screen in Google Health, with the chip PAPRelay (CPAP machine) chosen. Each card is one figure: the date at 12:00 PM, the title, the latest value with its unit, and the number of results, for example CPAP therapy usage in the night (hours), 7.5 h, 30 results. Number 3 marks the chip and the first card. The dates, values and counts are examples.](docs/images/gh-lab-results.svg)
+
+4. Tap a card to see that figure for every night, newest first.
+
+   ![One figure's page in Google Health: the title CPAP therapy usage in the night (hours), Since Jan 1 at 12:00 PM, and one row for each night with its date at 12:00 PM and its value, for example Jan 5 at 12:00 PM, 7.5 h. A night without therapy shows 0 h. Number 4 marks the rows. The dates and values are examples.](docs/images/gh-figure.svg)
+
+Each record shows at 12:00 PM on its date. This is because a night runs from midday to
+midday and has the date of the evening (see
+[Nights and breathing events](#nights-and-breathing-events)). A night without therapy shows
+a usage of 0 h.
+
+Google Health shows only the main value of each record. The other values, such as the parts
+of the AHI, are in the same record, but Google Health does not show them. They are also in
+[the two files](#the-two-files).
+
+Google Health lists the records under lab results for the same reason as Health Connect
+(see [See the records in Health Connect](#see-the-records-in-health-connect)).
 
 ### The two files
 
@@ -292,6 +332,15 @@ the app only:
 - when you share it yourself.
 
 The night so far never leaves the app.
+
+Your name and date of birth, if you add them, are kept encrypted with a key in the phone's
+secure hardware, and are never in the two files, the shared text, the device-check report
+or a log. Two limits apply:
+
+- Once PAPRelay has written them to Health Connect, Health Connect stores them, and any app
+  that you allow to read health records can read them.
+- On a phone that its owner has rooted or unlocked, the app's storage is not protected
+  (see [SECURITY.md](SECURITY.md)).
 
 PAPRelay only writes to Health Connect and never reads from it. Uninstalling PAPRelay
 deletes everything it stored itself. The two files and the health records stay until you

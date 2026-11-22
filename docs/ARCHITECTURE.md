@@ -32,7 +32,7 @@ Most of the logic that can be wrong is there, or behind interfaces that the test
 | Plans | `as11/plan` | `NightPlan` turns one daily summary into a `Night`. `EventPlan` turns one breathing-event record into a `BreathingEvent`. `RespiratoryRatePlan` turns one per-minute record into readings. `ClockCorrection` is the one rule that puts a machine time into true time. |
 | Sync engine | `app/sync/SyncEngine` | Decides what to download, what is new or changed, and what to write. Handles every failure case. |
 | Outputs | `app/hc`, `app/sync/HealthConnectSink`, `ExportFolder`, `app/ui` | Health records and respiratory rate in Health Connect, the two tables (`core/nights/NightReport`, `EventReport`) in a folder, and the screens. |
-| Stored state | `app/pairing`, `app/sync/SyncStore`, `NightStore`, `EventStore` | See [Stored state](#stored-state). |
+| Stored state | `app/pairing`, `app/secure`, `app/sync/SyncStore`, `NightStore`, `EventStore`, `PatientStore` | See [Stored state](#stored-state). |
 
 PAPRelay can request four of the machine's stored logs:
 
@@ -246,7 +246,7 @@ should be there with what may be there, and removes or rewrites the difference.
 
 For the nightly figures, `NightStore` keeps each night with a mark of what was last
 written for it (the record format and a fingerprint of what goes to the health records,
-`Night.healthFingerprint`). A night whose mark differs is written again, and records that
+`Night.healthFingerprint`), and, while a name and date of birth are set, the random mark saved with them. A night whose mark differs is written again, and records that
 a night no longer has are removed. A change in a figure that describes the machine, or in
 the sessions, does not write the records again.
 `FhirObservations.FORMAT` is raised whenever the records change shape, so every night is
@@ -281,6 +281,7 @@ The app keeps these files in its private storage. Android backup is switched off
 | File | Holds | If it is missing or damaged |
 |---|---|---|
 | `pairing.bin` | The pairing secret, encrypted with a key in the Android Keystore (StrongBox when the phone has it) | The machine must be paired again. |
+| `patient.bin` | The name and date of birth, if the user added them, and the random mark of the last **Save**, encrypted with a key of their own in the Android Keystore (see below) | Missing: none are added. Unreadable (key lost, file damaged): the Sharing page asks for them again; the health records are left as they are until then. |
 | `nonces.txt` | Hashes of the session nonces already seen, so that a recorded session cannot be replayed | Missing: it starts empty. Unreadable: the session fails with a storage error. Damaged lines are dropped. |
 | `sync.json` | The ledger, the point to resume from, the last report, the Sharing settings | Missing: PAPRelay starts as if new, with the Sharing settings at their defaults. Damaged: reported, not replaced. The user chooses **Start again**, which deletes the file. |
 | `nights.json` | The nights, with their sessions and the plan version they were read under | Damaged: renamed and kept; the list is built again from the machine. Written by a version before 0.3.0: deleted, and built again. |
@@ -288,8 +289,26 @@ The app keeps these files in its private storage. Android backup is switched off
 | `events.json` | The breathing events of the kinds passed on, one line each, the point to resume from, and the set of kinds its history was read under | Damaged: renamed and kept; the list is built again from the machine. Bounded by the nights kept and by 250,000 events. |
 | `raw/`, `check/` | The downloaded bytes of recent runs and of the last device check, unencrypted | Not needed for synchronising. Deleted by **Forget machine**. |
 
-The six named files are each replaced whole and atomically (`AtomicFiles`). A crash leaves the old state
-or the new one.
+The seven named files are each replaced whole and atomically (`AtomicFiles`, or Android's `AtomicFile` for
+`pairing.bin`). A crash leaves the old state or the new one.
+
+`pairing.bin` and `patient.bin` are sealed the same way (`secure/Sealer`): AES-256-GCM under a
+non-exportable key in the Android Keystore, in StrongBox where the phone has it and in the
+trusted execution environment otherwise; a random 12-byte IV for each write, stored in front of
+the ciphertext; and associated data that names the file's purpose and format, so that the bytes
+of one cannot pass for the other. Each has its own key alias. Neither key requires the phone to
+be unlocked or the user to authenticate: synchronising, which writes the Patient record, runs in
+the background while the phone is locked. The cost is that the keys protect the files only from
+being read off the phone, not from code running as the app. The androidx.security `EncryptedFile`
+is not used; it is deprecated. A key is replaced only when the Keystore says it is gone for good
+(`Sealer.isPermanentKeyLoss`); a fault that may pass fails the **Save** and keeps the key, so what
+was stored stays readable. **Remove** deletes `patient.bin` and its key. **Forget machine**
+leaves both: the details belong to the person, not to the machine.
+
+Nothing leaves by backup or device transfer: `allowBackup` is false, and the data-extraction
+rules exclude every domain for both. No component exposes a file: the only content provider in
+the merged manifest is androidx.startup's, which is not exported, and there is no file provider.
+On a phone that its owner has rooted or unlocked, none of this protects the files.
 
 ### When a run starts
 
@@ -328,9 +347,45 @@ records in the FHIR format, and PAPRelay writes each night there as up to five F
 Observations: usage, events, leak, pressure and breathing (`core/nights/FhirObservations`,
 `hc/HealthRecords`). Health Connect accepts only a few kinds of Observation. *Laboratory*
 is the one that takes a coded number with a unit, so the records are filed as lab results,
-and each record's text says that it is a CPAP machine's nightly figure. The codes are
-PAPRelay's own. The standard sleep-study codes mean indices for each hour of *sleep*,
-scored in a sleep study, and are not used.
+and each record's text says that it is a CPAP machine's nightly figure.
+
+Each code is PAPRelay's own first, and that coding keeps the exact meaning. Where LOINC has
+the same measure, its code follows in the same `code.coding` (`FhirObservations.LOINC`):
+
+| Figure | LOINC | Where |
+|---|---|---|
+| Usage (hours) | 69988-4 Positive airway pressure device usage 24 hour | usage record |
+| AHI | 69990-0 Apnea hypopnea index 24 hour | events record |
+| Obstructive apnea index | 70002-1 Obstructive apnea index 24 hour | its component |
+| Central apnea index | 70003-9 Central apnea index 24 hour | its component |
+| Leak, 95th percentile | 69997-5 Leak.95% 24 hour maximum Positive airway pressure device | leak record |
+| Leak, median | 70001-3 Leak 24 hour median Positive airway pressure device | its component |
+| Leak, maximum | 69998-3 Positive airway pressure device Leak | its component |
+| Therapy pressure, 95th percentile | 69986-8 Pressure.continuous positive airway.95% 24 hour maximum Respiratory system | pressure record |
+| Therapy pressure, median | 70000-5 Continuous positive airway pressure 24 hour median Respiratory system | its component |
+| Therapy pressure, maximum | 69987-6 Continuous positive airway pressure 24 hour maximum Respiratory system | its component |
+
+These ten are from LOINC's Positive airway pressure panel (69999-1), which holds measures that a
+positive airway pressure device reports over 24 hours. They were checked as active in LOINC 2.83,
+and the displays are LOINC's own. PAPRelay's own coding, given first, states the machine's
+meaning: for the indices, events for each hour of therapy use. The units
+stay PAPRelay's (UCUM `h`, `L/min`, `cm[H2O]`, `{events}/h`); LOINC's units are examples.
+
+The other figures have no LOINC code:
+
+- Usage in minutes and the number of sessions: the panel has no such code.
+- The apnea, hypopnea, unclassified apnea and RERA indices: the only codes are sleep-study
+  codes, for events scored in a sleep study, which these are not.
+- Leak, 70th percentile; expiratory and mask pressure: the panel has no such code.
+- The whole breathing record (respiratory rate, tidal volume, minute ventilation, flow):
+  respiratory rate's code (9279-1) is one of Health Connect's vital-signs codes, and any of
+  those would move a record out of lab results. None of them is ever given
+  (`FhirObservations.VITAL_SIGNS`, which the tests check every record against).
+- A record whose headline figure is missing is named for its group, with no LOINC code.
+
+The IEEE 11073 codes for sleep apnoea breathing therapy equipment were checked against NIST's
+RTMMS and are not used: they are defined for each usage session and each hour of sleep, and
+their obstructive and central terms include hypopnoeas.
 
 The leak record carries the median, 70th and 95th percentile and maximum; the breathing
 record carries respiratory rate, tidal volume and minute ventilation (median, 95th
@@ -340,6 +395,28 @@ describe the machine rather than the person (humidifier, heated tube, blower;
 
 Everything PAPRelay writes to the health records is in one data source named
 "PAPRelay (CPAP machine)", so it can be told apart and removed as a whole.
+
+Google Health shows clinical records only when they belong to a patient. If the user adds a
+name and date of birth (Sharing), PAPRelay writes one FHIR Patient resource with the fixed id
+`paprelay-patient` to the same data source (`FhirObservations.patient`): an official name
+with the family name, the given names and the whole name as text, and `birthDate` as
+`YYYY-MM-DD`. Health Connect takes Patient resources (`FHIR_RESOURCE_TYPE_PATIENT`). While the
+details are set, every Observation carries `"subject":{"reference":"Patient/paprelay-patient"}`,
+a reference that Health Connect resolves within the data source
+(`MedicalResourceId.fromFhirReference`). The Patient record is written before any record names
+it. Each **Save** makes a random 16-byte mark (`PatientRecord.Loaded.mark`, 32 hex digits), kept
+sealed in `patient.bin` with the details. The mark a night is recorded with adds it, so setting,
+changing (even to the same details) or removing them writes every night again. Being random, the
+mark tells nothing of the details; a hash of them would, as names and dates of birth are few
+enough to try them all. The 0.4.1-test build, used by the maintainer only, stored such a hash as its mark; anyone who
+installed it should uninstall it before installing 0.4.1. Removing them writes the nights again without a subject, and only then
+deletes the Patient record. `sync.json` remembers the mark the Patient record was written with, so it
+is written again only when the details are saved again, when PAPRelay's data source was made again, or
+when everything is written again. A Patient record that is not accepted fails like any other
+record: the run says so, nothing names it, and the next run tries again. Details that cannot
+be read leave the health records as they are. Observations of nights no longer kept on the phone
+(older than the nights kept, or of a forgotten machine) are not written again, and may go on
+naming a removed Patient record.
 
 ### No network
 
@@ -361,6 +438,13 @@ and this is not reported as a failure. These decisions are in `FolderWrites`, ap
 tested. A folder of this kind offers no atomic replace; a file left short by a failed
 write is written whole again by the next run. Nothing is written while there is no finished night, so an empty table never
 replaces a full one. A file chosen by a version before 0.3.0 is not used.
+
+The name and date of birth are never exported: not to the two files, not to the shared text,
+and not to the device-check report or a log. Failures are reported by kind
+(`DeviceCheck.code`, without messages for a synchronisation), and `PatientDetails`,
+`PatientRecord` and `FhirResource` say nothing of the details in `toString`. The form reads them only
+while it is open, keeps them out of the screen's saved state (the date picker's own typing field
+aside, which Compose keeps), and asks the keyboard not to learn them. While the form is open, the screen is marked as not important for autofill, so autofill services can neither fill the names nor offer to save them.
 
 ### The debug build does not synchronise
 
@@ -403,7 +487,7 @@ rules.
 |---|---|
 | `core` | Units and exact arithmetic; nights, the FHIR records and the two tables, events and the night each belongs to; the ledger rules. |
 | `as11` | Framing and cryptography against known answers made with a separate Python script and OpenSSL (`tools/gen_protocol_vectors.py`); the client against a simulated machine (`FakeAirSense11`) that can lose, repeat, reorder and damage what it sends; every decoder; every plan and the clock correction. |
-| `app` | The Bluetooth request queue; the sync engine and its stores against a fake machine and a fake Health Connect, with injected clocks: failures between steps, clock changes, software changes, refusals; the breathing events read again without duplicates; the two tables; the rows of the night page. |
+| `app` | The Bluetooth request queue; the sync engine and its stores against a fake machine and a fake Health Connect, with injected clocks: failures between steps, clock changes, software changes, refusals; the breathing events read again without duplicates; the two tables; the rows of the night page; the Patient record written, changed and removed; the sealed store of the name and date of birth, with a key in memory: round trip, changed bytes, another purpose, a lost key; that the details reach no file, table, shared text or report. |
 
 The tests need no phone and no machine. See [BUILDING.md](BUILDING.md#3-run-the-tests).
 

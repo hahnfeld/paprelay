@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 346" width="480" height="346" role="img" aria-label="The Sharing page: a switch for nightly figures to health records, shown on; a switch for respiratory rate to Health Connect, shown off; Files of nights and events with the button Choose a folder; and the button Share the recent nights as text.">
-<title>The Sharing page: a switch for nightly figures to health records, shown on; a switch for respiratory rate to Health Connect, shown off; Files of nights and events with the button Choose a folder; and the button Share the recent nights as text.</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 400" width="480" height="400" role="img" aria-label="The Sharing page: a switch for nightly figures to health records, shown on, with the row Name and date of birth, not added, below it; a switch for respiratory rate to Health Connect, shown off; Files of nights and events with the button Choose a folder; and the button Share the recent nights as text.">
+<title>The Sharing page: a switch for nightly figures to health records, shown on, with the row Name and date of birth, not added, below it; a switch for respiratory rate to Health Connect, shown off; Files of nights and events with the button Choose a folder; and the button Share the recent nights as text.</title>
 <style>
   .paper { fill: #ffffff; stroke: #d0d7de; stroke-width: 1; }
   .ink { fill: none; stroke: #1f2328; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
@@ -35,32 +35,37 @@
     .num, .on { fill: #0d1117; }
   }
 </style>
-<rect class="paper" x="0.5" y="0.5" width="479" height="345" rx="12"/>
-<path class="faint" d="M24 92H456"/>
-<path class="faint" d="M24 172H456"/>
-<path class="faint" d="M24 252H456"/>
+<rect class="paper" x="0.5" y="0.5" width="479" height="399" rx="12"/>
+<path class="faint" d="M24 146H456"/>
+<path class="faint" d="M24 226H456"/>
+<path class="faint" d="M24 306H456"/>
 <rect class="solid" x="24" y="38" width="46" height="26" rx="13"/>
 <circle class="hole" cx="57" cy="51" r="8.5"/>
 <path class="ink" d="M104.5 66.8C81.2 54.5 83 36.9 97.1 36.9C101.5 36.9 104.5 40.4 104.5 44C104.5 40.4 107.4 36.9 111.9 36.9C125.9 36.9 127.8 54.5 104.5 66.8Z"/>
 <text class="b" x="142" y="46" text-anchor="start">Nightly figures</text>
 <text class="b" x="142" y="67" text-anchor="start">to health records</text>
-<rect class="line" x="24" y="118" width="46" height="26" rx="13"/>
-<circle class="line" cx="37" cy="131" r="6.5"/>
-<path class="ink" d="M104.5 146.8C81.2 134.5 83 116.9 97.1 116.9C101.5 116.9 104.5 120.4 104.5 124C104.5 120.4 107.4 116.9 111.9 116.9C125.9 116.9 127.8 134.5 104.5 146.8Z"/>
-<text class="b" x="142" y="126" text-anchor="start">Respiratory rate</text>
-<text class="b" x="142" y="147" text-anchor="start">to Health Connect</text>
-<path class="ink" d="M86 228V194H101.2L107.2 201H124V228Z"/>
-<path class="thin" d="M86 208H124"/>
-<text class="b" x="142" y="202" text-anchor="start">Files of nights and events</text>
-<rect class="thin" x="142" y="212" width="150" height="30" rx="15"/>
-<text class="c" x="217" y="231.5" text-anchor="middle">Choose a folder</text>
-<path class="ink" d="M92 292L116 279.2M92 292L116 304.8"/>
-<circle class="hole" cx="92" cy="292" r="7.2"/>
-<circle class="ink" cx="92" cy="292" r="5.2"/>
-<circle class="hole" cx="116" cy="279.2" r="7.2"/>
-<circle class="ink" cx="116" cy="279.2" r="5.2"/>
-<circle class="hole" cx="116" cy="304.8" r="7.2"/>
-<circle class="ink" cx="116" cy="304.8" r="5.2"/>
-<rect class="thin" x="142" y="277" width="268" height="30" rx="15"/>
-<text class="c" x="276" y="296.5" text-anchor="middle">Share the recent nights as text</text>
+<circle class="thin" cx="154" cy="95.8" r="3.6"/>
+<path class="thin" d="M147 108C147 101.5 161 101.5 161 108"/>
+<text class="c" x="176" y="98" text-anchor="start">Name and date of birth</text>
+<text class="x" x="176" y="117" text-anchor="start">Not added</text>
+<path class="line" d="M439.5 99L444.5 104L439.5 109"/>
+<rect class="line" x="24" y="172" width="46" height="26" rx="13"/>
+<circle class="line" cx="37" cy="185" r="6.5"/>
+<path class="ink" d="M104.5 200.8C81.2 188.5 83 170.9 97.1 170.9C101.5 170.9 104.5 174.4 104.5 178C104.5 174.4 107.4 170.9 111.9 170.9C125.9 170.9 127.8 188.5 104.5 200.8Z"/>
+<text class="b" x="142" y="180" text-anchor="start">Respiratory rate</text>
+<text class="b" x="142" y="201" text-anchor="start">to Health Connect</text>
+<path class="ink" d="M86 282V248H101.2L107.2 255H124V282Z"/>
+<path class="thin" d="M86 262H124"/>
+<text class="b" x="142" y="256" text-anchor="start">Files of nights and events</text>
+<rect class="thin" x="142" y="266" width="150" height="30" rx="15"/>
+<text class="c" x="217" y="285.5" text-anchor="middle">Choose a folder</text>
+<path class="ink" d="M92 346L116 333.2M92 346L116 358.8"/>
+<circle class="hole" cx="92" cy="346" r="7.2"/>
+<circle class="ink" cx="92" cy="346" r="5.2"/>
+<circle class="hole" cx="116" cy="333.2" r="7.2"/>
+<circle class="ink" cx="116" cy="333.2" r="5.2"/>
+<circle class="hole" cx="116" cy="358.8" r="7.2"/>
+<circle class="ink" cx="116" cy="358.8" r="5.2"/>
+<rect class="thin" x="142" y="331" width="268" height="30" rx="15"/>
+<text class="c" x="276" y="350.5" text-anchor="middle">Share the recent nights as text</text>
 </svg>

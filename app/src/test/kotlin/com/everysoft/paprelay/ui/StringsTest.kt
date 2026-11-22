@@ -88,4 +88,23 @@ class StringsTest {
         }
         assertTrue(all.getValue("preview_note").contains("midday"))
     }
+
+    @Test
+    fun `the name and date of birth are explained plainly, with who can read them`() {
+        val all = texts().toMap()
+        val body = all.getValue("patient_body")
+        // Why they are asked for, where they go, and who can then read them.
+        for (part in listOf("Google Health", "name", "date of birth", "this phone", "Health Connect", "Apps that you allow")) assertTrue(part in body, part)
+        assertTrue("Nightly figures to health records" in all.getValue("patient_rewrite"))
+        assertTrue(all.getValue("patient_missing").endsWith("to save."))
+        val patient = all.filterKeys { it.startsWith("patient_") || it == "choice_patient" }
+        assertTrue(patient.size >= 12, "${patient.keys}")
+        for ((name, text) in patient) {
+            // Nothing is formatted into them, and the words are the app's usual ones.
+            assertTrue(!placeholder.containsMatchIn(text) && '%' !in text, name)
+            for (word in listOf("FHIR", "Patient", "resource", "e.g.", "etc.")) assertTrue(word !in text, "$name says $word")
+        }
+        assertTrue("Enter them again" in all.getValue("patient_unreadable"))
+        assertTrue(all.getValue("action_remove") == "Remove" && all.getValue("action_save") == "Save")
+    }
 }

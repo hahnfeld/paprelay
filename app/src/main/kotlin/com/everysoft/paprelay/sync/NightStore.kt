@@ -196,7 +196,10 @@ class NightStore(private val file: File) {
             return Nights((json["machineTag"] as? JsonPrimitive)?.content, byDate, planVersion)
         }
 
-        /** The format of the records it was written in, then the night's fingerprint. */
-        private val FINGERPRINT = Regex("[0-9]{1,6}:[0-9a-f]{64}")
+        /**
+         * The format of the records it was written in, then the night's fingerprint, then the mark of the
+         * person's details, if any: 32 digits, or 16 as 0.4.1-test wrote them (which no longer match, and are written again).
+         */
+        private val FINGERPRINT = Regex("[0-9]{1,6}:[0-9a-f]{64}(:([0-9a-f]{16}){1,2})?")
     }
 }

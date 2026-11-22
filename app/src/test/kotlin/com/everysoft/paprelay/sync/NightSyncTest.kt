@@ -8,8 +8,10 @@ import com.everysoft.paprelay.as11.SpoolName
 import com.everysoft.paprelay.as11.SpoolRound
 import com.everysoft.paprelay.as11.decode.Proto
 import com.everysoft.paprelay.as11.decode.proto
+import com.everysoft.paprelay.core.nights.FhirObservations
 import com.everysoft.paprelay.core.nights.FhirResource
 import com.everysoft.paprelay.core.nights.NightFigure
+import com.everysoft.paprelay.core.nights.PatientDetails
 import com.everysoft.paprelay.core.sync.SessionChange
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
@@ -21,6 +23,7 @@ import java.time.ZoneOffset
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -113,9 +116,17 @@ class NightSyncTest {
 
         override suspend fun state() = state
 
+        /** The Patient record, as stored; and every call, in order: the ids written, or the Patient's. */
+        var patient: String? = null
+        var failOnPatient = false
+        val calls = ArrayList<String>()
+
         override suspend fun open(): Boolean {
             val fresh = gone
-            if (gone) held.clear()
+            if (gone) {
+                held.clear()
+                patient = null
+            }
             gone = false
             return fresh
         }
@@ -124,7 +135,16 @@ class NightSyncTest {
             writes++
             if (failOnWrite == writes) throw HealthSinkException(notAllowed = false)
             for (id in removeIds) held.remove(id)
-            for (resource in resources) held[resource.id] = resource.json
+            for (resource in resources) {
+                held[resource.id] = resource.json
+                calls += resource.id
+            }
+        }
+
+        override suspend fun writePatient(patient: FhirResource?) {
+            if (failOnPatient) throw HealthSinkException(notAllowed = false, cause = IllegalStateException("Testy McTestface 1970-01-02"))
+            calls += if (patient == null) "patient removed" else "patient"
+            this.patient = patient?.json
         }
     }
 
@@ -145,7 +165,12 @@ class NightSyncTest {
     private val directory: File = Files.createTempDirectory("paprelay-nights").toFile()
     private val store = SyncStore(File(directory, "sync.json"))
     private val nightStore = NightStore(File(directory, "nights.json"))
-    private val engine = SyncEngine(machine, NoMinutes, store, nowMs = { phoneNow }, nights = nightStore, records = records)
+    private val keys = com.everysoft.paprelay.secure.MemoryKeys()
+    private val patients = PatientStore(File(directory, "patient.bin"), keys)
+    private val engine = SyncEngine(
+        machine, NoMinutes, store, nowMs = { phoneNow }, nights = nightStore, records = records, patients = patients,
+        describe = { com.everysoft.paprelay.check.DeviceCheck.code(it, messages = false) },
+    )
     private val tag = SyncEngine.machineTag(serial)
 
     private fun week() = (0..5).map { Day(noon(first.plusDays(it.toLong())), if (it == 3) 0 else 400 + it, if (it == 3) null else 100L + it * 10) }
@@ -595,5 +620,238 @@ class NightSyncTest {
         phoneNow += hour
         engine.sync()
         assertEquals(writes, records.writes)
+    }
+
+    /** An obviously made-up person. */
+    private val testy = PatientDetails(listOf("Testy", "Example"), "McTestface", LocalDate.of(1970, 1, 2))
+    private val subject = """"subject":{"reference":"Patient/paprelay-patient"}"""
+
+    private fun observations() = records.held.values
+
+    /** The random mark the stored details were saved with. */
+    private fun savedMark() = (patients.read() as PatientRecord.Loaded).mark
+
+    @Test
+    fun `given a name and date of birth, the Patient record is written first, and every record names it, once`() = runTest {
+        machine.days = week()
+        engine.sync()
+        assertTrue(observations().none { subject in it })
+        assertNull(records.patient)
+
+        patients.write(testy)
+        records.calls.clear()
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertEquals(FhirObservations.patient(testy).json, records.patient)
+        // Before any record that names it, and every record is written again, naming it.
+        assertEquals("patient", records.calls.first())
+        assertEquals(weekRecords + 1, records.calls.size)
+        assertEquals(weekRecords, records.held.size)
+        assertTrue(observations().all { subject in it })
+        // The marks say which details: by the random mark saved with them, which tells nothing of them.
+        val saved = savedMark()
+        assertTrue(nightStore.read().byDate.values.all { it.recorded == mark(it.night) + ":" + saved })
+        assertEquals(saved, store.read().patientWritten)
+
+        // Nothing has changed: nothing is written.
+        records.calls.clear()
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertEquals(emptyList(), records.calls)
+    }
+
+    @Test
+    fun `changed details write the Patient record and every record again`() = runTest {
+        machine.days = week()
+        patients.write(testy)
+        engine.sync()
+        val other = PatientDetails(listOf("Testy"), "McTestface", LocalDate.of(1971, 3, 4))
+        patients.write(other)
+        records.calls.clear()
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertEquals(FhirObservations.patient(other).json, records.patient)
+        assertEquals("patient", records.calls.first())
+        assertEquals(weekRecords + 1, records.calls.size)
+        assertTrue(observations().all { subject in it })
+        assertTrue(nightStore.read().byDate.values.all { it.recorded == mark(it.night) + ":" + savedMark() })
+    }
+
+    @Test
+    fun `nights marked by 0_4_1-test, with a shorter mark, are read and written again`() = runTest {
+        machine.days = week()
+        patients.write(testy)
+        engine.sync()
+        val saved = savedMark()
+        val file = File(directory, "nights.json")
+        file.writeText(file.readText().replace(saved, saved.take(16)))
+        assertEquals(6, nightStore.read().byDate.size)
+        records.calls.clear()
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertEquals(weekRecords, records.calls.size)
+        assertTrue(nightStore.read().byDate.values.all { it.recorded == mark(it.night) + ":" + saved })
+    }
+
+    @Test
+    fun `the same details saved again are marked anew, and every record is written again`() = runTest {
+        machine.days = week()
+        patients.write(testy)
+        engine.sync()
+        val first = savedMark()
+        patients.write(testy)
+        val second = savedMark()
+        // The mark does not come from the details: the same details give another.
+        assertNotEquals(first, second)
+        records.calls.clear()
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertEquals(weekRecords + 1, records.calls.size)
+        assertTrue(nightStore.read().byDate.values.all { it.recorded == mark(it.night) + ":" + second })
+        assertEquals(second, store.read().patientWritten)
+    }
+
+    @Test
+    fun `removed details write every record again without the Patient, and then remove the Patient record`() = runTest {
+        machine.days = week()
+        patients.write(testy)
+        engine.sync()
+        val named = observations().toList()
+        patients.delete()
+        records.calls.clear()
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertNull(records.patient)
+        // Only once no record names it any more.
+        assertEquals("patient removed", records.calls.last())
+        assertEquals(weekRecords + 1, records.calls.size)
+        assertTrue(observations().none { subject in it })
+        // The same records as before, word for word, but for the subject.
+        assertEquals(named.map { it.replace(",$subject", "") }.sorted(), observations().sorted())
+        assertTrue(nightStore.read().byDate.values.all { it.recorded == mark(it.night) })
+        assertNull(store.read().patientWritten)
+
+        records.calls.clear()
+        phoneNow += hour
+        engine.sync()
+        assertEquals(emptyList(), records.calls)
+    }
+
+    @Test
+    fun `a Patient record that is not accepted fails like any other record, names nothing, and is tried again`() = runTest {
+        machine.days = week()
+        patients.write(testy)
+        records.failOnPatient = true
+        val report = engine.sync()!!
+        assertEquals(SyncOutcome.HEALTH_CONNECT_FAILED, report.outcome)
+        // The nights are on the phone all the same, and nothing names a Patient record that is not there.
+        assertEquals(6, nightStore.read().byDate.size)
+        assertTrue(observations().none { subject in it })
+        assertNull(store.read().patientWritten)
+        // What went wrong is saved without a word of the details.
+        for (text in listOf(report.code.orEmpty(), File(directory, "sync.json").readText(), File(directory, "nights.json").readText())) {
+            assertFalse("Testy" in text || "McTestface" in text || "1970" in text, "details in a saved file")
+        }
+        records.failOnPatient = false
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertEquals(FhirObservations.patient(testy).json, records.patient)
+        assertTrue(observations().all { subject in it })
+    }
+
+    @Test
+    fun `a removal cut short keeps the Patient record until every record has been written without it`() = runTest {
+        machine.days = week()
+        patients.write(testy)
+        engine.sync()
+        patients.delete()
+        records.failOnWrite = records.writes + 3
+        phoneNow += hour
+        assertEquals(SyncOutcome.HEALTH_CONNECT_FAILED, engine.sync()!!.outcome)
+        // Some records still name it: it stays.
+        assertEquals(FhirObservations.patient(testy).json, records.patient)
+        assertTrue(observations().any { subject in it })
+        records.failOnWrite = null
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertNull(records.patient)
+        assertTrue(observations().none { subject in it })
+    }
+
+    @Test
+    fun `the Patient record is written again when PAPRelay's place was made again, or everything is to be written again`() = runTest {
+        machine.days = week()
+        patients.write(testy)
+        engine.sync()
+        records.gone = true
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertEquals(FhirObservations.patient(testy).json, records.patient)
+        assertTrue(observations().all { subject in it })
+
+        records.patient = null
+        store.write(store.read().with(rewriteRequested = true))
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertEquals(FhirObservations.patient(testy).json, records.patient)
+
+        // And with no details, one that may be left is removed.
+        patients.delete()
+        records.patient = "left"
+        store.write(store.read().with(rewriteRequested = true))
+        records.calls.clear()
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertNull(records.patient)
+        assertEquals("patient removed", records.calls.last())
+    }
+
+    @Test
+    fun `details that can no longer be read leave the health records as they are`() = runTest {
+        machine.days = week().dropLast(1)
+        patients.write(testy)
+        engine.sync()
+        val saved = savedMark()
+        // The key is lost: the person is asked to enter them again. Meanwhile a new night arrives.
+        keys.key = null
+        records.calls.clear()
+        phoneNow += day
+        machine.days = week()
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        // Neither written again nor removed; the new night names it like the others.
+        assertEquals(FhirObservations.patient(testy).json, records.patient)
+        assertTrue(records.calls.none { it.startsWith("patient") })
+        assertTrue(records.calls.isNotEmpty())
+        assertTrue(observations().all { subject in it })
+        assertEquals(saved, store.read().patientWritten)
+
+        // Where no Patient record is known to be there, nothing names one.
+        records.gone = true
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertNull(records.patient)
+        assertTrue(observations().none { subject in it })
+
+        // Entered again: written, and named.
+        patients.write(testy)
+        phoneNow += hour
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertEquals(FhirObservations.patient(testy).json, records.patient)
+        assertTrue(observations().all { subject in it })
+    }
+
+    @Test
+    fun `the details reach no saved file, table or shared text`() = runTest {
+        machine.days = week()
+        patients.write(testy)
+        engine.sync()
+        val nights = nightStore.read().all
+        val tables = ExportTables.of(nights, emptyList()).orEmpty().values
+        val shared = com.everysoft.paprelay.core.nights.NightReport.csv(nights, com.everysoft.paprelay.core.nights.NightReport.SHARED, withSessions = false)
+        val saved = listOf("sync.json", "nights.json").map { File(directory, it).readText() } + File(directory, "patient.bin").readText(Charsets.ISO_8859_1)
+        assertTrue(tables.isNotEmpty())
+        for (text in tables + shared + saved) {
+            assertFalse("Testy" in text || "McTestface" in text || "1970-01-02" in text, "details where they do not belong")
+        }
     }
 }

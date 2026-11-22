@@ -210,6 +210,12 @@ class Svg:
         self.add(f'<circle class="solid" cx="{f(x + 12 * k)}" cy="{f(y + 7.6 * k)}" r="{f(1.3 * k)}"/>')
         self.add(f'<path class="{cls}" d="M{f(x + 12 * k)} {f(y + 11 * k)}V{f(y + 16.6 * k)}"/>')
 
+    def person(self, x, y, size, cls="thin"):
+        """The name and date of birth: a head and shoulders, as the app draws them."""
+        k = size / 24
+        self.add(f'<circle class="{cls}" cx="{f(x + 12 * k)}" cy="{f(y + 7.8 * k)}" r="{f(3.6 * k)}"/>')
+        self.add(f'<path class="{cls}" d="M{f(x + 5 * k)} {f(y + 20 * k)}C{f(x + 5 * k)} {f(y + 13.5 * k)} {f(x + 19 * k)} {f(y + 13.5 * k)} {f(x + 19 * k)} {f(y + 20 * k)}"/>')
+
     def ticks(self, x, y, size, cls="thin"):
         """Breathing events: marks on a line, the night's picture in small."""
         k = size / 24
@@ -588,15 +594,20 @@ def night():
 
 
 def sharing():
-    s = Svg(346, "The Sharing page: a switch for nightly figures to health records, shown on; a switch for respiratory rate to Health Connect, shown off; Files of nights and events with the button Choose a folder; and the button Share the recent nights as text.")
+    s = Svg(400, "The Sharing page: a switch for nightly figures to health records, shown on, with the row Name and date of birth, not added, below it; a switch for respiratory rate to Health Connect, shown off; Files of nights and events with the button Choose a folder; and the button Share the recent nights as text.")
     row = 80
-    top = 22
+    top = 76
     for index in range(1, 4):
         s.add(f'<path class="faint" d="M24 {top + index * row - 10}H456"/>')
-    y = top
+    y = 22
     s.switch(24, y + 16, True)
     s.heart(86, y + 7, 44)
     s.lines(142, y + 24, ["Nightly figures", "to health records"], "b", 21)
+    # Part of the health records: below their switch, and leading to a page of its own.
+    s.person(142, y + 66, 24)
+    s.text(176, y + 76, "Name and date of birth", "c")
+    s.text(176, y + 95, "Not added", "x")
+    s.chevron(432, y + 72, 20)
     y = top + row
     s.switch(24, y + 16, False)
     s.heart(86, y + 7, 44)
@@ -707,6 +718,138 @@ def hc_records():
     return s.save("hc-records.svg")
 
 
+# ---- Google Health's own screens, drawn simply: where it shows the records once they name a person
+
+GH_X, GH_Y, GH_W = 24, 20, 380
+
+
+def gh_frame(s, closed=False):
+    """The phone: open at the bottom where the list goes on, closed where the screen ends."""
+    x, y, w = GH_X, GH_Y, GH_W
+    if closed:
+        bottom = s.height - 20
+        s.add(f'<rect class="ink" x="{x}" y="{y}" width="{w}" height="{bottom - y}" rx="28"/>')
+        s.add(f'<path class="ink" d="M{x + 150} {bottom - 16}H{x + w - 150}"/>')
+    else:
+        s.add(f'<path class="ink" d="M{x} {s.height - 12}V{y + 28}A28 28 0 0 1 {x + 28} {y}H{x + w - 28}A28 28 0 0 1 {x + w} {y + 28}V{s.height - 12}"/>')
+
+
+def gh_card(s, top, h, cls="faint"):
+    s.add(f'<rect class="{cls}" x="{GH_X + 16}" y="{f(top)}" width="{GH_W - 32}" height="{f(h)}" rx="14"/>')
+
+
+def gh_chip(s, x, y, w, words, selected):
+    """A filter chip: filled when it is chosen."""
+    s.add(f'<rect class="{"solid" if selected else "thin"}" x="{f(x)}" y="{f(y)}" width="{f(w)}" height="30" rx="8"/>')
+    s.text(x + w / 2, y + 19.5, words, "c on" if selected else "c", "middle")
+
+
+def gh_value(s, right, y, number, unit):
+    """A value as Google Health shows it: the number large, the unit small after it."""
+    s.add(f'<text class="b" x="{f(right)}" y="{f(y)}" text-anchor="end" style="font-size: 20px">{escape(number)}<tspan class="x" dx="5">{escape(unit)}</tspan></text>')
+
+
+def gh_callout(s, n, *rows):
+    """A number to the right of the phone, joined to one row, or by a bracket to several."""
+    edge = GH_X + GH_W
+    if len(rows) == 1:
+        at = rows[0]
+        s.add(f'<path class="faint" d="M{edge + 8} {f(at)}H{edge + 28}"/>')
+    else:
+        at = (rows[0] + rows[-1]) / 2
+        s.add(f'<path class="faint" d="M{edge + 8} {f(rows[0])}H{edge + 18}V{f(rows[-1])}H{edge + 8}M{edge + 18} {f(at)}H{edge + 28}"/>')
+    s.number(edge + 46, at, n)
+
+
+def gh_medical():
+    s = Svg(460, "The Health tab of Google Health: under Medical, a grid of tiles. Lab results shows 100 entries; Allergies, Conditions, Medications, Pregnancy and Procedures show No data. Number 2 marks Lab results and the Health tab. The count is an example.")
+    gh_frame(s, closed=True)
+    x, y, w = GH_X, GH_Y, GH_W
+    s.text(x + w / 2, y + 50, "Google Health", "b", "middle")
+    s.text(x + 24, y + 96, "Medical", "b")
+    tiles = [("Allergies", "No data"), ("Conditions", "No data"), ("Lab results", "100 entries"),
+             ("Medications", "No data"), ("Pregnancy", "No data"), ("Procedures", "No data")]
+    tile_w = (w - 32 - 10) / 2
+    lab = None
+    for index, (name, sub) in enumerate(tiles):
+        tx = x + 16 + (index % 2) * (tile_w + 10)
+        ty = y + 112 + (index // 2) * 66
+        chosen = name == "Lab results"
+        s.add(f'<rect class="{"thin" if chosen else "faint"}" x="{f(tx)}" y="{f(ty)}" width="{f(tile_w)}" height="56" rx="14"/>')
+        if chosen:
+            s.tube(tx + 12, ty + 16, 24)
+            s.text(tx + 46, ty + 25, name, "b")
+            s.text(tx + 46, ty + 44, sub, "c")
+            lab = ty + 28
+        else:
+            s.text(tx + 16, ty + 25, name, "t")
+            s.text(tx + 16, ty + 44, sub, "x")
+    # The two tabs at the bottom; Health is the one chosen.
+    bar = y + 330
+    s.add(f'<path class="faint" d="M{x} {bar}H{x + w}"/>')
+    left, right = x + w * 0.27, x + w * 0.73
+    s.text(left, bar + 62, "Today", "s", "middle")
+    s.add(f'<rect class="thin" x="{f(right - 30)}" y="{bar + 14}" width="60" height="30" rx="15"/>')
+    s.heart(right - 10, bar + 17, 24)
+    s.text(right, bar + 62, "Health", "b", "middle")
+    gh_callout(s, 2, lab, bar + 29)
+    return s.save("gh-medical.svg")
+
+
+def gh_lab_results():
+    s = Svg(592, "The Lab results screen in Google Health, with the chip PAPRelay (CPAP machine) chosen. Each card is one figure: the date at 12:00 PM, the title, the latest value with its unit, and the number of results, for example CPAP therapy usage in the night (hours), 7.5 h, 30 results. Number 3 marks the chip and the first card. The dates, values and counts are examples.")
+    gh_frame(s)
+    x, y, w = GH_X, GH_Y, GH_W
+    s.back(x + 24, y + 44)
+    s.text(x + 56, y + 50, "Lab results", "b")
+    gh_chip(s, x + 24, y + 76, 56, "All", False)
+    gh_chip(s, x + 90, y + 76, 186, "PAPRelay (CPAP machine)", True)
+    s.text(x + 24, y + 140, "Past records", "b")
+    gh_chip(s, x + 24, y + 156, 104, "Most recent", True)
+    gh_chip(s, x + 138, y + 156, 104, "Alphabetical", False)
+    # Titles from core/.../nights/FhirObservations.kt and Night.kt; units from NightUnit.
+    cards = [
+        (["CPAP therapy usage in the night", "(hours)"], "7.5", "h"),
+        (["Residual apnea-hypopnea index", "on CPAP therapy, as the machine", "reports it (events per hour of use)"], "1.5", "events/h"),
+        (["CPAP mask leak in the night,", "95th percentile"], "20", "L/min"),
+    ]
+    top = y + 202
+    first = None
+    for rows, number, unit in cards:
+        h = 46 + (len(rows) - 1) * 18 + 36
+        gh_card(s, top, h)
+        s.text(x + 32, top + 24, "Jan 5 at 12:00 PM", "x")
+        s.lines(x + 32, top + 46, rows, "c", 18)
+        s.text(x + 32, top + h - 14, "30 results", "x")
+        gh_value(s, x + w - 32, top + 50, number, unit)
+        if first is None:
+            first = top + h / 2
+        top += h + 6
+    s.add(f'<path class="faint" d="M{x + 16} {s.height - 12}V{f(top + 14)}A14 14 0 0 1 {x + 30} {f(top)}H{x + w - 30}A14 14 0 0 1 {x + w - 16} {f(top + 14)}V{s.height - 12}"/>')
+    gh_callout(s, 3, y + 91, first)
+    return s.save("gh-lab-results.svg")
+
+
+def gh_figure():
+    s = Svg(484, "One figure's page in Google Health: the title CPAP therapy usage in the night (hours), Since Jan 1 at 12:00 PM, and one row for each night with its date at 12:00 PM and its value, for example Jan 5 at 12:00 PM, 7.5 h. A night without therapy shows 0 h. Number 4 marks the rows. The dates and values are examples.")
+    # Closed at the bottom: the list ends with the night in "Since".
+    gh_frame(s, closed=True)
+    x, y, w = GH_X, GH_Y, GH_W
+    s.back(x + 24, y + 44)
+    s.lines(x + 56, y + 50, ["CPAP therapy usage in the", "night (hours)"], "b", 22)
+    s.text(x + 24, y + 116, "Since Jan 1 at 12:00 PM", "b")
+    rows = [("Jan 5", "7.5"), ("Jan 4", "8"), ("Jan 3", "0"), ("Jan 2", "7.5"), ("Jan 1", "8")]
+    mids = []
+    for index, (day, number) in enumerate(rows):
+        top = y + 134 + index * 54
+        gh_card(s, top, 48)
+        s.text(x + 32, top + 29.5, f"{day} at 12:00 PM", "t")
+        gh_value(s, x + w - 32, top + 31, number, "h")
+        mids.append(top + 24)
+    gh_callout(s, 4, mids[0], mids[-1])
+    return s.save("gh-figure.svg")
+
+
 def timeline():
     s = Svg(256, "The picture of one night on the Nights page: a grey line from midday to midday, the sessions as thick lines on it, a tall mark for each apnoea and a short mark for each hypopnoea, with the hours below. On a night shown so far, a session that had not ended when the machine was last read ends in an open ring.")
     x1, x2, base = 40, 440, 82
@@ -779,7 +922,7 @@ def flow():
 
 
 def main():
-    written = [draw() for draw in (overview, picture, setup, home, home_morning, when, night, timeline, sharing, hc_access, hc_data, hc_records, modules, flow)]
+    written = [draw() for draw in (overview, picture, setup, home, home_morning, when, night, timeline, sharing, hc_access, hc_data, hc_records, gh_medical, gh_lab_results, gh_figure, modules, flow)]
     stale = sorted(path.name for path in OUT.glob("*.svg") if path.name not in written)
     print(f"wrote {len(written)} diagrams to {OUT}")
     if stale:

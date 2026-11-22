@@ -38,6 +38,29 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DatePickerState
+import androidx.compose.material3.DisplayMode
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.InterceptPlatformTextInput
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.PlatformTextInputMethodRequest
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.SelectableDates
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import com.everysoft.paprelay.core.nights.PatientDetails
+import com.everysoft.paprelay.sync.PatientPresence
+import com.everysoft.paprelay.sync.PatientRecord
+import kotlinx.coroutines.launch
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneOffset
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -563,7 +586,10 @@ fun ChoicesScreen(
     recordsSupported: Boolean,
     recordsBlocked: Boolean,
     respiratoryBlocked: Boolean,
+    /** Whether the person has given their name and date of birth for the health records. */
+    patient: PatientPresence,
     onRecords: (Boolean) -> Unit,
+    onPatient: () -> Unit,
     onRespiratoryRate: (Boolean) -> Unit,
     onOpenHealthConnect: () -> Unit,
     onChooseFolder: () -> Unit,
@@ -583,6 +609,8 @@ fun ChoicesScreen(
             onChange = onRecords,
         )
         if (recordsBlocked) NotAllowed(onOpenHealthConnect)
+        // Part of the health records, so only where there are any. Optional, and not set at first.
+        if (recordsSupported) PatientRow(patient, onPatient)
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Choice(GlyphKind.HEART, R.string.choice_respiratory, R.string.choice_respiratory_body, sync.respiratoryRate, enabled = !sync.running, onChange = onRespiratoryRate)
         val ran = sync.lastReport?.outcome.let { it == SyncOutcome.COMPLETE || it == SyncOutcome.PARTIAL }
@@ -622,6 +650,227 @@ fun ChoicesScreen(
             DestinationRow(GlyphKind.SHARE, R.string.action_share_nights, onShare, chevron = false)
         }
     }
+}
+
+/** Opens the form for the name and date of birth: what it is, and whether they are given. Never the details themselves. */
+@Composable
+private fun PatientRow(presence: PatientPresence, onClick: () -> Unit) {
+    val title = stringResource(R.string.choice_patient)
+    val state = stringResource(
+        when (presence) {
+            PatientPresence.ABSENT -> R.string.patient_not_set
+            PatientPresence.SET -> R.string.patient_set
+            PatientPresence.UNREADABLE -> R.string.patient_unreadable
+        },
+    )
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp)
+            .clickable(role = Role.Button, onClick = onClick)
+            .clearAndSetSemantics {
+                contentDescription = title
+                stateDescription = state
+                role = Role.Button
+            }
+            .padding(start = 40.dp, top = 4.dp, bottom = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Glyph(GlyphKind.PERSON)
+        Spacer(Modifier.width(16.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            if (presence == PatientPresence.UNREADABLE) {
+                Text(state, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 2.dp))
+            } else {
+                Secondary(state, Modifier.padding(top = 2.dp))
+            }
+        }
+        Spacer(Modifier.width(8.dp))
+        Glyph(GlyphKind.CHEVRON)
+    }
+}
+
+/**
+ * The person's name and date of birth, for the Patient record that the health records name.
+ * Optional: Google Health shows the records only with them. Nothing is stored until Save; Remove
+ * takes them, and their key, away again. They are read from the store when the page opens and held
+ * only while it is shown: not in the saved state of the screen, so a rotation reads them again, and
+ * what was typed and not saved is lost. Never logged.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PatientScreen(
+    load: suspend () -> PatientRecord,
+    busy: Boolean,
+    onSave: suspend (PatientDetails) -> Boolean,
+    onRemove: suspend () -> Boolean,
+    onBack: () -> Unit,
+) {
+    var stored by remember { mutableStateOf<PatientRecord?>(null) }
+    var given by remember { mutableStateOf("") }
+    var family by remember { mutableStateOf("") }
+    var birth by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        val record = load()
+        if (record is PatientRecord.Loaded) {
+            given = record.details.given.joinToString(" ")
+            family = record.details.family
+            birth = record.details.birthDate.toString()
+        }
+        stored = record
+    }
+    val details = (stored as? PatientRecord.Loaded)?.details
+    var choosing by rememberSaveable { mutableStateOf(false) }
+    var failed by rememberSaveable { mutableStateOf(false) }
+    var saving by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    // Null until every part is there and acceptable.
+    val typed = birth?.let { date -> runCatching { PatientDetails(PatientDetails.givenFrom(given), family, LocalDate.parse(date)) }.getOrNull() }
+    fun act(block: suspend () -> Boolean) {
+        saving = true
+        failed = false
+        scope.launch {
+            val done = block()
+            saving = false
+            if (done) onBack() else failed = true
+        }
+    }
+    Page(title = stringResource(R.string.patient_title), onBack = onBack) {
+        Text(stringResource(R.string.patient_body), style = MaterialTheme.typography.bodyLarge)
+        val problem = when (stored) {
+            PatientRecord.Unreadable -> R.string.patient_unreadable
+            PatientRecord.Unavailable -> R.string.patient_unavailable
+            else -> null
+        }
+        if (problem != null) {
+            Text(
+                stringResource(problem),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(top = 12.dp),
+            )
+        }
+        Spacer(Modifier.height(20.dp))
+        // The keyboard is asked not to learn the names; Next moves on, from the family name to the date.
+        NoKeyboardLearning {
+            OutlinedTextField(
+                value = given,
+                onValueChange = { entered -> given = entered.filterNot(Char::isISOControl).take(PatientDetails.MAX_PART) },
+                label = { Text(stringResource(R.string.patient_given)) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, autoCorrectEnabled = false, imeAction = ImeAction.Next),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = family,
+                onValueChange = { entered -> family = entered.filterNot(Char::isISOControl).take(PatientDetails.MAX_PART) },
+                label = { Text(stringResource(R.string.patient_family)) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, autoCorrectEnabled = false, imeAction = ImeAction.Next),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        Spacer(Modifier.height(20.dp))
+        Text(stringResource(R.string.patient_birth), style = MaterialTheme.typography.bodyLarge)
+        val shown = birth?.let { LocalDate.parse(it).format(DateTimeFormatter.ofLocalizedDate(FormatStyle.LONG)) }
+        Secondary(shown ?: stringResource(R.string.patient_birth_none), Modifier.padding(top = 2.dp))
+        OutlinedButton(onClick = { choosing = true }, modifier = Modifier.padding(top = 8.dp)) {
+            Text(stringResource(R.string.patient_birth_choose))
+        }
+        // Why Save cannot be tapped yet, while a part is missing.
+        if (stored != null && stored != PatientRecord.Unavailable && typed == null) {
+            Secondary(stringResource(R.string.patient_missing), Modifier.padding(top = 16.dp))
+        }
+        if (busy) Secondary(stringResource(R.string.sync_running), Modifier.padding(top = 16.dp))
+        if (failed) {
+            Text(
+                stringResource(R.string.patient_not_saved),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(top = 16.dp).semantics { liveRegion = LiveRegionMode.Polite },
+            )
+        }
+        Spacer(Modifier.height(24.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { typed?.let { act { onSave(it) } } }, enabled = stored != null && stored != PatientRecord.Unavailable && typed != null && typed != details && !saving && !busy) {
+                Text(stringResource(R.string.action_save))
+            }
+            // Also for details that can no longer be read: Remove takes the file and its key away.
+            if (stored is PatientRecord.Loaded || stored == PatientRecord.Unreadable) {
+                TextButton(onClick = { act(onRemove) }, enabled = !saving && !busy) {
+                    Text(stringResource(R.string.action_remove), color = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
+        Secondary(stringResource(R.string.patient_rewrite), Modifier.padding(top = 16.dp, bottom = 24.dp))
+    }
+    if (choosing) {
+        val today = LocalDate.now()
+        val locale = LocalConfiguration.current.locales[0]
+        // Made with remember, not rememberDatePickerState: that one keeps the chosen date in the screen's saved
+        // state. The picker's own typing field may still keep what is typed in it while the dialog is open;
+        // Compose offers no way to stop that.
+        val picker = remember {
+            val chosen = birth?.let { LocalDate.parse(it) }
+            DatePickerState(
+                locale = locale,
+                initialSelectedDateMillis = chosen?.atStartOfDay(ZoneOffset.UTC)?.toInstant()?.toEpochMilli(),
+                // With no date yet, the calendar opens about 40 years back rather than at today.
+                initialDisplayedMonthMillis = (chosen ?: today.minusYears(40)).withDayOfMonth(1).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli(),
+                yearRange = PatientDetails.MIN_YEAR..today.year,
+                // Typing the date is quicker than paging back through decades.
+                initialDisplayMode = DisplayMode.Input,
+                selectableDates = object : SelectableDates {
+                    override fun isSelectableDate(utcTimeMillis: Long) =
+                        !Instant.ofEpochMilli(utcTimeMillis).atZone(ZoneOffset.UTC).toLocalDate().isAfter(today)
+
+                    override fun isSelectableYear(year: Int) = year in PatientDetails.MIN_YEAR..today.year
+                },
+            )
+        }
+        DatePickerDialog(
+            onDismissRequest = { choosing = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        // The picker's day is a day in UTC, whatever the phone's zone.
+                        picker.selectedDateMillis?.let { birth = Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate().toString() }
+                        choosing = false
+                    },
+                    enabled = picker.selectedDateMillis != null,
+                ) { Text(stringResource(R.string.action_confirm)) }
+            },
+            dismissButton = { TextButton(onClick = { choosing = false }) { Text(stringResource(R.string.action_cancel)) } },
+        ) { DatePicker(picker) }
+    }
+}
+
+/**
+ * Asks the keyboard not to learn from what is typed in [content] (`IME_FLAG_NO_PERSONALIZED_LEARNING`): a
+ * name and a date of birth are not to turn up later as suggestions. A keyboard may ignore the request.
+ */
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+private fun NoKeyboardLearning(content: @Composable () -> Unit) {
+    // Kept away from autofill services too, so they cannot offer to save or fill the name.
+    val view = LocalView.current
+    DisposableEffect(view) {
+        val exclusion = AutofillExclusion({ view.importantForAutofill }, { view.importantForAutofill = it })
+        onDispose { exclusion.release() }
+    }
+    InterceptPlatformTextInput(
+        interceptor = { request, next ->
+            val unlearned = object : PlatformTextInputMethodRequest {
+                override fun createInputConnection(outAttributes: EditorInfo): InputConnection =
+                    request.createInputConnection(outAttributes).also {
+                        outAttributes.imeOptions = outAttributes.imeOptions or EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
+                    }
+            }
+            next.startInputMethod(unlearned)
+        },
+    ) { Column { content() } }
 }
 
 /** Under a choice that Health Connect does not allow: what is wrong, and the way to put it right. */

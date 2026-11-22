@@ -170,6 +170,12 @@ class SyncState(
      * that writes respiratory rate moves.
      */
     val correctionClock: ClockBaseline? = null,
+    /**
+     * What the Patient record in the health records was last written with: the random mark saved with
+     * the person's details ([PatientRecord.Loaded.mark]), which tells nothing of them; null when
+     * none is there; [PATIENT_UNKNOWN] when that is not known (after a rewrite was asked for).
+     */
+    val patientWritten: String? = null,
 ) {
     init {
         require((exportFolder?.length ?: 0) <= MAX_FILE_NAME) { "not a folder" }
@@ -195,9 +201,11 @@ class SyncState(
         exportFolder: String? = this.exportFolder,
         softwareOwnFromMs: Long? = this.softwareOwnFromMs,
         correctionClock: ClockBaseline? = this.correctionClock,
+        patientWritten: String? = this.patientWritten,
     ) = SyncState(
         machineTag, ledger, resumeFromMs, lastReport, lastCompleteAtMs, leakLimitLitresPerMinute, clock, rewriteRequested, vouchedSoftware,
         rulesVersion, softwareSeen, softwareSinceMs, respiratoryRate, healthRecords, exportFolder, softwareOwnFromMs, correctionClock,
+        patientWritten,
     )
 
     /** Everything about a machine forgotten; what the user has chosen kept. */
@@ -206,6 +214,8 @@ class SyncState(
         respiratoryRate = respiratoryRate,
         healthRecords = healthRecords,
         exportFolder = exportFolder,
+        // The Patient record is in the health records, not on the machine, and stays where it is.
+        patientWritten = patientWritten,
     )
 
     /**
@@ -246,6 +256,9 @@ class SyncState(
         const val MAX_LEAK_LIMIT = 1_000
         const val MAX_IDENTIFIER = 128
         const val MAX_FILE_NAME = 2048
+
+        /** Whether a Patient record is in the health records is not known: it is written again, or removed. */
+        const val PATIENT_UNKNOWN = "unknown"
     }
 }
 
@@ -318,6 +331,7 @@ class SyncStore(private val file: File) {
                 )
             }
             if (state.rewriteRequested) put("rewriteRequested", true)
+            state.patientWritten?.let { put("patientWritten", it) }
             state.vouchedSoftware?.let { put("vouchedSoftware", it) }
             state.rulesVersion?.let { put("rulesVersion", it) }
             state.softwareSeen?.let { put("softwareSeen", it) }
@@ -418,6 +432,7 @@ class SyncStore(private val file: File) {
                 healthRecords = (json["healthRecords"] as? JsonPrimitive)?.content != "false",
                 exportFolder = (json["exportFolder"] as? JsonPrimitive)?.content,
                 softwareOwnFromMs = (json["softwareOwnFromMs"] as? JsonPrimitive)?.long,
+                patientWritten = (json["patientWritten"] as? JsonPrimitive)?.content?.also { require(it.length <= 64) { "not a mark" } },
                 correctionClock = (json["correctionClock"] as? JsonObject)?.let { ClockBaseline(it.getValue("offsetMs").jsonPrimitive.long, it.getValue("machineMs").jsonPrimitive.long) },
             )
         }

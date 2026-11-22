@@ -2,6 +2,15 @@
 
 Newest first. Before 1.0, any release may change behaviour.
 
+## 0.4.1 (2026-11-22)
+
+- **Name and date of birth for the health records.** Google Health shows PAPRelay's records
+  only with a name and a date of birth. Add them in **Sharing › Name and date of birth**;
+  they are kept encrypted on the phone and, if health records are switched on, every night is
+  written to them once more.
+- The health records carry standard LOINC codes beside PAPRelay's own, for usage, AHI, the
+  obstructive and central apnoea indices, leak and therapy pressure.
+
 ## 0.4.0 (2026-11-22)
 
 - **The night so far.** Before the machine has summed up a night (it does this after

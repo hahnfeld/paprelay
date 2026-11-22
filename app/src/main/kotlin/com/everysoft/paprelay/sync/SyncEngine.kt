@@ -117,6 +117,14 @@ interface NightRecords {
      * @throws HealthSinkException if any part was not confirmed; it is then simply done again later.
      */
     suspend fun write(resources: List<FhirResource>, removeIds: List<String>)
+
+    /**
+     * Stores [patient] in place of the Patient record stored before, or, with null, removes it. Returns
+     * only when that is confirmed; removing one that is not there is no failure.
+     *
+     * @throws HealthSinkException if it was not confirmed; it is then simply done again later.
+     */
+    suspend fun writePatient(patient: FhirResource?)
 }
 
 /**
@@ -150,6 +158,8 @@ class SyncEngine(
     private val records: NightRecords? = null,
     /** Where the machine's breathing events are kept, or null to leave them alone. */
     private val events: EventStore? = null,
+    /** Where the person's name and date of birth are kept, when they have given them, or null for none. */
+    private val patients: PatientStore? = null,
     /** Where the mask-on and mask-off marks of the morning preview are kept, or null to leave them alone. */
     private val usage: UsageStore? = null,
     /** The usage kinds that may be used: the confirmed ones. Tests name others. */
@@ -320,7 +330,8 @@ class SyncEngine(
                     pendingMinutes = entry.possiblyHeld,
                 )
             }
-            progress.state = progress.state.with(ledger = marked, rewriteRequested = false).fromTheStart()
+            // The Patient record too: what is there is not known, so it is written again, or removed.
+            progress.state = progress.state.with(ledger = marked, rewriteRequested = false, patientWritten = SyncState.PATIENT_UNKNOWN).fromTheStart()
         }
         store.write(progress.state)
 
@@ -859,9 +870,34 @@ class SyncEngine(
             RecordsState.NOT_ALLOWED -> return HealthSinkException(notAllowed = true)
             RecordsState.READY -> Unit
         }
+        // The person's details, when given: every record then names the Patient, and the marks say which
+        // details they were written with (the random mark saved with them, which tells nothing of them), so a
+        // change writes them again.
+        val record = patients?.read() ?: PatientRecord.Absent
+        val details = (record as? PatientRecord.Loaded)?.details
         var unsaved = 0
         return try {
-            if (records.open() && byDate.values.any { it.recorded != null }) {
+            val fresh = records.open()
+            if (fresh && progress.state.patientWritten != null) {
+                // The place was made again: no Patient record is there.
+                progress.state = progress.state.with(patientWritten = null)
+                store.write(progress.state)
+            }
+            val wanted = when (record) {
+                is PatientRecord.Loaded -> record.mark
+                PatientRecord.Absent -> null
+                // Not known now (the person is asked to enter them again): what is in the health records is left
+                // as it is, and a record written meanwhile names the Patient record only if one is known to be there.
+                PatientRecord.Unreadable, PatientRecord.Unavailable -> progress.state.patientWritten?.takeIf { it != SyncState.PATIENT_UNKNOWN }
+            }
+            if (details != null && progress.state.patientWritten != wanted) {
+                // Before any record names it.
+                records.writePatient(FhirObservations.patient(details))
+                progress.state = progress.state.with(patientWritten = wanted)
+                store.write(progress.state)
+                progress.written++
+            }
+            if (fresh && byDate.values.any { it.recorded != null }) {
                 // PAPRelay's place in the health records was not there and has been made again: the
                 // user removed it, or Health Connect's data was cleared. Nothing recorded before is
                 // there now, whatever is remembered here.
@@ -873,9 +909,9 @@ class SyncEngine(
                 currentCoroutineContext().ensureActive()
                 val stored = byDate.getValue(date)
                 // What was written, and in which form: a change in either means writing it again.
-                val mark = "${FhirObservations.FORMAT}:${stored.night.healthFingerprint()}"
+                val mark = "${FhirObservations.FORMAT}:${stored.night.healthFingerprint()}" + (wanted?.let { ":$it" } ?: "")
                 if (!stored.night.complete || stored.recorded == mark) continue
-                val resources = FhirObservations.forNight(stored.night, tag)
+                val resources = FhirObservations.forNight(stored.night, tag, withSubject = wanted != null)
                 // Whatever the night could have had before and has no longer must not linger. Asked for
                 // every time, known to be there or not: what was recorded before may be forgotten here
                 // (a rewrite, a lost file) and still be there.
@@ -887,6 +923,16 @@ class SyncEngine(
                     nightStore.write(Nights(tag, byDate, planVersion))
                     unsaved = 0
                 }
+            }
+            if (record == PatientRecord.Absent && progress.state.patientWritten != null) {
+                // Removed by the person: once no record names it any more, the Patient record goes too.
+                if (unsaved > 0) {
+                    nightStore.write(Nights(tag, byDate, planVersion))
+                    unsaved = 0
+                }
+                records.writePatient(null)
+                progress.state = progress.state.with(patientWritten = null)
+                store.write(progress.state)
             }
             null
         } catch (e: HealthSinkException) {

@@ -157,6 +157,15 @@ class SyncStoreTest {
         assertNull(cleared.resumeFromMs)
         assertTrue(!cleared.rewriteRequested)
 
+        // What the Patient record was written with is a random mark, kept as it is, and kept when the machine is
+        // forgotten: the record is in the health records, not on the machine.
+        store.write(back.with(patientWritten = "0123456789abcdef"))
+        assertEquals("0123456789abcdef", store.read().patientWritten)
+        assertEquals("0123456789abcdef", store.read().cleared().patientWritten)
+        assertNull(back.patientWritten)
+        file.writeText(file.readText().replace("0123456789abcdef", "x".repeat(65)))
+        assertFailsWith<SyncStateUnreadableException> { store.read() }
+
         // The defaults: the nights go to health records, respiratory rate does not go anywhere.
         assertTrue(!SyncState.EMPTY.respiratoryRate)
         assertTrue(SyncState.EMPTY.healthRecords)

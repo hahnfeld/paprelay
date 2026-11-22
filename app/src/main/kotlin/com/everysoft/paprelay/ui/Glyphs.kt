@@ -48,6 +48,9 @@ enum class GlyphKind {
     /** Handing something to another app: three points joined by two lines. */
     SHARE,
 
+    /** The person's name and date of birth: a head and shoulders. */
+    PERSON,
+
     /** Back to an earlier night: the chevron, pointing the other way. */
     CHEVRON_BACK,
 
@@ -161,6 +164,16 @@ fun Glyph(kind: GlyphKind, modifier: Modifier = Modifier, enabled: Boolean = tru
                     onDrawBehind {
                         drawPath(folder, ink, style = line)
                         drawLine(ink, at(3f, 11f), at(21f, 11f), thin.width, StrokeCap.Round)
+                    }
+                }
+                GlyphKind.PERSON -> {
+                    val shoulders = Path().apply {
+                        moveTo(5f * k, 20f * k)
+                        cubicTo(5f * k, 13.5f * k, 19f * k, 13.5f * k, 19f * k, 20f * k)
+                    }
+                    onDrawBehind {
+                        drawCircle(ink, 3.6f * k, at(12f, 7.8f), style = Stroke(width))
+                        drawPath(shoulders, ink, style = line)
                     }
                 }
                 GlyphKind.CHEVRON_BACK -> {

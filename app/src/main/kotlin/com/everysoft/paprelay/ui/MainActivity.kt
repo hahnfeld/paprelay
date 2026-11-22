@@ -70,6 +70,7 @@ private fun Root(app: PapRelayApp) {
     val nights by app.sync.nights.collectAsState()
     val events by app.sync.events.collectAsState()
     val preview by app.sync.preview.collectAsState()
+    val patient by app.sync.patient.collectAsState()
     val forgetting by check.forgetting.collectAsState()
     val stopping by check.stopping.collectAsState()
     val checkEnd by check.ended.collectAsState()
@@ -330,10 +331,12 @@ private fun Root(app: PapRelayApp) {
             // Switched on and not allowed (the permission was taken away), or just tried and refused.
             recordsBlocked = recordsSupported && (sync.healthRecords && !recordsAllowed || refusedChoice == PENDING_RECORDS),
             respiratoryBlocked = sync.respiratoryRate && !respiratoryAllowed || refusedChoice == PENDING_RESPIRATORY,
+            patient = patient,
             onRecords = { on ->
                 refusedChoice = ""
                 if (on) request(PENDING_RECORDS) else app.sync.setHealthRecords(false)
             },
+            onPatient = { page = PAGE_PATIENT },
             onRespiratoryRate = { on ->
                 refusedChoice = ""
                 if (on) request(PENDING_RESPIRATORY) else app.sync.setRespiratoryRate(false)
@@ -343,6 +346,13 @@ private fun Root(app: PapRelayApp) {
             onNoFolder = { app.sync.setExportFolder(null) },
             onShare = share,
             onBack = { page = PAGE_HOME },
+        )
+        PAGE_PATIENT -> PatientScreen(
+            load = { app.sync.loadPatient() },
+            busy = sync.running,
+            onSave = { app.sync.setPatient(it) },
+            onRemove = { app.sync.setPatient(null) },
+            onBack = { page = PAGE_CHOICES },
         )
         PAGE_CHECK -> CheckScreen(
             pairing = pairing,
@@ -487,6 +497,7 @@ private const val PAGE_NIGHTS = "nights"
 private const val PAGE_EVENTS = "events"
 private const val PAGE_PAIR = "pair"
 private const val PAGE_CHOICES = "choices"
+private const val PAGE_PATIENT = "patient"
 
 private const val PENDING_SYNC = "sync"
 private const val PENDING_CHECK = "check"

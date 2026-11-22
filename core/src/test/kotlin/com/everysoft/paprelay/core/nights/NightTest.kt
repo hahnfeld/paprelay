@@ -138,25 +138,28 @@ class NightTest {
             """{"resourceType":"Observation","id":"m-13f8d92ec4854105-20261114-events","status":"final",""" +
                 """"category":[{"coding":[{"system":"http://terminology.hl7.org/CodeSystem/observation-category","code":"laboratory","display":"Laboratory"}]}],""" +
                 """"code":{"coding":[{"system":"https://github.com/hahnfeld/paprelay/fhir/CodeSystem/cpap-night","code":"ahi",""" +
-                """"display":"Residual apnea-hypopnea index on CPAP therapy, as the machine reports it (events per hour of use)"}],""" +
+                """"display":"Residual apnea-hypopnea index on CPAP therapy, as the machine reports it (events per hour of use)"},""" +
+                """{"system":"http://loinc.org","code":"69990-0","display":"Apnea hypopnea index 24 hour"}],""" +
                 """"text":"Residual apnea-hypopnea index on CPAP therapy, as the machine reports it (events per hour of use)"},""" +
                 """"effectivePeriod":{"start":"2026-11-14T12:00:00-07:00","end":"2026-11-15T12:00:00-07:00"},""" +
                 """"valueQuantity":{"value":2.3,"unit":"events/h","system":"http://unitsofmeasure.org","code":"{events}/h"},""" +
                 """"device":{"display":"ResMed AirSense 11 (copied by PAPRelay)"},""" +
                 """"component":[""" +
                 """{"code":{"coding":[{"system":"https://github.com/hahnfeld/paprelay/fhir/CodeSystem/cpap-night","code":"obstructive-apnea-index",""" +
-                """"display":"Residual obstructive apnea index on CPAP therapy (events per hour of use)"}],"text":"Residual obstructive apnea index on CPAP therapy (events per hour of use)"},""" +
+                """"display":"Residual obstructive apnea index on CPAP therapy (events per hour of use)"},""" +
+                """{"system":"http://loinc.org","code":"70002-1","display":"Obstructive apnea index 24 hour"}],"text":"Residual obstructive apnea index on CPAP therapy (events per hour of use)"},""" +
                 """"valueQuantity":{"value":1.1,"unit":"events/h","system":"http://unitsofmeasure.org","code":"{events}/h"}},""" +
                 """{"code":{"coding":[{"system":"https://github.com/hahnfeld/paprelay/fhir/CodeSystem/cpap-night","code":"central-apnea-index",""" +
-                """"display":"Residual central (clear-airway) apnea index on CPAP therapy (events per hour of use)"}],"text":"Residual central (clear-airway) apnea index on CPAP therapy (events per hour of use)"},""" +
+                """"display":"Residual central (clear-airway) apnea index on CPAP therapy (events per hour of use)"},""" +
+                """{"system":"http://loinc.org","code":"70003-9","display":"Central apnea index 24 hour"}],"text":"Residual central (clear-airway) apnea index on CPAP therapy (events per hour of use)"},""" +
                 """"valueQuantity":{"value":0,"unit":"events/h","system":"http://unitsofmeasure.org","code":"{events}/h"}},""" +
                 """{"code":{"coding":[{"system":"https://github.com/hahnfeld/paprelay/fhir/CodeSystem/cpap-night","code":"hypopnea-index",""" +
                 """"display":"Residual hypopnea index on CPAP therapy (events per hour of use)"}],"text":"Residual hypopnea index on CPAP therapy (events per hour of use)"},""" +
                 """"valueQuantity":{"value":1.2,"unit":"events/h","system":"http://unitsofmeasure.org","code":"{events}/h"}}]}""",
             events,
         )
-        // No sleep-study code is claimed for a therapy machine's figures.
-        assertTrue(records.none { it.json.contains("loinc") })
+        // No sleep-study code is claimed for a therapy machine's figures: the hypopnea index, for one, has none.
+        assertTrue(events.substringAfter(""""code":"hypopnea-index"""").substringBefore("]").contains("loinc").not())
         // Usage is given in hours for reading, and exactly in minutes beside it.
         assertTrue(records[0].json.contains(""""valueQuantity":{"value":7.2,"unit":"h""""))
         assertTrue(records[0].json.contains(""""code":"usage-minutes""""))
@@ -274,7 +277,7 @@ class NightTest {
 
     @Test
     fun `the new figures go to the leak and breathing records, and the machine's own only to the table`() {
-        assertEquals(3, FhirObservations.FORMAT)
+        assertEquals(5, FhirObservations.FORMAT)
         val figures = mapOf(
             NightFigure.LEAK_95 to 1440L, NightFigure.LEAK_70 to 480L, NightFigure.RESPIRATORY_RATE_MEDIAN to 1320L,
             NightFigure.RESPIRATORY_RATE_95 to 1520L, NightFigure.RESPIRATORY_FLOW_5 to 16L, NightFigure.TIDAL_VOLUME_MAX to 90L,

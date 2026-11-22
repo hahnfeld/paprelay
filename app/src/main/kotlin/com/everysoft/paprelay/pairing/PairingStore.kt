@@ -3,12 +3,10 @@
 package com.everysoft.paprelay.pairing
 
 import android.content.Context
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyPermanentlyInvalidatedException
-import android.security.keystore.KeyProperties
-import android.security.keystore.StrongBoxUnavailableException
 import android.util.AtomicFile
 import com.everysoft.paprelay.as11.PairingCredentials
+import com.everysoft.paprelay.secure.KeystoreKeys
+import com.everysoft.paprelay.secure.Sealer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,14 +19,7 @@ import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
 import java.io.IOException
-import java.security.KeyStore
 import java.security.ProviderException
-import java.security.UnrecoverableKeyException
-import javax.crypto.AEADBadTagException
-import javax.crypto.Cipher
-import javax.crypto.KeyGenerator
-import javax.crypto.SecretKey
-import javax.crypto.spec.GCMParameterSpec
 
 /** The machine PAPRelay is paired with, and the secret that proves it. */
 class Pairing(val credentials: PairingCredentials, val address: String, val serialNumber: String?, val pairedAtMs: Long)
@@ -71,6 +62,8 @@ sealed class PairingState {
 class PairingStore(context: Context) {
     private val file = AtomicFile(File(context.noBackupFilesDir, "pairing.bin"))
     private val lock = Mutex()
+    private val keys = KeystoreKeys(ALIAS)
+    private val sealer = Sealer(keys, AAD)
 
     private val _state = MutableStateFlow<PairingState>(PairingState.Loading)
     val state: StateFlow<PairingState> = _state
@@ -109,8 +102,8 @@ class PairingStore(context: Context) {
                 // With no stored pairing the key protects nothing, so a faulty one is simply
                 // replaced. Otherwise it is kept unless it is known to be gone for good.
                 val protectsAPairing = file.baseFile.exists()
-                if (protectsAPairing && !isPermanentKeyLoss(e)) throw IOException("secure storage is not available right now", e)
-                deleteKey()
+                if (protectsAPairing && !Sealer.isPermanentKeyLoss(e)) throw IOException("secure storage is not available right now", e)
+                keys.delete()
                 try {
                     roundTrip()
                 } catch (again: Exception) {
@@ -149,15 +142,12 @@ class PairingStore(context: Context) {
         run {
             val plain = encode(pairing)
             try {
-                val cipher = Cipher.getInstance(TRANSFORMATION)
-                cipher.init(Cipher.ENCRYPT_MODE, key(create = true))
-                cipher.updateAAD(AAD)
-                val sealed = cipher.doFinal(plain)
+                // The IV, then the ciphertext.
+                val sealed = sealer.seal(plain)
                 // AtomicFile writes to a side file, syncs it to disk, then renames.
                 val stream = file.startWrite()
                 try {
                     stream.write(byteArrayOf(FORMAT_VERSION))
-                    stream.write(cipher.iv)
                     stream.write(sealed)
                     file.finishWrite(stream)
                 } catch (e: IOException) {
@@ -171,7 +161,7 @@ class PairingStore(context: Context) {
                 } catch (e: IOException) {
                     throw IOException("the pairing was not stored", e)
                 }
-                if (stored.size != 1 + IV_BYTES + sealed.size || !stored.copyOfRange(1 + IV_BYTES, stored.size).contentEquals(sealed)) {
+                if (stored.size != 1 + sealed.size || !stored.copyOfRange(1, stored.size).contentEquals(sealed)) {
                     throw IOException("the pairing was not stored intact")
                 }
             } catch (e: java.security.GeneralSecurityException) {
@@ -191,7 +181,7 @@ class PairingStore(context: Context) {
         lock.withLock {
             withContext(Dispatchers.IO) {
                 file.delete()
-                deleteKey()
+                keys.delete()
                 _state.value = PairingState.Absent
             }
         }
@@ -206,14 +196,10 @@ class PairingStore(context: Context) {
         } catch (e: IOException) {
             return PairingState.Unavailable
         }
-        if (blob.size < 1 + IV_BYTES + TAG_BITS / 8 || blob[0] != FORMAT_VERSION) return PairingState.Unreadable
+        if (blob.size < 1 + Sealer.OVERHEAD || blob[0] != FORMAT_VERSION) return PairingState.Unreadable
         return try {
             // The file is there but its key is not: that does not come back.
-            val key = key() ?: return PairingState.Unreadable
-            val cipher = Cipher.getInstance(TRANSFORMATION)
-            cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(TAG_BITS, blob, 1, IV_BYTES))
-            cipher.updateAAD(AAD)
-            val plain = cipher.doFinal(blob, 1 + IV_BYTES, blob.size - 1 - IV_BYTES)
+            val plain = sealer.open(blob, 1) ?: return PairingState.Unreadable
             try {
                 PairingState.Paired(decode(plain))
             } finally {
@@ -223,31 +209,12 @@ class PairingStore(context: Context) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             // Only a key that is gone for good, or content that fails its own checks,
             // means the pairing is lost. Anything else may be the keystore having a bad moment.
-            if (isPermanentKeyLoss(e) || e is IOException || e is IllegalArgumentException) {
+            if (Sealer.isPermanentKeyLoss(e) || e is IOException || e is IllegalArgumentException) {
                 PairingState.Unreadable
             } else {
                 PairingState.Unavailable
             }
         }
-    }
-
-    /**
-     * Whether [e] means the key, or what it protects, is gone for good.
-     *
-     * Android reports almost every keystore fault while fetching a key as
-     * UnrecoverableKeyException, including ones that pass. It counts as permanent
-     * only when it carries no cause (the key was invalidated) or the keystore
-     * itself says the key is corrupted.
-     */
-    private fun isPermanentKeyLoss(e: Throwable): Boolean = when (e) {
-        is KeyPermanentlyInvalidatedException, is AEADBadTagException -> true
-        is UnrecoverableKeyException -> {
-            val cause = e.cause
-            cause == null ||
-                (cause is android.security.KeyStoreException &&
-                    cause.numericErrorCode == android.security.KeyStoreException.ERROR_KEY_CORRUPTED)
-        }
-        else -> false
     }
 
     private fun encode(pairing: Pairing): ByteArray {
@@ -274,42 +241,7 @@ class PairingStore(context: Context) {
 
     private fun roundTrip() {
         val probe = ByteArray(32) { it.toByte() }
-        val encrypt = Cipher.getInstance(TRANSFORMATION)
-        encrypt.init(Cipher.ENCRYPT_MODE, key(create = true))
-        val sealed = encrypt.doFinal(probe)
-        val decrypt = Cipher.getInstance(TRANSFORMATION)
-        decrypt.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(TAG_BITS, encrypt.iv))
-        if (!decrypt.doFinal(sealed).contentEquals(probe)) throw IOException("secure storage returned different data")
-    }
-
-    private fun deleteKey() {
-        runCatching { KeyStore.getInstance(KEYSTORE).apply { load(null) }.deleteEntry(ALIAS) }
-    }
-
-    private fun key(create: Boolean = false): SecretKey? {
-        val store = KeyStore.getInstance(KEYSTORE).apply { load(null) }
-        (store.getKey(ALIAS, null) as? SecretKey)?.let { return it }
-        if (!create) return null
-        return try {
-            generate(strongBox = true)
-        } catch (e: StrongBoxUnavailableException) {
-            generate(strongBox = false)
-        } catch (e: ProviderException) {
-            generate(strongBox = false)
-        }
-    }
-
-    private fun generate(strongBox: Boolean): SecretKey {
-        val spec = KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
-            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-            .setKeySize(256)
-            .setIsStrongBoxBacked(strongBox)
-            .build()
-        return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, KEYSTORE).run {
-            init(spec)
-            generateKey()
-        }
+        if (!sealer.open(sealer.seal(probe)).contentEquals(probe)) throw IOException("secure storage returned different data")
     }
 
     /** A byte buffer whose backing array is blanked once its contents are taken. */
@@ -318,11 +250,7 @@ class PairingStore(context: Context) {
     }
 
     private companion object {
-        const val KEYSTORE = "AndroidKeyStore"
         const val ALIAS = "paprelay.pairing.v1"
-        const val TRANSFORMATION = "AES/GCM/NoPadding"
-        const val IV_BYTES = 12
-        const val TAG_BITS = 128
         const val FORMAT_VERSION: Byte = 1
         const val PROBE_BYTES = 256
         val AAD = ALIAS.toByteArray(Charsets.US_ASCII)

@@ -41,6 +41,11 @@ the SD-card files are not kept in this repository.
 - Identity answers: `ProductName`, `ProductCode`, `ApplicationIdentifier`,
   `DataModelVersionIdentifier`; version sections `FlowGenerator`, `BluetoothModule`,
   `CellularModule`.
+- Health records (0.4.1-test, Android 16): Health Connect accepted a FHIR Patient resource
+  in PAPRelay's data source, and Observations whose subject is the relative reference
+  `"Patient/paprelay-patient"`. Google Health showed PAPRelay's records once each
+  Observation's subject referred to a Patient record with a name and a date of birth.
+  Before that, it reported that the medical data could not be synced.
 
 From other sources:
 [SomnoTrace's pairing guide](https://github.com/ilyakruchinin/somnotrace/blob/main/docs/pairing.md): the machine keeps one Bluetooth bond at

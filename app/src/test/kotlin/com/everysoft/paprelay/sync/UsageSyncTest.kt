@@ -119,6 +119,8 @@ class UsageSyncTest {
             for (id in removeIds) held.remove(id)
             for (resource in resources) held[resource.id] = resource.json
         }
+
+        override suspend fun writePatient(patient: FhirResource?) = error("no details are given here")
     }
 
     private val machine = Machine()

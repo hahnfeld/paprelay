@@ -20,6 +20,8 @@ import com.everysoft.paprelay.ble.PresenceWatch
 import com.everysoft.paprelay.core.nights.Night
 import com.everysoft.paprelay.core.nights.NightPreview
 import com.everysoft.paprelay.core.nights.NightReport
+import com.everysoft.paprelay.core.nights.PatientDetails
+import com.everysoft.paprelay.secure.KeystoreKeys
 import com.everysoft.paprelay.as11.plan.NightPlan
 import com.everysoft.paprelay.pairing.PairingState
 import com.everysoft.paprelay.pairing.PairingStore
@@ -27,6 +29,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -100,10 +103,12 @@ class SyncRunner(
     private val nightStore = NightStore(File(context.noBackupFilesDir, "nights.json"))
     private val eventStore = EventStore(File(context.noBackupFilesDir, "events.json"))
     private val usageStore = UsageStore(File(context.noBackupFilesDir, "usage.json"))
+    private val patientStore = PatientStore(File(context.noBackupFilesDir, "patient.bin"), KeystoreKeys(PatientStore.KEY_ALIAS))
     private val folder = ExportFolder(context)
     private val engine = SyncEngine(
         connector, sink, store, System::currentTimeMillis, ::keepRaw,
         phoneClockWrong = ::phoneClockWrong, describe = describe, nights = nightStore, records = records, events = eventStore, usage = usageStore,
+        patients = patientStore,
     )
 
     private val exporting = Mutex()
@@ -126,6 +131,11 @@ class SyncRunner(
 
     /** The night not yet summed up by the machine, so far: for the screen only, never passed on. */
     val preview: StateFlow<NightPreview?> = _preview
+
+    private val _patient = MutableStateFlow(PatientPresence.ABSENT)
+
+    /** Whether the person's name and date of birth are given: never the details, which are read only for the form. */
+    val patient: StateFlow<PatientPresence> = _patient
     private val presence = PresenceWatch(context)
 
     /**
@@ -376,6 +386,26 @@ class SyncRunner(
         }
     }
 
+    /** The stored name and date of birth, read for the form while it is open. Never throws. */
+    suspend fun loadPatient(): PatientRecord = withContext(Dispatchers.IO) { patientStore.read() }
+
+    /**
+     * Keeps the person's name and date of birth for the health records, or, with null, removes them.
+     * The records are then written again, naming the Patient record or not, and with null that record
+     * goes too. Returns whether the change was stored.
+     */
+    suspend fun setPatient(details: PatientDetails?): Boolean = scope.async {
+        // Carried through in this object's own scope: leaving the form while it waits for a run must not leave it half done.
+        val stored = engine.whileIdle {
+            withContext(Dispatchers.IO) {
+                runCatching { if (details != null) patientStore.write(details) else patientStore.delete() }.isSuccess
+            }
+        }
+        refresh()
+        if (stored && (_status.value.healthRecords || blockedByHealthConnect())) syncNow()
+        stored
+    }.await()
+
     /**
      * Sets the folder the tables are kept in, or none. [chosen] is what the system's folder screen
      * returned; the right to write there is kept until another is chosen.
@@ -547,6 +577,13 @@ class SyncRunner(
         }
         withContext(Dispatchers.IO) { runCatching { nightStore.read().all } }.getOrNull()?.let { _nights.value = it }
         withContext(Dispatchers.IO) { runCatching { eventStore.read() } }.getOrNull()?.let { _events.value = it }
+        _patient.value = when (withContext(Dispatchers.IO) { patientStore.read() }) {
+            PatientRecord.Absent -> PatientPresence.ABSENT
+            is PatientRecord.Loaded -> PatientPresence.SET
+            PatientRecord.Unreadable -> PatientPresence.UNREADABLE
+            // Not known just now: what was said stands.
+            PatientRecord.Unavailable -> _patient.value
+        }
         _preview.value = withContext(Dispatchers.IO) {
             runCatching { usageStore.read().preview(nightStore.read().all) }.getOrNull()
         }
@@ -629,3 +666,6 @@ class SyncRunner(
         )
     }
 }
+
+/** Whether the person's name and date of birth are given, for the Sharing page. */
+enum class PatientPresence { ABSENT, SET, UNREADABLE }
