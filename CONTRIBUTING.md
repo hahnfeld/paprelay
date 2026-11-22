@@ -24,7 +24,8 @@ health data. Never put any of these into an issue, a pull request or a commit:
 
 - a Bluetooth log (`btsnoop_hci.log`, `.pcap`, `.pcapng`) or an Android bug report;
 - files from the machine's SD card;
-- the app's private files (`pairing.bin`, `sync.json`, `nights.json`, the raw downloads);
+- the app's private files (`pairing.bin`, `sync.json`, `nights.json`, `events.json`, the raw downloads);
+- the two files PAPRelay keeps in your folder (`paprelay_nights.csv`, `paprelay_events.csv`);
 - a pairing code, a serial number or a Bluetooth address;
 - a signing key (`.p12`, `.jks`, `.keystore`).
 

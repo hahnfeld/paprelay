@@ -11,8 +11,8 @@ and choose **Report a vulnerability**. Only the maintainer can read the report.
 Please say what the problem is, how to reproduce it, and which version of PAPRelay, phone
 and Android version you used.
 
-Do not attach captures from a real machine, Bluetooth logs, SD-card files or the app's
-private files. They contain health data and what is needed to read it. If such data is
+Do not attach captures from a real machine, Bluetooth logs, SD-card files, the app's
+private files, or the files of nights and events. They contain health data and what is needed to read it. If such data is
 needed, the maintainer will arrange a safe way with you.
 
 This is a small volunteer project. Expect a first answer within about two weeks. There is
@@ -24,7 +24,10 @@ no reward programme. Only the newest release receives fixes.
 - A way for another app or another Bluetooth device to obtain the pairing secret or health
   data from PAPRelay.
 - A way to make PAPRelay accept a device that is not the paired machine.
-- A way to make PAPRelay write values to Health Connect that the machine did not record.
+- A way to make PAPRelay write values to Health Connect, or to the files in the chosen
+  folder, that the machine did not record.
+- A way to make PAPRelay read, change or delete a file in the chosen folder other than its
+  own two files.
 - Health data, a full serial number, a Bluetooth address or a key in a log or in the saved
   report.
 

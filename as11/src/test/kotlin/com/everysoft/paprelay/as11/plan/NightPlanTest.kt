@@ -5,6 +5,7 @@ package com.everysoft.paprelay.as11.plan
 import com.everysoft.paprelay.as11.decode.Firmware
 import com.everysoft.paprelay.as11.decode.Proto
 import com.everysoft.paprelay.as11.decode.SummaryDecoder
+import com.everysoft.paprelay.as11.decode.SummaryMetric
 import com.everysoft.paprelay.as11.decode.proto
 import com.everysoft.paprelay.core.MachineTime
 import com.everysoft.paprelay.core.nights.NightFigure
@@ -82,7 +83,8 @@ class NightPlanTest {
         assertEquals("10.2", night.value(NightFigure.MASK_PRESSURE_MAX)!!.toPlainString())
         assertEquals(24, night.hours)
         assertEquals("13.2", night.value(NightFigure.RESPIRATORY_RATE_MEDIAN)!!.toPlainString())
-        assertEquals("0.48", night.value(NightFigure.TIDAL_VOLUME_MEDIAN)!!.toPlainString())
+        // Tidal volume in millilitres: 0.48 litres, exactly.
+        assertEquals("480", night.value(NightFigure.TIDAL_VOLUME_MEDIAN)!!.toPlainString())
         assertEquals("6.5", night.value(NightFigure.MINUTE_VENTILATION_MEDIAN)!!.toPlainString())
         assertEquals("2026-11-14T12:00-07:00", night.start.toString())
     }
@@ -199,5 +201,146 @@ class NightPlanTest {
         val nights = newer.decoded.map { NightPlan.night(it, now) }
         assertTrue(nights.isNotEmpty() && nights.all { it != null })
         assertEquals(checked.decoded.map { NightPlan.night(it, now)?.fingerprint() }, nights.map { it?.fingerprint() })
+    }
+
+    @Test
+    fun `every confirmed summary value is a figure, in its own unit and exactly`() {
+        val night = plan {
+            night {
+                message(29) { varint(2, 1120) }
+                message(30) { varint(2, 2950) }
+                message(31) { varint(2, 2675) }
+                message(32) { varint(2, 3300) }
+                message(33) { varint(2, 0) }
+                message(36) { varint(1, 474); varint(3, 958) }
+                message(37) { varint(1, 16); varint(3, 36) }
+                message(38) { varint(2, 48) }
+            }
+        }.single()!!
+        val expected = mapOf(
+            NightFigure.LEAK_70 to "4.8", // 0.08 litres a second
+            NightFigure.RESPIRATORY_RATE_95 to "15.2", NightFigure.RESPIRATORY_RATE_MAX to "19.2",
+            NightFigure.TIDAL_VOLUME_95 to "600", NightFigure.TIDAL_VOLUME_MAX to "900",
+            NightFigure.MINUTE_VENTILATION_95 to "8", NightFigure.MINUTE_VENTILATION_MAX to "11",
+            // Every flow in litres a minute: 0.16 and 0.36 litres a second.
+            NightFigure.RESPIRATORY_FLOW_5 to "9.6", NightFigure.RESPIRATORY_FLOW_95 to "21.6",
+            NightFigure.BLOWER_PRESSURE_5 to "4.74", NightFigure.BLOWER_PRESSURE_95 to "9.58",
+            NightFigure.BLOWER_FLOW_MEDIAN to "28.8",
+            NightFigure.AMBIENT_HUMIDITY_MEDIAN to "11.2",
+            NightFigure.HUMIDIFIER_TEMPERATURE_MEDIAN to "29.5", NightFigure.HEATED_TUBE_TEMPERATURE_MEDIAN to "26.75",
+            NightFigure.HUMIDIFIER_POWER_MEDIAN to "33", NightFigure.HEATED_TUBE_POWER_MEDIAN to "0",
+        )
+        for ((figure, value) in expected) assertEquals(value, night.value(figure)?.toPlainString(), figure.key)
+        // Every figure the plan can give is in the night, and nothing else.
+        assertEquals(NightPlan.FIGURES.toSet(), night.hundredths.keys)
+    }
+
+    @Test
+    fun `a value whose layout or factor is not confirmed is not given, even when the record carries it`() {
+        val night = plan {
+            night {
+                message(24) { varint(2, 600); varint(3, 700); varint(4, 800) } // target minute ventilation
+                message(26) { varint(2, 1_200); varint(3, 1_500); varint(4, 1_900) } // inspiratory duration
+                message(27) { varint(2, 6_800); varint(3, 8_000); varint(4, 9_200) } // I:E ratio
+                message(28) { varint(2, 9_500); varint(3, 9_700); varint(4, 9_900) } // SpO2
+                message(41) { varint(2, 6_000); varint(3, 7_000); varint(4, 9_000) } // heart rate
+                message(42) { varint(2, 400); varint(3, 500); varint(4, 600) } // alveolar minute ventilation
+                varint(16, 12); varint(18, 50); varint(19, 30); varint(34, 2); varint(35, 1)
+            }
+        }.single()!!
+        val pending = NightFigure.entries - NightPlan.FIGURES.toSet()
+        assertEquals(
+            setOf("target-ventilation", "alveolar-ventilation", "ie-ratio"),
+            pending.map { it.key.substringBeforeLast('-') }.toSet(),
+        )
+        for (figure in pending) assertNull(night.value(figure), figure.key)
+        assertEquals(night.hundredths.keys, night.hundredths.keys.intersect(NightPlan.FIGURES.toSet()))
+    }
+
+    @Test
+    fun `confirming a summary value is its flag alone, and the plan's version follows`() {
+        // Every percentile of every confirmed metric is a figure the plan gives.
+        for (metric in SummaryMetric.entries.filter { it.confirmed }) {
+            for (percentile in metric.layout.bySubField.values) {
+                assertTrue(NightPlan.metrics.values.any { it.metric == metric && it.percentile == percentile }, "$metric $percentile")
+            }
+        }
+        // Each figure named and not yet given waits on exactly one unconfirmed metric's flag.
+        for (figure in NightFigure.entries - NightPlan.FIGURES.toSet()) {
+            val source = NightPlan.metrics[figure]
+            assertTrue(source != null && !source.metric.confirmed, figure.key)
+        }
+        // Each source's unit is the figure's, and each figure has one source.
+        for ((figure, source) in NightPlan.metrics) assertEquals(figure.unit.name, source.unit.name, figure.key)
+        assertEquals(NightPlan.metrics.size, NightPlan.metrics.values.map { it.metric to it.percentile }.toSet().size)
+        // The indices and the confirmed metrics, in the order of the figures.
+        assertEquals(NightFigure.entries.filter { it in NightPlan.FIGURES }, NightPlan.FIGURES)
+        assertTrue(Regex("2-[0-9a-f]{16}").matches(NightPlan.VERSION), NightPlan.VERSION)
+    }
+
+    @Test
+    fun `a night lists its sessions one by one, by the machine's clock, when each has its length`() {
+        val night = plan { night() }.single()!!
+        assertEquals(listOf(noon + 36_000_000, noon + 54_000_000), night.sessionList!!.map { it.start.epochMs })
+        assertEquals(listOf(203, 102), night.sessionList!!.map { it.minutes })
+        // A session without a stored length: the list is not given at all, and the count still is.
+        val gap = plan {
+            message(2) {
+                varint(1, 1); varint(2, noon); varint(3, noon + day); zigzag(4, -420); varint(5, 200)
+                message(6) { message(1) { varint(1, noon + 36_000_000); varint(2, 100) }; message(1) { varint(1, noon + 50_000_000) } }
+                varint(39, 2)
+            }
+        }.single()!!
+        assertNull(gap.sessionList)
+        assertEquals(2, gap.sessions)
+        val unused = plan { message(2) { varint(1, 1); varint(2, noon); varint(3, noon + day); zigzag(4, -420); varint(5, 0) } }.single()!!
+        assertEquals(emptyList(), unused.sessionList)
+        // Without a measured clock, no start is corrected.
+        assertTrue(night.sessionList!!.all { it.correctedMs == null })
+    }
+
+    @Test
+    fun `a session's start is corrected to true time by the same rule as an event's`() {
+        // The machine six minutes fast, measured two days after the night's noon: within the week.
+        val machineNow = MachineTime(noon + 2 * day)
+        val trueNow = noon + 2 * day - 361_600
+        val correction = ClockCorrection(com.everysoft.paprelay.core.ClockOffset.measured(machineNow, trueNow), machineNow, trueNow)
+        val night = SummaryDecoder.decode(proto { night() }, confirmed).decoded.map { NightPlan.night(it, machineNow, correction) }.single()!!
+        assertEquals(listOf(noon + 36_000_000 - 361_600, noon + 54_000_000 - 361_600), night.sessionList!!.map { it.correctedMs })
+        assertEquals(listOf(noon + 36_000_000, noon + 54_000_000), night.sessionList!!.map { it.start.epochMs })
+        // Measured more than a week later: not corrected.
+        val late = MachineTime(noon + 9 * day)
+        val far = ClockCorrection(com.everysoft.paprelay.core.ClockOffset.measured(late, late.epochMs), late, late.epochMs)
+        val old = SummaryDecoder.decode(proto { night() }, confirmed).decoded.map { NightPlan.night(it, late, far) }.single()!!
+        assertTrue(old.sessionList!!.all { it.correctedMs == null })
+    }
+
+    @Test
+    fun `no figure shown or exported is in litres a second or in litres`() {
+        // Every flow in litres a minute, tidal volume in millilitres: wherever a person reads them.
+        for (figure in NightPlan.FIGURES) {
+            assertTrue(figure.unit.symbol !in setOf("L/s", "L"), figure.key)
+            assertTrue(figure.unit.ucum !in setOf("L/s", "L"), figure.key)
+            assertTrue(figure.unit.columnSuffix !in setOf("l_per_s", "l"), figure.column)
+        }
+        for (figure in listOf(NightFigure.RESPIRATORY_FLOW_5, NightFigure.RESPIRATORY_FLOW_95, NightFigure.BLOWER_FLOW_MEDIAN, NightFigure.LEAK_95, NightFigure.MINUTE_VENTILATION_MEDIAN)) {
+            assertEquals("L/min", figure.unit.symbol, figure.key)
+            assertTrue(figure.column.endsWith("_l_per_min"), figure.column)
+        }
+        for (figure in listOf(NightFigure.TIDAL_VOLUME_MEDIAN, NightFigure.TIDAL_VOLUME_95, NightFigure.TIDAL_VOLUME_MAX)) {
+            assertEquals("mL", figure.unit.symbol, figure.key)
+            assertTrue(figure.column.endsWith("_ml"), figure.column)
+        }
+    }
+
+    @Test
+    fun `the plan's version follows each figure's unit, not only its name`() {
+        // Worked out as the plan does: the same figures in another unit give another version.
+        fun version(units: (NightFigure) -> String) = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(NightPlan.FIGURES.joinToString(",") { "${it.key}:${units(it)}" }.toByteArray(Charsets.US_ASCII))
+            .take(8).joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+        assertEquals(NightPlan.VERSION.substringAfter('-'), version { it.unit.name })
+        val litres = version { if (it == NightFigure.TIDAL_VOLUME_MEDIAN) "LITRES" else it.unit.name }
+        assertTrue(litres != version { it.unit.name })
     }
 }

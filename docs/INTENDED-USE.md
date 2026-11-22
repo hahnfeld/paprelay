@@ -2,8 +2,8 @@
 
 PAPRelay transfers, stores, converts and displays data that a ResMed AirSense 11 has
 already recorded. It keeps a copy on the phone and can write a copy to Android Health
-Connect on the same phone, to a file that the user chooses, and to another app that the
-user chooses.
+Connect on the same phone, to two files in a folder that the user chooses, and to another
+app that the user chooses.
 
 ## For personal use only
 
@@ -39,7 +39,8 @@ not this project.
   erase data, and the code is built so that such commands cannot be expressed (see
   `As11Request`).
 - It does not recompute clinical indices such as AHI. Those values are shown as the
-  machine reported them, or not at all.
+  machine reported them, or not at all. The list of breathing events is the machine's own
+  list; PAPRelay does not count it into an index.
 
 Any filtering PAPRelay applies before writing to Health Connect is a fixed, documented
 rule (for example, leaving out a minute for which the machine stored a respiratory rate of

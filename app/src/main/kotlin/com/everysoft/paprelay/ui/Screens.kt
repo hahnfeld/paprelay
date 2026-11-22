@@ -60,6 +60,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
@@ -162,7 +164,7 @@ private fun Page(
 
 /** A plain arrow, drawn here so the app needs no icon library. */
 @Composable
-private fun BackButton(onBack: () -> Unit) {
+internal fun BackButton(onBack: () -> Unit) {
     val description = stringResource(R.string.action_back)
     val color = MaterialTheme.colorScheme.onSurface
     Box(
@@ -190,7 +192,7 @@ private fun BackButton(onBack: () -> Unit) {
 }
 
 @Composable
-private fun Secondary(text: String, modifier: Modifier = Modifier) {
+internal fun Secondary(text: String, modifier: Modifier = Modifier) {
     Text(
         text,
         style = MaterialTheme.typography.bodyMedium,
@@ -228,6 +230,7 @@ fun HomeScreen(
     onStopCheck: () -> Unit,
     onOpenCheck: () -> Unit,
     onOpenNights: () -> Unit,
+    onOpenEvents: () -> Unit,
     onOpenChoices: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenHealthConnect: () -> Unit,
@@ -267,7 +270,7 @@ fun HomeScreen(
             // What the app is for: the latest finished night, in the machine's own figures.
             nights.firstOrNull { it.complete }?.let { night ->
                 Spacer(Modifier.height(20.dp))
-                NightSummary(night, prominent = true)
+                NightSummary(night)
                 Spacer(Modifier.height(8.dp))
             }
             if (shows == HomeShows.CHECK) {
@@ -319,8 +322,8 @@ fun HomeScreen(
             if (sync.rateWaiting && ran && !healthMissing) {
                 Secondary(stringResource(R.string.rate_waiting), Modifier.padding(top = 12.dp))
             }
-            if (sync.exportFile != null && sync.exportFailed) {
-                Secondary(stringResource(R.string.choice_file_failed), Modifier.padding(top = 12.dp))
+            if (sync.exportFolder != null && sync.exportFailed) {
+                Secondary(stringResource(R.string.choice_folder_failed), Modifier.padding(top = 12.dp))
             }
         } else {
             // The last check, until the machine is paired; in a test build, always.
@@ -362,6 +365,8 @@ fun HomeScreen(
             if (synchronising) {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 DestinationRow(GlyphKind.MOON, R.string.nights_title, onOpenNights)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                DestinationRow(GlyphKind.TICKS, R.string.events_title, onOpenEvents)
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 DestinationRow(GlyphKind.FORK, R.string.choices_title, onOpenChoices)
             }
@@ -437,8 +442,12 @@ private fun InfoButton(onClick: () -> Unit) {
  * that belongs to the picture.
  */
 @Composable
-private fun DestinationRow(glyph: GlyphKind, @StringRes label: Int, onClick: () -> Unit, chevron: Boolean = true) {
-    val text = stringResource(label)
+internal fun DestinationRow(glyph: GlyphKind, @StringRes label: Int, onClick: () -> Unit, chevron: Boolean = true) =
+    DestinationRow(glyph, stringResource(label), onClick, chevron)
+
+/** The same, with its words already made (a count, say). */
+@Composable
+internal fun DestinationRow(glyph: GlyphKind, text: String, onClick: () -> Unit, chevron: Boolean = true) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -467,10 +476,10 @@ private fun DestinationRow(glyph: GlyphKind, @StringRes label: Int, onClick: () 
  * given the same in words.
  */
 @Composable
-private fun NightSummary(night: Night, prominent: Boolean) {
+private fun NightSummary(night: Night) {
     val date = remember(night.date) { dayFormatter().format(night.date) }
     val heading = stringResource(R.string.night_of, date)
-    val headline = if (prominent) MaterialTheme.typography.titleLarge else MaterialTheme.typography.bodyLarge
+    val headline = MaterialTheme.typography.titleLarge
     // Whole numbers are put in as text, so that they keep the digits the decimals beside them have.
     val hours = (night.usageMinutes / 60).toString()
     val minutes = (night.usageMinutes % 60).toString()
@@ -504,58 +513,13 @@ private fun NightSummary(night: Night, prominent: Boolean) {
 }
 
 /** A date with its weekday, in the phone's language and its usual order: "Sat, 14 Nov 2026". */
-private fun dayFormatter(): DateTimeFormatter {
+internal fun dayFormatter(): DateTimeFormatter {
     val locale = Locale.getDefault()
     return try {
         DateTimeFormatter.ofPattern(DateFormat.getBestDateTimePattern(locale, "yMMMEd"), locale)
     } catch (e: IllegalArgumentException) {
         // A pattern the phone's language uses and this formatter does not know: the plain date instead.
         DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM)
-    }
-}
-
-/**
- * Every night kept on the phone, newest first. Built row by row as it is scrolled: there can
- * be three years of them.
- */
-@Composable
-fun NightsScreen(nights: List<Night>, onShare: () -> Unit, onBack: () -> Unit) {
-    val finished = remember(nights) { nights.filter { it.complete } }
-    Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxSize()) {
-        Box(
-            Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)),
-            contentAlignment = Alignment.TopCenter,
-        ) {
-            LazyColumn(
-                Modifier.widthIn(max = 560.dp).fillMaxSize(),
-                contentPadding = PaddingValues(
-                    start = 24.dp,
-                    end = 24.dp,
-                    bottom = 32.dp + WindowInsets.safeDrawing.asPaddingValues().calculateBottomPadding(),
-                ),
-            ) {
-                item {
-                    Row(Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 28.dp), verticalAlignment = Alignment.CenterVertically) {
-                        BackButton(onBack)
-                        Spacer(Modifier.width(4.dp))
-                        Text(
-                            stringResource(R.string.nights_title),
-                            style = MaterialTheme.typography.headlineSmall,
-                            modifier = Modifier.weight(1f).semantics { heading() },
-                        )
-                        if (finished.isNotEmpty()) TextButton(onClick = onShare) { Text(stringResource(R.string.action_share)) }
-                    }
-                    Secondary(stringResource(R.string.nights_note))
-                    Spacer(Modifier.height(12.dp))
-                    // The page is always reachable from the home screen, so it says why it is empty.
-                    if (finished.isEmpty()) Text(stringResource(R.string.nights_empty), style = MaterialTheme.typography.bodyLarge)
-                }
-                itemsIndexed(finished, key = { _, night -> night.date.toEpochDay() }) { index, night ->
-                    if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    Box(Modifier.padding(vertical = 12.dp)) { NightSummary(night, prominent = false) }
-                }
-            }
-        }
     }
 }
 
@@ -570,8 +534,8 @@ fun ChoicesScreen(
     onRecords: (Boolean) -> Unit,
     onRespiratoryRate: (Boolean) -> Unit,
     onOpenHealthConnect: () -> Unit,
-    onChooseFile: () -> Unit,
-    onNoFile: () -> Unit,
+    onChooseFolder: () -> Unit,
+    onNoFolder: () -> Unit,
     onShare: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -594,17 +558,17 @@ fun ChoicesScreen(
         if (respiratoryBlocked) NotAllowed(onOpenHealthConnect)
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Row(Modifier.fillMaxWidth().padding(vertical = 14.dp)) {
-            Glyph(GlyphKind.PAGE)
+            Glyph(GlyphKind.FOLDER)
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
-                Text(stringResource(R.string.choice_file), style = MaterialTheme.typography.bodyLarge)
-                Secondary(stringResource(R.string.choice_file_body), Modifier.padding(top = 2.dp))
-                if (sync.exportFile != null) {
+                Text(stringResource(R.string.choice_folder), style = MaterialTheme.typography.bodyLarge)
+                Secondary(stringResource(R.string.choice_folder_body), Modifier.padding(top = 2.dp))
+                if (sync.exportFolder != null) {
                     Text(
                         when {
-                            sync.exportFailed -> stringResource(R.string.choice_file_failed)
-                            sync.exportName != null -> stringResource(R.string.choice_file_named, sync.exportName)
-                            else -> stringResource(R.string.choice_file_on)
+                            sync.exportFailed -> stringResource(R.string.choice_folder_failed)
+                            sync.exportName != null -> stringResource(R.string.choice_folder_named, sync.exportName)
+                            else -> stringResource(R.string.choice_folder_on)
                         },
                         style = MaterialTheme.typography.bodyMedium,
                         color = if (sync.exportFailed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
@@ -613,10 +577,10 @@ fun ChoicesScreen(
                 }
                 Spacer(Modifier.height(8.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = onChooseFile, enabled = !sync.running) {
-                        Text(stringResource(if (sync.exportFile == null) R.string.action_choose_file else R.string.action_other_file))
+                    OutlinedButton(onClick = onChooseFolder, enabled = !sync.running) {
+                        Text(stringResource(if (sync.exportFolder == null) R.string.action_choose_folder else R.string.action_other_folder))
                     }
-                    if (sync.exportFile != null) TextButton(onClick = onNoFile, enabled = !sync.running) { Text(stringResource(R.string.action_no_file)) }
+                    if (sync.exportFolder != null) TextButton(onClick = onNoFolder, enabled = !sync.running) { Text(stringResource(R.string.action_no_folder)) }
                 }
             }
         }
@@ -668,7 +632,7 @@ private fun Choice(glyph: GlyphKind, @StringRes title: Int, @StringRes body: Int
  */
 @Composable
 private fun NumberedSteps(steps: List<Int>, modifier: Modifier = Modifier) {
-    val numberWidth = with(LocalDensity.current) { 20.sp.toDp() }
+    val numberWidth = with(LocalDensity.current) { 24.sp.toDp() }
     Column(modifier.semantics { collectionInfo = CollectionInfo(rowCount = steps.size, columnCount = 1) }) {
         steps.forEachIndexed { index, step ->
             Row(
@@ -678,10 +642,62 @@ private fun NumberedSteps(steps: List<Int>, modifier: Modifier = Modifier) {
                         collectionItemInfo = CollectionItemInfo(rowIndex = index, rowSpan = 1, columnIndex = 0, columnSpan = 1)
                     },
             ) {
-                Secondary(stringResource(R.string.list_number, index + 1), Modifier.widthIn(min = numberWidth))
-                Secondary(stringResource(step), Modifier.weight(1f))
+                Text(stringResource(R.string.list_number, index + 1), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.widthIn(min = numberWidth))
+                Text(stringResource(step), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
             }
         }
+    }
+}
+
+/**
+ * What to do on the machine before pairing, shown before anything is asked of it: the steps at
+ * reading size, and a drawing of the machine showing its code. Only when the user says that the
+ * code is there does the device check, and with it the search for the machine, begin.
+ */
+@Composable
+fun PairStepsScreen(unreadable: Boolean, free: Boolean, stopping: Boolean, onStart: () -> Unit, onBack: () -> Unit) {
+    Page(title = stringResource(R.string.action_pair), onBack = onBack) {
+        if (unreadable) {
+            Text(stringResource(R.string.detail_pairing_unreadable), style = MaterialTheme.typography.bodyLarge)
+            Spacer(Modifier.height(16.dp))
+        }
+        NumberedSteps(listOf(R.string.pair_step_1, R.string.pair_step_2, R.string.pair_step_3))
+        Spacer(Modifier.height(24.dp))
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { MachineCodePicture() }
+        Spacer(Modifier.height(28.dp))
+        Button(onClick = onStart, enabled = free) { Text(stringResource(R.string.action_code_shown)) }
+        if (stopping) Secondary(stringResource(R.string.action_stopping), Modifier.padding(top = 8.dp))
+    }
+}
+
+/**
+ * The machine from the front, in the picture's line style, with a code of four digits on its
+ * screen. The digits are an example, and are not read out: the description says what it shows.
+ */
+@Composable
+private fun MachineCodePicture(modifier: Modifier = Modifier) {
+    val ink = MaterialTheme.colorScheme.onSurface
+    val description = stringResource(R.string.pair_picture)
+    Box(modifier.size(width = 180.dp, height = 112.dp).clearAndSetSemantics { contentDescription = description }) {
+        Canvas(Modifier.fillMaxSize()) {
+            val w = 2.dp.toPx()
+            val stroke = androidx.compose.ui.graphics.drawscope.Stroke(w, cap = StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round)
+            // The body, and its screen on the left as on the machine.
+            drawRoundRect(ink, topLeft = Offset(w, 8.dp.toPx()), size = androidx.compose.ui.geometry.Size(size.width - 2 * w, size.height - 24.dp.toPx()), cornerRadius = androidx.compose.ui.geometry.CornerRadius(16.dp.toPx()), style = stroke)
+            drawRoundRect(ink, topLeft = Offset(16.dp.toPx(), 22.dp.toPx()), size = androidx.compose.ui.geometry.Size(104.dp.toPx(), 52.dp.toPx()), cornerRadius = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx()), style = stroke)
+            // The seam of the humidifier on the right, and the stand.
+            drawLine(ink, Offset(138.dp.toPx(), 18.dp.toPx()), Offset(138.dp.toPx(), 78.dp.toPx()), w, StrokeCap.Round)
+            drawLine(ink, Offset(24.dp.toPx(), size.height - 6.dp.toPx()), Offset(size.width - 24.dp.toPx(), size.height - 6.dp.toPx()), w, StrokeCap.Round)
+        }
+        Text(
+            "1 2 3 4",
+            // Sized in dp like the drawing around it, so that a large font does not push it out of the screen.
+            style = MaterialTheme.typography.titleLarge.copy(fontFeatureSettings = "tnum", fontSize = with(LocalDensity.current) { 22.dp.toSp() }),
+            color = ink,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            modifier = Modifier.padding(start = 16.dp, top = 22.dp).size(width = 104.dp, height = 52.dp).wrapContentHeight(Alignment.CenterVertically),
+        )
     }
 }
 
@@ -695,7 +711,7 @@ private fun MachineLine(pairing: PairingState, pairingHint: Boolean = true) {
         PairingState.Loading -> Text(stringResource(R.string.machine_loading), style = MaterialTheme.typography.titleMedium)
         PairingState.Absent -> {
             Text(stringResource(R.string.machine_unpaired), style = MaterialTheme.typography.titleMedium)
-            if (pairingHint) NumberedSteps(listOf(R.string.pair_step_1, R.string.pair_step_2, R.string.pair_step_3), Modifier.padding(top = 4.dp))
+            if (pairingHint) Secondary(stringResource(R.string.machine_unpaired_hint), Modifier.padding(top = 4.dp))
         }
         PairingState.Unreadable -> {
             Text(stringResource(R.string.machine_unreadable), style = MaterialTheme.typography.titleMedium)
@@ -972,6 +988,8 @@ fun PasskeyDialog(onConfirm: (String) -> Unit, onCancel: () -> Unit) {
                 // Requested from inside the dialog's own content, once the field exists.
                 LaunchedEffect(Unit) { focus.requestFocus() }
                 Text(stringResource(R.string.passkey_body), style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(8.dp))
+                Text(stringResource(R.string.passkey_no_code), style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(16.dp))
                 OutlinedTextField(
                     value = code,

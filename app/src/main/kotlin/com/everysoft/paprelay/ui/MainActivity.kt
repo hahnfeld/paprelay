@@ -36,7 +36,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.everysoft.paprelay.PapRelayApp
 import com.everysoft.paprelay.R
-import com.everysoft.paprelay.sync.NightFile
+import com.everysoft.paprelay.pairing.PairingState
 import com.everysoft.paprelay.sync.SyncOutcome
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -68,10 +68,19 @@ private fun Root(app: PapRelayApp) {
     val machineChoice by check.machineChoice.collectAsState()
     val sync by app.sync.status.collectAsState()
     val nights by app.sync.nights.collectAsState()
+    val events by app.sync.events.collectAsState()
     val forgetting by check.forgetting.collectAsState()
     val stopping by check.stopping.collectAsState()
     val checkEnd by check.ended.collectAsState()
     var page by rememberSaveable { mutableStateOf(PAGE_HOME) }
+    // The night shown on Nights, as an epoch day; null for the newest. Kept while Breathing events is open from it.
+    var nightShown by rememberSaveable { mutableStateOf<Long?>(null) }
+    // Where Breathing events was opened from, and the night to show first there (an epoch day), if any.
+    var eventsFrom by rememberSaveable { mutableStateOf(PAGE_HOME) }
+    var eventsNight by rememberSaveable { mutableStateOf<Long?>(null) }
+    // The page the steps of pairing were opened from, and that the check then runs on.
+    var pairFrom by rememberSaveable { mutableStateOf(PAGE_HOME) }
+
     var confirmForget by rememberSaveable { mutableStateOf(false) }
     var confirmRewrite by rememberSaveable { mutableStateOf(false) }
     var confirmClock by rememberSaveable { mutableStateOf(false) }
@@ -160,6 +169,8 @@ private fun Root(app: PapRelayApp) {
         askingPermission = false
         when (pending) {
             PENDING_CHECK -> check.start()
+            // Asked for before the steps, so that the two minutes the code lasts are not spent on Android's questions.
+            PENDING_PAIR -> page = PAGE_PAIR
             // A choice is switched on only once Health Connect allows what it needs: one that is on
             // and cannot write would only stand there saying so. Switching it on stores it and starts a run.
             PENDING_RECORDS -> if (app.healthRecords.allowed) app.sync.setHealthRecords(true) else refusedChoice = PENDING_RECORDS
@@ -220,9 +231,9 @@ private fun Root(app: PapRelayApp) {
         }
     }
 
-    // The system's own "save as" screen: PAPRelay sees only the one file the user makes for it there.
-    val file = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(NightFile.MIME)) { uri ->
-        if (uri != null) app.sync.setExportFile(uri)
+    // The system's own folder screen: PAPRelay may then write in that one folder, and touches only its own two files there.
+    val folder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) app.sync.setExportFolder(uri)
     }
 
     /** Asks for whatever permissions [action] needs, then carries it out. */
@@ -232,6 +243,18 @@ private fun Root(app: PapRelayApp) {
         // A choice switched on needs nothing of Bluetooth. Everything else talks to the machine;
         // the request returns at once when already granted, then carries on to Health Connect.
         if (action == PENDING_RECORDS || action == PENDING_RESPIRATORY) askHealth() else bluetoothPermission.launch(BLUETOOTH_PERMISSIONS)
+    }
+
+    /** A tap on the button that starts the check: the steps of pairing first, when there is no pairing to use. */
+    fun checkTapped(from: String) {
+        when (PairingFlow.onCheckTapped(pairing)) {
+            PairingFlow.Next.SHOW_STEPS -> {
+                pairFrom = from
+                // Nearby devices and Health Connect first; the steps once they are answered.
+                request(PENDING_PAIR)
+            }
+            PairingFlow.Next.START_CHECK -> request(PENDING_CHECK)
+        }
     }
 
     fun open(vararg intents: Intent) {
@@ -261,14 +284,43 @@ private fun Root(app: PapRelayApp) {
         open(Intent.createChooser(send, null))
     }
 
-    BackHandler(enabled = page != PAGE_HOME) { page = PAGE_HOME }
+    BackHandler(enabled = page != PAGE_HOME) {
+        page = when (page) {
+            PAGE_EVENTS -> eventsFrom
+            PAGE_PAIR -> pairFrom
+            else -> PAGE_HOME
+        }
+    }
     // A check runs on the home screen and outlives it, but leaving the app in the middle of pairing
     // loses sight of the code to type. Back does nothing then; Stop is on the screen.
     BackHandler(enabled = page == PAGE_HOME && running) {}
 
     when (page) {
         PAGE_ABOUT -> AboutScreen(onBack = { page = PAGE_HOME })
-        PAGE_NIGHTS -> NightsScreen(nights = nights, onShare = share, onBack = { page = PAGE_HOME })
+        PAGE_NIGHTS -> NightScreen(
+            nights = nights,
+            events = events,
+            shown = nightShown,
+            onShown = { nightShown = it },
+            onOpenEvents = { day ->
+                eventsFrom = PAGE_NIGHTS
+                eventsNight = day
+                page = PAGE_EVENTS
+            },
+            onBack = { page = PAGE_HOME },
+        )
+        PAGE_PAIR -> PairStepsScreen(
+            unreadable = pairing == PairingState.Unreadable,
+            // Not while a check that was cancelled is still ending, or anything else has the machine.
+            free = !running && !forgetting && !sync.running,
+            stopping = stopping,
+            onStart = {
+                page = pairFrom
+                request(PENDING_CHECK)
+            },
+            onBack = { page = pairFrom },
+        )
+        PAGE_EVENTS -> EventsScreen(nights = nights, events = events, startAt = eventsNight, onBack = { page = eventsFrom })
         PAGE_CHOICES -> ChoicesScreen(
             sync = sync,
             hasNights = nights.any { it.complete },
@@ -285,8 +337,8 @@ private fun Root(app: PapRelayApp) {
                 if (on) request(PENDING_RESPIRATORY) else app.sync.setRespiratoryRate(false)
             },
             onOpenHealthConnect = openHealthConnect,
-            onChooseFile = { file.launch(NightFile.SUGGESTED_NAME) },
-            onNoFile = { app.sync.setExportFile(null) },
+            onChooseFolder = { folder.launch(null) },
+            onNoFolder = { app.sync.setExportFolder(null) },
             onShare = share,
             onBack = { page = PAGE_HOME },
         )
@@ -301,7 +353,7 @@ private fun Root(app: PapRelayApp) {
             syncRunning = sync.running,
             healthAllowed = healthAllowed,
             permissionRefused = permissionRefused,
-            onRun = { request(PENDING_CHECK) },
+            onRun = { checkTapped(PAGE_CHECK) },
             onStop = { check.cancel() },
             onExport = { export.launch("paprelay-device-check.txt") },
             onRewrite = { confirmRewrite = true },
@@ -329,10 +381,18 @@ private fun Root(app: PapRelayApp) {
             onAcceptClock = { confirmClock = true },
             onStartAgain = { app.sync.startAgain() },
             // Runs here, on the home screen, whose picture fills in as the check goes.
-            onCheck = { request(PENDING_CHECK) },
+            onCheck = { checkTapped(PAGE_HOME) },
             onStopCheck = { check.cancel() },
             onOpenCheck = { page = PAGE_CHECK },
-            onOpenNights = { page = PAGE_NIGHTS },
+            onOpenNights = {
+                nightShown = null
+                page = PAGE_NIGHTS
+            },
+            onOpenEvents = {
+                eventsFrom = PAGE_HOME
+                eventsNight = null
+                page = PAGE_EVENTS
+            },
             onOpenChoices = { page = PAGE_CHOICES },
             onOpenSettings = openSettings,
             onOpenHealthConnect = openHealthConnect,
@@ -346,8 +406,14 @@ private fun Root(app: PapRelayApp) {
     passkeyRequest?.let { request ->
         PasskeyDialog(
             onConfirm = { request.complete(it) },
-            // Seen by the protocol layer as the user backing out of pairing.
-            onCancel = { request.completeExceptionally(CancellationException("code entry dismissed")) },
+            // Seen by the protocol layer as the user backing out of pairing. Then the steps again.
+            onCancel = {
+                request.completeExceptionally(CancellationException("code entry dismissed"))
+                if (PairingFlow.afterCodeCancelled() == PairingFlow.Next.SHOW_STEPS) {
+                    pairFrom = if (page == PAGE_CHECK) PAGE_CHECK else PAGE_HOME
+                    page = PAGE_PAIR
+                }
+            },
         )
     }
 
@@ -409,9 +475,12 @@ private const val PAGE_HOME = "home"
 private const val PAGE_ABOUT = "about"
 private const val PAGE_CHECK = "check"
 private const val PAGE_NIGHTS = "nights"
+private const val PAGE_EVENTS = "events"
+private const val PAGE_PAIR = "pair"
 private const val PAGE_CHOICES = "choices"
 
 private const val PENDING_SYNC = "sync"
 private const val PENDING_CHECK = "check"
+private const val PENDING_PAIR = "pair"
 private const val PENDING_RECORDS = "records"
 private const val PENDING_RESPIRATORY = "respiratory"

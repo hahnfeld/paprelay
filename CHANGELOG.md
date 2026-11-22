@@ -2,6 +2,40 @@
 
 Newest first. Before 1.0, any release may change behaviour.
 
+## 0.3.0 (2026-11-22)
+
+Nothing stored by an earlier version needs to be kept: the first synchronisation reads
+again the last 400 days that the machine holds. Choose the folder for the files again in **Sharing**.
+
+- **Every confirmed nightly figure.** Besides usage, the indices, leak and pressure:
+  leak 70th percentile; respiratory rate, tidal volume and minute ventilation (95th
+  percentile and maximum); respiratory flow (5th and 95th percentile); and, for the
+  machine, ambient humidity, humidifier and heated-tube temperature and power, blower
+  pressure and blower flow. Each session's start and length. Figures whose layout has not
+  been confirmed (target and alveolar ventilation, I:E ratio, inspiratory duration, SpO2,
+  heart rate, Cheyne-Stokes, spontaneous trigger and cycle) are not passed on.
+- **Units.** All flows are in litres per minute, and tidal volume is in millilitres. The
+  conversions are exact.
+- **Breathing events.** Each obstructive apnoea, central apnoea, unclassified apnoea and
+  hypopnoea is copied to the phone with its time and length as the machine stored them,
+  and beside it the time corrected to the phone's clock where that can be done with
+  confidence.
+- **Health records.** The leak and breathing records carry the new percentiles. The
+  figures of the humidifier, the tube and the blower, and the events, are not written
+  there. All nights are written again once in the new form.
+- **Two files in a folder.** In place of one file, PAPRelay keeps `paprelay_nights.csv`
+  (one line for each night, with its sessions) and `paprelay_events.csv` (one line for each
+  breathing event, with its night) in a folder that you choose once.
+- **Nights** shows one night at a time, with all its figures and a picture of the night.
+  Swipe or use the arrows to see an earlier or later night.
+- **Breathing events**: a new page, newest first, grouped by night.
+- The Share action is only on **Sharing** now. The shared text is unchanged.
+- **Pairing** starts with a page of steps and a picture of the machine showing its code.
+  The search for the machine begins only after you tap **The machine shows a code**. The
+  code prompt says what to do if the machine shows no code.
+- The files and the night's figures were checked against the machine's SD card: every
+  value of every compared night and every compared breathing event matched.
+
 ## 0.2.3 (2026-11-22)
 
 - Pairing runs on the home screen again. The lines in the picture fill in as each

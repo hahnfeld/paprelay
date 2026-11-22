@@ -53,7 +53,7 @@ public object EventDecoder {
     private const val MAX_DURATION_MS = 24L * 60 * 60 * 1000
 
     /** The kinds whose stamp is known to be their end, so that an onset can be worked out. */
-    private val ENDS_AT_ITS_STAMP: Set<Any> = setOf(RespiratoryEvent.OBSTRUCTIVE_APNEA, RespiratoryEvent.CENTRAL_APNEA)
+    private val ENDS_AT_ITS_STAMP: Set<Any> = setOf(RespiratoryEvent.OBSTRUCTIVE_APNEA, RespiratoryEvent.CENTRAL_APNEA, RespiratoryEvent.APNEA)
 
     /**
      * @param payload one verified download of `UsageEvents-TherapyStatusEvents`.

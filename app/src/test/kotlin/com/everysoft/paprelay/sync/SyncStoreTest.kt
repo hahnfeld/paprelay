@@ -145,14 +145,14 @@ class SyncStoreTest {
     fun `the choices are kept, and a state from before they were choices goes on as it was`() {
         val file = File(Files.createTempDirectory("paprelay-choices").toFile(), "sync.json")
         val store = SyncStore(file)
-        store.write(SyncState.EMPTY.with(respiratoryRate = true, healthRecords = false, exportFile = "content://somewhere/file"))
+        store.write(SyncState.EMPTY.with(respiratoryRate = true, healthRecords = false, exportFolder = "content://somewhere/file"))
         val back = store.read()
         assertTrue(back.respiratoryRate)
         assertTrue(!back.healthRecords)
-        assertEquals("content://somewhere/file", back.exportFile)
+        assertEquals("content://somewhere/file", back.exportFolder)
         // Forgetting the machine keeps what the user chose and nothing else.
         val cleared = back.with(machineTag = "m-4f2a9c", resumeFromMs = 5, rewriteRequested = true).cleared()
-        assertTrue(cleared.respiratoryRate && !cleared.healthRecords && cleared.exportFile == "content://somewhere/file")
+        assertTrue(cleared.respiratoryRate && !cleared.healthRecords && cleared.exportFolder == "content://somewhere/file")
         assertNull(cleared.machineTag)
         assertNull(cleared.resumeFromMs)
         assertTrue(!cleared.rewriteRequested)

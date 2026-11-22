@@ -10,8 +10,16 @@ package com.everysoft.paprelay.core.nights
  * of which carries its unit.
  */
 public object NightReport {
-    /** The figures given a column each, in this order. */
-    public val COLUMNS: List<NightFigure> = NightFigure.entries
+    /**
+     * The figures of the table as it was before 0.3.0, in their order: what the text shared from
+     * the app carries, so that it stays short.
+     */
+    public val SHARED: List<NightFigure> = NightFigure.entries.takeWhile { it != NightFigure.LEAK_70 }
+
+    /** The columns that list the sessions, after the figures. */
+    public const val SESSION_STARTS_CORRECTED_COLUMN: String = "session_starts_corrected"
+    public const val SESSION_STARTS_COLUMN: String = "session_starts_machine_clock"
+    public const val SESSION_LENGTHS_COLUMN: String = "session_lengths_minutes"
 
     private const val NEWLINE = "\r\n"
 
@@ -20,14 +28,30 @@ public object NightReport {
      *
      * A cell is empty when the machine recorded no such figure for that night; it is never a
      * guessed zero. No cell holds a comma, a quote or a line break, so none needs quoting.
+     *
+     * @param figures the figures given a column each, in this order: those a night can have
+     *   (the plan that makes nights says which).
+     * @param withSessions whether to end each line with its sessions: their starts corrected to
+     *   true time, their starts by the machine's clock, and their lengths, each list separated by
+     *   spaces in the machine's order. Empty where the night's sessions are not known one by one;
+     *   the corrected starts are also empty unless every session of the night has one.
      */
-    public fun csv(nights: Collection<Night>): String = buildString {
+    public fun csv(nights: Collection<Night>, figures: List<NightFigure>, withSessions: Boolean = true): String = buildString {
+        require(figures.toSet().size == figures.size) { "a figure twice" }
         append("night_of,usage_minutes,usage_hours,sessions")
-        for (figure in COLUMNS) append(',').append(figure.column)
+        for (figure in figures) append(',').append(figure.column)
+        if (withSessions) append(',').append(SESSION_STARTS_CORRECTED_COLUMN).append(',').append(SESSION_STARTS_COLUMN).append(',').append(SESSION_LENGTHS_COLUMN)
         append(NEWLINE)
         for (night in nights.filter { it.complete }.sortedByDescending { it.date }) {
             append(night.date).append(',').append(night.usageMinutes).append(',').append(night.usageHours.toPlainString()).append(',').append(night.sessions)
-            for (figure in COLUMNS) append(',').append(night.value(figure)?.toPlainString().orEmpty())
+            for (figure in figures) append(',').append(night.value(figure)?.toPlainString().orEmpty())
+            if (withSessions) {
+                val list = night.sessionList
+                val corrected = list?.takeIf { sessions -> sessions.all { it.correctedMs != null } }
+                append(',').append(corrected?.joinToString(" ") { CsvTime.format(it.correctedMs!!, night.zoneOffsetMinutes) }.orEmpty())
+                append(',').append(list?.joinToString(" ") { CsvTime.format(it.start.epochMs, night.zoneOffsetMinutes) }.orEmpty())
+                append(',').append(list?.joinToString(" ") { it.minutes.toString() }.orEmpty())
+            }
             append(NEWLINE)
         }
     }
@@ -62,5 +86,18 @@ public object NightReport {
 
     private fun StringBuilder.part(night: Night, figure: NightFigure, name: String, unit: String = "") {
         night.value(figure)?.let { append(", ").append(name).append(' ').append(it.toPlainString()).append(unit) }
+    }
+}
+
+/** Times in the tables: ISO 8601 with the offset given, to the second, and to the millisecond where there is one. */
+public object CsvTime {
+    private val SECONDS = java.time.format.DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss", java.util.Locale.ROOT)
+    private val OFFSET = java.time.format.DateTimeFormatter.ofPattern("XXX", java.util.Locale.ROOT)
+
+    /** [epochMs] as written at [offsetMinutes] from UTC: `2026-11-14T23:05:00-07:00`. Exact: nothing is rounded. */
+    public fun format(epochMs: Long, offsetMinutes: Int): String {
+        val time = java.time.Instant.ofEpochMilli(epochMs).atOffset(java.time.ZoneOffset.ofTotalSeconds(offsetMinutes * 60))
+        val millis = Math.floorMod(epochMs, 1000L)
+        return SECONDS.format(time) + (if (millis != 0L) String.format(java.util.Locale.ROOT, ".%03d", millis) else "") + OFFSET.format(time)
     }
 }

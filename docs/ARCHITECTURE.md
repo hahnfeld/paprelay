@@ -22,17 +22,17 @@ Most of the logic that can be wrong is there, or behind interfaces that the test
 
 ## How the data flows
 
-![From the machine through the link, the protocol, the decoders and the plans to the sync engine, which writes to Health Connect, to a file and to the screen.](images/flow.svg)
+![From the machine through the link, the protocol, the decoders and the plans to the sync engine, which keeps the nights and the breathing events on the phone and writes to Health Connect, to two files in a folder and to the screen.](images/flow.svg)
 
 | Step | Where | What happens |
 |---|---|---|
 | Link | `app/ble/GattLink`, `GattOperations` | One Bluetooth (GATT) connection as a byte pipe. One request in flight at a time, each matched to its own completion. A connection is never reused. |
 | Protocol | `as11/As11Client`, `Fig`, `Srp6a`, `SessionCrypto`, `As11Request` | Frames with two checksums. SRP-6a pairing with the code from the machine's screen. An AES session that the machine must prove. Downloads in rounds, each verified by its SHA-256. |
 | Decoders | `as11/decode` | Turn the downloaded bytes into records. Layouts and scale factors are in one file, `As11Scales`. |
-| Plans | `as11/plan` | `NightPlan` turns one daily summary into a `Night`. `RespiratoryRatePlan` turns one per-minute record into readings. |
+| Plans | `as11/plan` | `NightPlan` turns one daily summary into a `Night`. `EventPlan` turns one breathing-event record into a `BreathingEvent`. `RespiratoryRatePlan` turns one per-minute record into readings. `ClockCorrection` is the one rule that puts a machine time into true time. |
 | Sync engine | `app/sync/SyncEngine` | Decides what to download, what is new or changed, and what to write. Handles every failure case. |
-| Outputs | `app/hc`, `app/sync/HealthConnectSink`, `NightFile`, `app/ui` | Health records and respiratory rate in Health Connect, the table of nights in a file, and the screens. |
-| Stored state | `app/pairing`, `app/sync/SyncStore`, `NightStore` | See [Stored state](#stored-state). |
+| Outputs | `app/hc`, `app/sync/HealthConnectSink`, `ExportFolder`, `app/ui` | Health records and respiratory rate in Health Connect, the two tables (`core/nights/NightReport`, `EventReport`) in a folder, and the screens. |
+| Stored state | `app/pairing`, `app/sync/SyncStore`, `NightStore`, `EventStore` | See [Stored state](#stored-state). |
 
 PAPRelay can request four of the machine's stored logs:
 
@@ -41,10 +41,20 @@ PAPRelay can request four of the machine's stored logs:
 | `Summary` | One record for each day, midday to midday: usage, indices, percentiles | The sync engine, for the nightly figures |
 | `TherapyOneMinutePeriodic` | One sample for each minute of therapy | The sync engine, for respiratory rate |
 | `UsageEvents-TherapyStatusEvents` | Mask on and off | The device check only (downloaded and verified) |
-| `TherapyEvents-RespiratoryEvents` | Each breathing event | The device check only (downloaded and verified) |
+| `TherapyEvents-RespiratoryEvents` | Each breathing event | The sync engine, for the list of events; and the device check |
 
 PAPRelay passes on a day's summary only after that day has ended, at midday by the
 machine's clock. This is why a night's figures arrive in the afternoon.
+
+The mask-on and mask-off log is not synchronised: each session's start and length come
+from the daily summary, where they were compared with the SD card, and the log itself was
+not compared.
+
+A run reads the logs in this order: the summaries (the nights), the per-minute log if
+respiratory rate is switched on, then the breathing events. Whatever stops respiratory rate
+(Health Connect missing or not allowing it, a changed clock) or the events (a log that
+cannot be read) is said at the end of the run, so neither keeps the other, or the nights,
+from the phone. Only a lost connection ends the reading; the next run takes it up.
 
 ## Design decisions
 
@@ -73,7 +83,9 @@ A value that fails a check is left out. An empty cell is not a guessed zero.
 
 Three things are derived from the stored integers:
 
-- Leak is converted from litres per second to litres per minute. This is exact.
+- Leak, respiratory flow and blower flow are converted from litres per second to litres
+  per minute (times 60), and tidal volume from litres to millilitres (times 1000). Both
+  are exact in hundredths.
 - Hours of use is the stored minutes divided by 60, rounded to two decimals. The exact
   minutes are written next to it.
 - Health Connect takes respiratory rate as a floating-point number, so the stored
@@ -159,6 +171,21 @@ the machine's clock and the phone's (`MachineTime`, `ClockOffset`).
   claim the same date, neither is taken. The clock comparison is made only while
   respiratory rate is switched on.
 - If the phone's own clock is clearly wrong, nothing is written (`PHONE_CLOCK_WRONG`).
+- Session starts and breathing events keep the machine's own time, and beside it a time
+  corrected to the phone's clock (`as11/plan/ClockCorrection`). A time is corrected only
+  when it is within a week of the measurement (the drift since is then under half a
+  minute), when the result is not in the future, and never in a run that finds the clock
+  changed: since the last run that read the events (`SyncState.correctionClock`, moved by
+  every such run whatever is switched on), or, while respiratory rate is switched on,
+  since its own baseline, while that change waits for the user. Otherwise the corrected time is left empty. A
+  corrected time is given once, when the session or the event is first copied, and kept:
+  later runs measure a slightly different offset and do not change it.
+- An event belongs to the night whose day (local midday to midday, as in the summary)
+  holds its time stamp (`EventReport.nightOf`). A day where the clocks changed is 23 or
+  25 hours long, as the machine said. Events after the newest finished night (the day
+  still running) are kept, and left out of the file and the screen until that night is in
+  the table of nights (`EventReport.shown`). An event outside every night is written at
+  the offset of the nearest night.
 
 ### No duplicates: fixed names and a ledger
 
@@ -171,7 +198,7 @@ Writing a record again replaces it, so a reinstall or a repeated run cannot prod
 duplicates.
 
 The machine tag is derived from the serial number by a slow one-way function. The full
-serial number is not written to Health Connect, to the file or to a report. The saved
+serial number is not written to Health Connect, to the files or to a report. The saved
 report of the device check shows its last four characters.
 
 For respiratory rate the engine keeps a ledger (`core/sync/Reconcile`, `LedgerEntry`):
@@ -180,8 +207,34 @@ is touched and again after it has answered. After a crash, the next run compares
 should be there with what may be there, and removes or rewrites the difference.
 
 For the nightly figures, `NightStore` keeps each night with a mark of what was last
-written for it (the record format and a fingerprint of the night). A night whose mark
-differs is written again, and records that a night no longer has are removed.
+written for it (the record format and a fingerprint of what goes to the health records,
+`Night.healthFingerprint`). A night whose mark differs is written again, and records that
+a night no longer has are removed. A change in a figure that describes the machine, or in
+the sessions, does not write the records again.
+`FhirObservations.FORMAT` is raised whenever the records change shape, so every night is
+then written again over the same ids.
+
+`NightPlan.VERSION` follows the set of figures a night can have, and `nights.json` keeps
+the version its nights were read under. Under another version, the next run reads the
+summaries again from 400 days back (as on the first run), once, so the nights the machine
+still holds gain what they lacked. A figure whose metric is not confirmed is named in `NightFigure` and mapped
+in `NightPlan`, but never given: confirming it is the change of its flag in `As11Scales`,
+and the version, the table's columns and the records follow.
+
+A breathing event's identity is its kind, its time stamp and its length, all as stored.
+Each run reads the event log from a day before where the last one reached, and an event
+already kept is not added again (and keeps the corrected time it was first given). A run
+reads at most 40 rounds or 4 MB of events; a longer history is taken up by the next run.
+A record that cannot be read leaves the run short, and the place to resume from stays
+before it (within the hold limit), so it is read again. A run that read no event at all
+leaves the place where it was.
+
+`events.json` keeps the set of kinds passed on (`EventPlan.VERSION`) under which its
+history was read. Under another set (a kind confirmed since), the log is read again from
+400 days back, once. The re-reading is marked as begun, so that a history longer than one
+run takes is taken up where it reached; the set is stored when the log was read to its
+end. The events table says what each time is in `time_is`: `end` for an apnoea with a
+stored length, otherwise `start_or_end`.
 
 ### Stored state
 
@@ -192,10 +245,11 @@ The app keeps these files in its private storage. Android backup is switched off
 | `pairing.bin` | The pairing secret, encrypted with a key in the Android Keystore (StrongBox when the phone has it) | The machine must be paired again. |
 | `nonces.txt` | Hashes of the session nonces already seen, so that a recorded session cannot be replayed | Missing: it starts empty. Unreadable: the session fails with a storage error. Damaged lines are dropped. |
 | `sync.json` | The ledger, the point to resume from, the last report, the Sharing settings | Missing: PAPRelay starts as if new, with the Sharing settings at their defaults. Damaged: reported, not replaced. The user chooses **Start again**, which deletes the file. |
-| `nights.json` | The nights | Renamed and kept; the list is built again from the machine. |
+| `nights.json` | The nights, with their sessions and the plan version they were read under | Damaged: renamed and kept; the list is built again from the machine. Written by a version before 0.3.0: deleted, and built again. |
+| `events.json` | The breathing events of the kinds passed on, one line each, the point to resume from, and the set of kinds its history was read under | Damaged: renamed and kept; the list is built again from the machine. Bounded by the nights kept and by 250,000 events. |
 | `raw/`, `check/` | The downloaded bytes of recent runs and of the last device check, unencrypted | Not needed for synchronising. Deleted by **Forget machine**. |
 
-The four named files are each replaced whole and atomically. A crash leaves the old state
+The five named files are each replaced whole and atomically (`AtomicFiles`). A crash leaves the old state
 or the new one.
 
 ### When a run starts
@@ -239,14 +293,35 @@ and each record's text says that it is a CPAP machine's nightly figure. The code
 PAPRelay's own. The standard sleep-study codes mean indices for each hour of *sleep*,
 scored in a sleep study, and are not used.
 
+The leak record carries the median, 70th and 95th percentile and maximum; the breathing
+record carries respiratory rate, tidal volume and minute ventilation (median, 95th
+percentile, maximum) and respiratory flow (5th and 95th percentile). The figures that
+describe the machine rather than the person (humidifier, heated tube, blower;
+`NightFigure.healthRecord` false) and the breathing events go to the files only.
+
 Everything PAPRelay writes to the health records is in one data source named
 "PAPRelay (CPAP machine)", so it can be told apart and removed as a whole.
 
 ### No network
 
 The app has no `INTERNET` permission, and the automatic checks fail if the release manifest
-gains one. The table of nights reaches a cloud drive only when the user chose a place
-there through Android's "save as" screen. The drive's own app does the sending.
+gains one. The two files reach a cloud drive only when the user chose a folder there
+through Android's own folder screen. The drive's own app does the sending.
+
+### The folder
+
+The user chooses a folder once (`OpenDocumentTree`, a persisted grant). In it PAPRelay
+finds its two files by exact name, `paprelay_nights.csv` and `paprelay_events.csv`, or
+makes them, and writes each whole, each on its own (modes `"rwt"`, `"wt"`, then `"w"`; a
+`"w"` write to a file on the phone is cut to its new length). It reads no file there and
+lists names only. A file is made only when the folder was listed whole: a listing that
+failed, or that the provider marks as still loading, makes nothing, so no second file
+appears beside the first. A folder still loading (a cloud drive just chosen) is listed
+again for about two seconds; if it is still loading then, the files wait for the next run,
+and this is not reported as a failure. These decisions are in `FolderWrites`, apart from Android, and
+tested. A folder of this kind offers no atomic replace; a file left short by a failed
+write is written whole again by the next run. Nothing is written while there is no finished night, so an empty table never
+replaces a full one. A file chosen by a version before 0.3.0 is not used.
 
 ### The debug build does not synchronise
 
@@ -255,8 +330,17 @@ there through Android's "save as" screen. The drive's own app does the sending.
 
 ## Screens
 
-`MainActivity` holds the pages Home, Nights, Sharing, Device check and About, written with
-Jetpack Compose (`app/ui`). `PrivacyActivity` is the page that Health Connect opens for
+`MainActivity` holds the pages Home, Nights, Breathing events, Sharing, Device check and
+About, written with Jetpack Compose (`app/ui`). Nights (`NightScreens.kt`) is a pager of
+single finished nights, each with a line drawing of the night and every figure by section;
+its rows are listed in the screen's code, not taken from `NightFigure`, and a test holds
+them to what `NightPlan` gives. Breathing events is a lazy list grouped by night, built a
+few nights at a time. It is the one page reachable from two places (Home, and a night);
+Back returns to where it was opened. Sharing happens only on the Sharing page. With no
+pairing to use, **Pair the machine** first opens a page with the steps
+(`PairStepsScreen`); the device check, and its search for the machine, starts only when
+the user says that the machine shows a code, and backing out of the code leads to that
+page again (`PairingFlow`). `PrivacyActivity` is the page that Health Connect opens for
 the privacy text. The picture at the top of the home screen and of the device check is
 `FlowDiagram.kt`; the README explains its lines. Which state each of its two lines is in is
 worked out in `Links.kt`, apart from the screens, so it can be tested: during and after a
@@ -273,9 +357,9 @@ rules.
 
 | Module | What is tested |
 |---|---|
-| `core` | Units and exact arithmetic; nights, the FHIR records and the table; the ledger rules. |
-| `as11` | Framing and cryptography against known answers made with a separate Python script and OpenSSL (`tools/gen_protocol_vectors.py`); the client against a simulated machine (`FakeAirSense11`) that can lose, repeat, reorder and damage what it sends; every decoder; both plans. |
-| `app` | The Bluetooth request queue; the sync engine and its stores against a fake machine and a fake Health Connect, with injected clocks: failures between steps, clock changes, software changes, refusals. |
+| `core` | Units and exact arithmetic; nights, the FHIR records and the two tables, events and the night each belongs to; the ledger rules. |
+| `as11` | Framing and cryptography against known answers made with a separate Python script and OpenSSL (`tools/gen_protocol_vectors.py`); the client against a simulated machine (`FakeAirSense11`) that can lose, repeat, reorder and damage what it sends; every decoder; every plan and the clock correction. |
+| `app` | The Bluetooth request queue; the sync engine and its stores against a fake machine and a fake Health Connect, with injected clocks: failures between steps, clock changes, software changes, refusals; the breathing events read again without duplicates; the two tables; the rows of the night page. |
 
 The tests need no phone and no machine. See [BUILDING.md](BUILDING.md#3-run-the-tests).
 

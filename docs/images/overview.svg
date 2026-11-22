@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 232" width="480" height="232" role="img" aria-label="The machine sends data to the phone by Bluetooth. The phone passes it on to Health Connect, to a file, or to another app. PAPRelay does not use the internet.">
-<title>The machine sends data to the phone by Bluetooth. The phone passes it on to Health Connect, to a file, or to another app. PAPRelay does not use the internet.</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 232" width="480" height="232" role="img" aria-label="The machine sends data to the phone by Bluetooth. The phone passes it on to Health Connect, to two files in a folder, or to another app. PAPRelay does not use the internet.">
+<title>The machine sends data to the phone by Bluetooth. The phone passes it on to Health Connect, to two files in a folder, or to another app. PAPRelay does not use the internet.</title>
 <style>
   .paper { fill: #ffffff; stroke: #d0d7de; stroke-width: 1; }
   .ink { fill: none; stroke: #1f2328; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
@@ -53,12 +53,9 @@
 <path class="ink" d="M247 144L253 150L247 156"/>
 <path class="ink" d="M282.5 53.8C259.2 41.5 261 23.9 275.1 23.9C279.5 23.9 282.5 27.4 282.5 31C282.5 27.4 285.4 23.9 289.9 23.9C303.9 23.9 305.8 41.5 282.5 53.8Z"/>
 <text class="b" x="314" y="43" text-anchor="start">Health Connect</text>
-<path class="ink" d="M266 73H287.8L298 83.2V115H266Z"/>
-<path class="thin" d="M287.8 73V83.2H298"/>
-<path class="thin" d="M272.4 93.2H291.6"/>
-<path class="thin" d="M272.4 99.9H291.6"/>
-<path class="thin" d="M272.4 106.6H291.6"/>
-<text class="b" x="314" y="99" text-anchor="start">A file</text>
+<path class="ink" d="M264 110V76H279.2L285.2 83H302V110Z"/>
+<path class="thin" d="M264 90H302"/>
+<text class="b" x="314" y="99" text-anchor="start">Two files</text>
 <path class="ink" d="M270 150L294 137.2M270 150L294 162.8"/>
 <circle class="hole" cx="270" cy="150" r="7.2"/>
 <circle class="ink" cx="270" cy="150" r="5.2"/>

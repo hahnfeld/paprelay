@@ -8,7 +8,7 @@ body:
       value: |
         Thank you. Short, simple sentences are fine.
 
-        **Do not attach** Bluetooth logs, Android bug reports, SD-card files, pairing codes, serial numbers or screenshots that show your health values. They are private.
+        **Do not attach** Bluetooth logs, Android bug reports, SD-card files, pairing codes, serial numbers, the files of nights and events (paprelay_nights.csv, paprelay_events.csv) or screenshots that show your health values. They are private.
         For a security problem, do not use this form. See SECURITY.md.
   - type: textarea
     id: what
@@ -22,7 +22,7 @@ body:
     attributes:
       label: PAPRelay version
       description: Open About in the app.
-      placeholder: "0.2.3"
+      placeholder: "0.3.0"
     validations:
       required: true
   - type: input

@@ -62,6 +62,9 @@ class NightSyncTest {
     private inner class Machine : MachineConnector, MachineSession {
         var days = listOf<Day>()
         var perRound = 100
+
+        /** The machine answers every round with nothing, and says there is more. */
+        var emptyForEver = false
         var applicationIdentifier = software
         var serialNumber = serial
         val asked = ArrayList<Pair<SpoolName, Long>>()
@@ -78,6 +81,7 @@ class NightSyncTest {
 
         override suspend fun pull(log: SpoolName, from: SpoolAddress): SpoolRound {
             if (log != SpoolName.SUMMARY) return SpoolRound(ByteArray(0), ByteArray(32), null)
+            if (emptyForEver) return SpoolRound(ByteArray(0), ByteArray(32), JsonObject(mapOf("at" to JsonPrimitive(0), "since" to JsonPrimitive(0))))
             val (wanted, offset) = when (from) {
                 is SpoolAddress.FromMachineTime -> {
                     asked += log to from.machineEpochMs
@@ -134,7 +138,7 @@ class NightSyncTest {
     private val perNight = 4
     private val weekRecords = 5 * perNight + 1
 
-    private fun mark(night: com.everysoft.paprelay.core.nights.Night) = "${com.everysoft.paprelay.core.nights.FhirObservations.FORMAT}:${night.fingerprint()}"
+    private fun mark(night: com.everysoft.paprelay.core.nights.Night) = "${com.everysoft.paprelay.core.nights.FhirObservations.FORMAT}:${night.healthFingerprint()}"
 
     private val machine = Machine()
     private val records = Records()
@@ -474,5 +478,122 @@ class NightSyncTest {
         assertEquals(23, nights.read().byDate.getValue(first).night.hours)
         nights.delete()
         assertFalse(file.exists())
+    }
+
+    @Test
+    fun `nights kept by an earlier version are not damage, and are dropped quietly and built again from the machine`() = runTest {
+        File(directory, "nights.json").writeText("""{"format":1,"machineTag":"$tag","nights":[{"date":"2026-11-10","zone":-420,"usage":400,"sessions":1,"figures":{"ahi":100},"recorded":"1:${"0".repeat(64)}"}]}""")
+        assertTrue(nightStore.read().byDate.isEmpty())
+        assertFalse(File(directory, "nights.json").exists())
+        // Format 2, the validation builds' (flows in litres a second, tidal volume in litres): the same.
+        File(directory, "nights.json").writeText("""{"format":2,"nights":[{"date":"2026-11-10","zone":-420,"usage":400,"sessions":0,"figures":{"tidal-volume-median":48}}]}""")
+        assertTrue(nightStore.read().byDate.isEmpty())
+        File(directory, "nights.json").writeText("""{"format":1,"nights":[]}""")
+        machine.days = week()
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        // Not put aside as damaged; built again from as far back as the machine holds.
+        assertFalse(File(directory, "nights.json.damaged").exists())
+        assertEquals(machineNow + 20 - SyncEngine.FIRST_WINDOW_MS, machine.asked.single().second)
+        val nights = nightStore.read()
+        assertEquals(6, nights.byDate.size)
+        assertEquals("4.8", nights.byDate.getValue(first).night.value(NightFigure.LEAK_70)!!.toPlainString())
+        assertEquals(listOf(400), nights.byDate.getValue(first).night.sessionList!!.map { it.minutes })
+        assertEquals(weekRecords, records.held.size)
+        assertTrue(records.held.getValue("$tag-20261110-leak").contains(""""code":"leak-70th""""))
+    }
+
+    @Test
+    fun `nights kept under another plan are read again from the start, once, and nothing twice`() = runTest {
+        machine.days = week()
+        engine.sync()
+        // As if a value had been confirmed since: the nights were made under another plan.
+        val kept = nightStore.read()
+        nightStore.write(Nights(kept.machineTag, kept.byDate, "1-0000000000000000"))
+        phoneNow += hour
+        machine.asked.clear()
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertEquals(machineNow + 20 - SyncEngine.FIRST_WINDOW_MS, machine.asked.single().second)
+        assertEquals(com.everysoft.paprelay.as11.plan.NightPlan.VERSION, nightStore.read().planVersion)
+        assertEquals(6, nightStore.read().byDate.size)
+        // Then the last few days only.
+        phoneNow += hour
+        machine.asked.clear()
+        engine.sync()
+        assertEquals(noon(first.plusDays(6)) - SyncEngine.NIGHT_OVERLAP_MS, machine.asked.single().second)
+    }
+
+    @Test
+    fun `a reading of the history cut short is taken up again, and the plan's version is kept only once it is whole`() = runTest {
+        machine.days = (0..39L).map { Day(noon(LocalDate.of(2026, 10, 1).plusDays(it)), 300, 150) }
+        machine.perRound = 7
+        // The machine stops answering after two rounds.
+        val cut = object : MachineConnector by machine, MachineSession by machine {
+            var pulls = 0
+            override suspend fun <T> withSession(block: suspend (MachineSession) -> T): T = block(this)
+            override suspend fun pull(log: SpoolName, from: SpoolAddress): SpoolRound {
+                if (++pulls > 2) throw com.everysoft.paprelay.as11.As11TransportException("link lost")
+                return machine.pull(log, from)
+            }
+        }
+        val cutEngine = SyncEngine(cut, NoMinutes, store, nowMs = { phoneNow }, nights = nightStore, records = records)
+        assertEquals(SyncOutcome.CONNECTION_LOST, cutEngine.sync()!!.outcome)
+        assertNull(nightStore.read().planVersion)
+        phoneNow += hour
+        machine.asked.clear()
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertEquals(machineNow + 20 - SyncEngine.FIRST_WINDOW_MS, machine.asked.single().second)
+        assertEquals(com.everysoft.paprelay.as11.plan.NightPlan.VERSION, nightStore.read().planVersion)
+        assertEquals(40, nightStore.read().byDate.size)
+    }
+
+    @Test
+    fun `the sessions and the plan's version survive being stored and read back`() {
+        val file = File(directory, "sessions.json")
+        val nights = NightStore(file)
+        val start = noon(first)
+        val list = listOf(com.everysoft.paprelay.core.nights.NightSession(com.everysoft.paprelay.core.MachineTime(start + 36_000_000), 203))
+        val night = com.everysoft.paprelay.core.nights.Night(first, -420, 203, 1, mapOf(NightFigure.HUMIDIFIER_TEMPERATURE_MEDIAN to 2950L), true, sessionList = list)
+        nights.write(Nights(tag, mapOf(first to StoredNight(night, null)), "2-0123456789abcdef"))
+        val back = nights.read()
+        assertEquals("2-0123456789abcdef", back.planVersion)
+        assertEquals(list, back.byDate.getValue(first).night.sessionList)
+        assertEquals(night.fingerprint(), back.byDate.getValue(first).night.fingerprint())
+        assertTrue(file.readText().startsWith("""{"format":3,"""))
+        // A list that does not match the count is a damaged file.
+        file.writeText(file.readText().replace(""""sessions":1""", """"sessions":2"""))
+        kotlin.test.assertFailsWith<NightsUnreadableException> { nights.read() }
+        // As is a format no version wrote.
+        file.writeText("""{"format":4,"nights":[]}""")
+        kotlin.test.assertFailsWith<NightsUnreadableException> { nights.read() }
+    }
+
+    @Test
+    fun `a reading of the history stopped by the bound on empty rounds does not count as read to the end`() = runTest {
+        machine.days = week()
+        machine.emptyForEver = true
+        assertEquals(SyncOutcome.PARTIAL, engine.sync()!!.outcome)
+        assertNull(nightStore.read().planVersion)
+        machine.emptyForEver = false
+        phoneNow += hour
+        machine.asked.clear()
+        assertEquals(SyncOutcome.COMPLETE, engine.sync()!!.outcome)
+        assertEquals(machineNow + 20 - SyncEngine.FIRST_WINDOW_MS, machine.asked.single().second)
+        assertEquals(com.everysoft.paprelay.as11.plan.NightPlan.VERSION, nightStore.read().planVersion)
+    }
+
+    @Test
+    fun `a change in a figure about the machine alone keeps the night on the phone up to date and writes no health record`() = runTest {
+        machine.days = week()
+        engine.sync()
+        val writes = records.writes
+        // As if the humidifier figure had changed: kept anew on the phone, and nothing to write.
+        val kept = nightStore.read()
+        val date = first.plusDays(2)
+        val night = kept.byDate.getValue(date).night
+        val changed = com.everysoft.paprelay.core.nights.Night(night.date, night.zoneOffsetMinutes, night.usageMinutes, night.sessions, night.hundredths + (NightFigure.HUMIDIFIER_POWER_MEDIAN to 1L), true, night.hours, night.sessionList)
+        nightStore.write(Nights(kept.machineTag, kept.byDate + (date to StoredNight(changed, kept.byDate.getValue(date).recorded)), kept.planVersion))
+        phoneNow += hour
+        engine.sync()
+        assertEquals(writes, records.writes)
     }
 }

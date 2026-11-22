@@ -83,12 +83,12 @@ class NightTest {
     fun `the table is one any program reads, names its units, leaves gaps as gaps, and leaves out a day still running`() {
         val unused = night(date = LocalDate.of(2026, 11, 13), usage = 0, figures = emptyMap())
         val running = night(date = LocalDate.of(2026, 11, 15), complete = false)
-        val csv = NightReport.csv(listOf(unused, night(), running))
+        val csv = NightReport.csv(listOf(unused, night(), running), NightFigure.entries)
         val lines = csv.split("\r\n")
         // The header is the first line, and every column says what it is measured in.
         val header = lines[0].split(',')
         assertEquals(listOf("night_of", "usage_minutes", "usage_hours", "sessions"), header.take(4))
-        assertEquals(NightFigure.entries.map { it.column }, header.drop(4))
+        assertEquals(NightFigure.entries.map { it.column } + listOf("session_starts_corrected", "session_starts_machine_clock", "session_lengths_minutes"), header.drop(4))
         assertTrue("ahi_events_per_hour" in header && "leak_95th_l_per_min" in header && "therapy_pressure_95th_cmh2o" in header && "mask_pressure_95th_cmh2o" in header)
         assertTrue(header.all { Regex("[a-z0-9_]+").matches(it) })
         // Newest first; a day without therapy is a line of its own; then nothing but the final line end.
@@ -185,8 +185,9 @@ class NightTest {
         val records = FhirObservations.forNight(full, tag)
         assertEquals(5, records.size)
         val all = records.joinToString("") { it.json }
-        for (figure in NightFigure.entries) assertEquals(1, Regex(""""code":"${figure.key}"""").findAll(all).count(), figure.key)
-        assertTrue(records.all { it.json.length < 8_000 })
+        // Each figure about the person once; none about the machine.
+        for (figure in NightFigure.entries) assertEquals(if (figure.healthRecord) 1 else 0, Regex(""""code":"${figure.key}"""").findAll(all).count(), figure.key)
+        assertTrue(records.all { it.json.length < 12_000 })
     }
 
     @Test
@@ -209,5 +210,121 @@ class NightTest {
         // The longest id still fits the 64 characters a record id may have.
         val longest = FhirObservations.idsFor(night(), "m-" + "f".repeat(22)).maxOf { it.length }
         assertTrue(longest <= 64, "$longest")
+    }
+
+    private val start = java.time.OffsetDateTime.parse("2026-11-14T12:00:00-07:00").toInstant().toEpochMilli()
+
+    private fun session(afterNoonMinutes: Long, minutes: Int) = NightSession(com.everysoft.paprelay.core.MachineTime(start + afterNoonMinutes * 60_000), minutes)
+
+    @Test
+    fun `a night keeps its sessions one by one when the machine listed them, and the table lists them`() {
+        val sessions = listOf(session(11 * 60 + 5, 203), session(16 * 60 + 15, 102))
+        val listed = Night(LocalDate.of(2026, 11, 14), -420, 305, 2, mapOf(NightFigure.AHI to 230L), true, sessionList = sessions)
+        assertEquals(sessions, listed.sessionList)
+        // Not the count the night gives, or a session outside its day: refused.
+        assertFailsWith<IllegalArgumentException> { Night(LocalDate.of(2026, 11, 14), -420, 305, 3, emptyMap(), true, sessionList = sessions) }
+        assertFailsWith<IllegalArgumentException> { Night(LocalDate.of(2026, 11, 14), -420, 5, 1, emptyMap(), true, sessionList = listOf(session(-1, 5))) }
+        assertFailsWith<IllegalArgumentException> { Night(LocalDate.of(2026, 11, 14), -420, 5, 1, emptyMap(), true, sessionList = listOf(session(24 * 60 + 1, 5))) }
+        // Both ends of the day are the day's: the machine files a session that starts on either.
+        Night(LocalDate.of(2026, 11, 14), -420, 5, 2, emptyMap(), true, sessionList = listOf(session(0, 5), session(24 * 60, 0)))
+        assertFailsWith<IllegalArgumentException> { session(0, 24 * 60 + 1) }
+        assertEquals("NightSession", "${sessions[0]}")
+
+        // The fingerprint follows the sessions; a night without the list keeps the fingerprint it always had.
+        val plain = Night(LocalDate.of(2026, 11, 14), -420, 305, 2, mapOf(NightFigure.AHI to 230L), true)
+        assertNotEquals(plain.fingerprint(), listed.fingerprint())
+        val moved = Night(LocalDate.of(2026, 11, 14), -420, 305, 2, mapOf(NightFigure.AHI to 230L), true, sessionList = listOf(sessions[0], session(16 * 60 + 15, 101)))
+        assertNotEquals(listed.fingerprint(), moved.fingerprint())
+
+        // A corrected start is part of what the night says.
+        val corrected = Night(LocalDate.of(2026, 11, 14), -420, 305, 2, mapOf(NightFigure.AHI to 230L), true, sessionList = sessions.map { it.withCorrected(it.start.epochMs - 361_600) })
+        assertNotEquals(listed.fingerprint(), corrected.fingerprint())
+        val half = Night(LocalDate.of(2026, 11, 14), -420, 305, 2, emptyMap(), true, sessionList = listOf(sessions[0].withCorrected(1_794_000_000_000L), sessions[1]))
+
+        val csv = NightReport.csv(listOf(listed, plain, corrected, half), listOf(NightFigure.AHI))
+        val lines = csv.split("\r\n")
+        assertEquals("night_of,usage_minutes,usage_hours,sessions,ahi_events_per_hour,session_starts_corrected,session_starts_machine_clock,session_lengths_minutes", lines[0])
+        // By the machine's clock, at the night's own offset; in its order; separated by spaces, never by commas.
+        assertEquals("2026-11-14,305,5.08,2,2.3,,2026-11-14T23:05:00-07:00 2026-11-15T04:15:00-07:00,203 102", lines[1])
+        // Not known one by one: empty, not guessed.
+        assertEquals("2026-11-14,305,5.08,2,2.3,,,", lines[2])
+        // Corrected: six minutes earlier in true time, beside the machine's own.
+        assertEquals("2026-11-14,305,5.08,2,2.3,2026-11-14T22:58:58.400-07:00 2026-11-15T04:08:58.400-07:00,2026-11-14T23:05:00-07:00 2026-11-15T04:15:00-07:00,203 102", lines[3])
+        // Corrected for some sessions only: the corrected list is not given, rather than given with gaps.
+        assertEquals("2026-11-14,305,5.08,2,,,2026-11-14T23:05:00-07:00 2026-11-15T04:15:00-07:00,203 102", lines[4])
+        // Without the sessions, as shared in a message.
+        assertEquals("night_of,usage_minutes,usage_hours,sessions,ahi_events_per_hour", NightReport.csv(listOf(listed), listOf(NightFigure.AHI), withSessions = false).lines()[0])
+        assertFailsWith<IllegalArgumentException> { NightReport.csv(listOf(listed), listOf(NightFigure.AHI, NightFigure.AHI)) }
+    }
+
+    @Test
+    fun `times in the tables are exact, with their offset`() {
+        assertEquals("2026-11-14T23:05:00-07:00", CsvTime.format(start + 665 * 60_000L, -420))
+        assertEquals("2026-11-15T06:05:00.250Z", CsvTime.format(start + 665 * 60_000L + 250, 0))
+        assertEquals("2026-11-15T11:35:00.001+05:30", CsvTime.format(start + 665 * 60_000L + 1, 330))
+        // Whatever the phone's language: the digits are the plain ones.
+        val before = java.util.Locale.getDefault()
+        try {
+            java.util.Locale.setDefault(java.util.Locale.forLanguageTag("ar-EG"))
+            assertEquals("2026-11-15T06:05:00.250Z", CsvTime.format(start + 665 * 60_000L + 250, 0))
+        } finally {
+            java.util.Locale.setDefault(before)
+        }
+    }
+
+    @Test
+    fun `the new figures go to the leak and breathing records, and the machine's own only to the table`() {
+        assertEquals(3, FhirObservations.FORMAT)
+        val figures = mapOf(
+            NightFigure.LEAK_95 to 1440L, NightFigure.LEAK_70 to 480L, NightFigure.RESPIRATORY_RATE_MEDIAN to 1320L,
+            NightFigure.RESPIRATORY_RATE_95 to 1520L, NightFigure.RESPIRATORY_FLOW_5 to 16L, NightFigure.TIDAL_VOLUME_MAX to 90L,
+            NightFigure.HUMIDIFIER_TEMPERATURE_MEDIAN to 2950L, NightFigure.BLOWER_FLOW_MEDIAN to 48L, NightFigure.AMBIENT_HUMIDITY_MEDIAN to 1120L,
+        )
+        val records = FhirObservations.forNight(night(figures = figures), tag).associateBy { it.id.substringAfterLast('-') }
+        assertEquals(setOf("usage", "leak", "breathing"), records.keys)
+        assertTrue(records.getValue("leak").json.contains(""""code":"leak-70th","display":"Mask leak, 70th percentile"}],"text":"Mask leak, 70th percentile"},"valueQuantity":{"value":4.8,"unit":"L/min""""))
+        assertTrue(records.getValue("breathing").json.contains(""""code":"respiratory-rate-95th""""))
+        assertTrue(records.getValue("breathing").json.contains("""{"value":0.16,"unit":"L/min","system":"http://unitsofmeasure.org","code":"L/min"}"""))
+        assertTrue(records.getValue("breathing").json.contains("""{"value":0.9,"unit":"mL","system":"http://unitsofmeasure.org","code":"mL"}"""))
+        assertTrue(records.getValue("breathing").json.contains(""""code":"tidal-volume-max""""))
+        val all = records.values.joinToString("") { it.json }
+        for (machine in listOf("humidifier", "blower", "humidity", "Cel", "mg/L")) assertFalse(all.contains(machine), machine)
+        // In the table they are there, with their units.
+        val header = NightReport.csv(listOf(night(figures = figures)), NightFigure.entries).lines()[0].split(',')
+        for (column in listOf("leak_70th_l_per_min", "respiratory_flow_5th_l_per_min", "tidal_volume_max_ml", "blower_flow_median_l_per_min", "humidifier_temperature_median_celsius", "ambient_humidity_median_mg_per_l", "heated_tube_power_median_percent", "blower_pressure_95th_cmh2o")) {
+            assertTrue(column in header, column)
+        }
+        assertEquals(setOf(NightFigure.BLOWER_PRESSURE_5, NightFigure.BLOWER_PRESSURE_95, NightFigure.BLOWER_FLOW_MEDIAN, NightFigure.AMBIENT_HUMIDITY_MEDIAN, NightFigure.HUMIDIFIER_TEMPERATURE_MEDIAN, NightFigure.HUMIDIFIER_POWER_MEDIAN, NightFigure.HEATED_TUBE_TEMPERATURE_MEDIAN, NightFigure.HEATED_TUBE_POWER_MEDIAN), NightFigure.entries.filter { !it.healthRecord }.toSet())
+    }
+
+    @Test
+    fun `the columns of the table before 0_3_0 keep their places, and the shared text keeps to them`() {
+        assertEquals(
+            listOf(
+                "ahi", "apnea-index", "hypopnea-index", "obstructive-apnea-index", "central-apnea-index", "unclassified-apnea-index", "rera-index",
+                "leak-median", "leak-95th", "leak-max", "therapy-pressure-median", "therapy-pressure-95th", "therapy-pressure-max",
+                "expiratory-pressure-median", "expiratory-pressure-95th", "expiratory-pressure-max", "mask-pressure-median", "mask-pressure-95th",
+                "mask-pressure-max", "respiratory-rate-median", "tidal-volume-median", "minute-ventilation-median",
+            ),
+            NightReport.SHARED.map { it.key },
+        )
+        assertEquals(NightReport.SHARED, NightFigure.entries.take(NightReport.SHARED.size))
+    }
+
+    @Test
+    fun `what goes to the health records has a fingerprint of its own, which the machine's figures and the sessions do not move`() {
+        val base = mapOf(NightFigure.AHI to 230L, NightFigure.TIDAL_VOLUME_MEDIAN to 48_000L)
+        val a = Night(LocalDate.of(2026, 11, 14), -420, 305, 1, base, true)
+        val humidifier = Night(LocalDate.of(2026, 11, 14), -420, 305, 1, base + (NightFigure.HUMIDIFIER_POWER_MEDIAN to 3300L), true)
+        val listed = Night(LocalDate.of(2026, 11, 14), -420, 305, 1, base, true, sessionList = listOf(session(11 * 60, 305)))
+        assertEquals(a.healthFingerprint(), humidifier.healthFingerprint())
+        assertEquals(a.healthFingerprint(), listed.healthFingerprint())
+        assertNotEquals(a.fingerprint(), humidifier.fingerprint())
+        assertNotEquals(a.fingerprint(), listed.fingerprint())
+        assertNotEquals(a.healthFingerprint(), Night(LocalDate.of(2026, 11, 14), -420, 305, 1, base + (NightFigure.AHI to 231L), true).healthFingerprint())
+        // Tidal volume is in millilitres, flows in litres a minute.
+        assertEquals(NightUnit.MILLILITRES, NightFigure.TIDAL_VOLUME_MEDIAN.unit)
+        assertEquals("480", a.value(NightFigure.TIDAL_VOLUME_MEDIAN)!!.toPlainString())
+        assertEquals(setOf(NightUnit.LITRES_PER_MINUTE), listOf(NightFigure.RESPIRATORY_FLOW_5, NightFigure.RESPIRATORY_FLOW_95, NightFigure.BLOWER_FLOW_MEDIAN, NightFigure.LEAK_95).map { it.unit }.toSet())
     }
 }

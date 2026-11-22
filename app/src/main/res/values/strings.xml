@@ -32,9 +32,9 @@
     <string name="sync_last_complete">Last complete synchronisation: %1$s.</string>
     <string name="sync_partial">Not every night has been copied yet. PAPRelay will try again.</string>
     <string name="sync_machine_away">The machine did not answer. It may be out of range. PAPRelay will try again.</string>
-    <string name="sync_bluetooth_not_allowed">PAPRelay is not allowed to use Bluetooth. Choose Synchronise now and allow it. If Android does not ask, allow Nearby devices in the app settings.</string>
+    <string name="sync_bluetooth_not_allowed">PAPRelay is not allowed to use Bluetooth. Tap Synchronise now and allow it. If Android does not ask, allow Nearby devices in the app settings.</string>
     <string name="sync_hc_not_allowed">Health Connect does not allow PAPRelay to write what is switched on in Sharing. Allow PAPRelay in Health Connect, or switch the item off in Sharing.</string>
-    <string name="sync_pairing_rejected">The machine no longer accepts this phone. Open Device check, choose Forget machine, and pair again.</string>
+    <string name="sync_pairing_rejected">The machine no longer accepts this phone. Open Device check, tap Forget machine, and pair again.</string>
     <string name="sync_wrong_machine">The machine that answered is not the paired machine. Nothing was written.</string>
     <string name="sync_software_not_confirmed">PAPRelay cannot yet read this machine\'s software. Nothing was written.</string>
     <string name="sync_clock_unreliable">The machine\'s clock cannot be trusted at the moment. PAPRelay will try again.</string>
@@ -42,16 +42,15 @@
     <string name="sync_connection_lost">The connection to the machine was lost. PAPRelay will try again.</string>
     <string name="sync_data_not_understood">PAPRelay could not read some of the data from the machine.</string>
     <string name="sync_hc_failed">Health Connect did not accept the data. PAPRelay will try again.</string>
-    <string name="sync_store_unreadable">PAPRelay cannot read its record of what it has written. Choose Start again. PAPRelay then starts with a new record. The switches in Sharing go back to their first settings. Check them afterwards.</string>
+    <string name="sync_store_unreadable">PAPRelay cannot read its record of what it has written. Tap Start again. PAPRelay then starts with a new record. The switches in Sharing go back to their first settings. Check them afterwards.</string>
     <string name="sync_phone_clock_wrong">This phone\'s clock is wrong. Set the phone\'s date and time to automatic. Nothing was written.</string>
     <string name="sync_internal">PAPRelay had an internal error. It will try again.</string>
     <string name="debug_no_sync">This test version does not synchronise. It only checks the connections.</string>
     <string name="action_stopping">Stopping…</string>
-    <string name="action_share">Share</string>
     <string name="action_share_nights">Share the recent nights as text</string>
-    <string name="action_choose_file">Choose where to keep it</string>
-    <string name="action_other_file">Choose another place</string>
-    <string name="action_no_file">Stop writing the file</string>
+    <string name="action_choose_folder">Choose a folder</string>
+    <string name="action_other_folder">Choose another folder</string>
+    <string name="action_no_folder">Stop writing the files</string>
     <string name="action_allow_health">Allow</string>
 
     <!-- A night's figures. Numbers and symbols are kept as they are in every language. -->
@@ -70,24 +69,151 @@
     <string name="night_pressure_spoken">Pressure, 95th percentile, %1$s centimetres of water</string>
     <string name="nights_title">Nights</string>
     <string name="nights_empty">There are no nights here yet. A night appears here after PAPRelay synchronises. A night ends at midday.</string>
-    <string name="nights_note">The machine\'s own figures. A night runs from midday to midday, and its figures arrive after it has ended. AHI is the number of apnoeas and hypopnoeas for each hour of use. Leak and pressure are the values that were not exceeded for 95% of the time in use.</string>
+    <string formatted="false" name="nights_note">These are the machine\'s own figures. A night runs from midday to midday and has the date of the evening. Its figures arrive after it has ended. Times are corrected to the phone\'s clock. AHI is the number of apnoeas and hypopnoeas for each hour of use. Median means that the value was below this figure for half of the time in use. A column such as 5%, 70% or 95% means that the value was at or below this figure for that share of the time in use. Max is the highest value. A dash (—) means that the machine recorded no value.</string>
+
+    <!-- One night at a time -->
+    <string name="night_earlier">Earlier night</string>
+    <string name="night_later">Later night</string>
+    <string name="night_none_body">The machine recorded no use on this night.</string>
+    <string name="night_section_use">Use</string>
+    <string name="night_section_events">Events</string>
+    <string name="night_section_leak">Leak</string>
+    <string name="night_section_pressure">Pressure</string>
+    <string name="night_section_breathing">Breathing</string>
+    <string name="night_section_humidifier">Humidifier and tube</string>
+    <string name="night_section_machine">Machine</string>
+    <string name="night_events_per_hour">Events for each hour of use.</string>
+    <string name="night_medians">Median values for the night.</string>
+    <string name="night_machine_note">These figures describe the machine, not your breathing.</string>
+    <string name="night_sessions">Sessions</string>
+    <!-- %1$s is a time such as "22:41", with * when it is by the machine\'s clock; %2$s a length such as "6 h 5 min". -->
+    <string name="night_session">From %1$s · %2$s</string>
+    <!-- %1$s is a time; %2$s and %3$s are hours and minutes, as numbers. -->
+    <!-- %1$s is a time; %2$s a length in words, from duration_spoken. -->
+    <string name="night_session_spoken">From %1$s, for %2$s</string>
+    <!-- %1$s hours, %2$s minutes, each from the plurals below. -->
+    <string name="duration_spoken">%1$s and %2$s</string>
+    <plurals name="hours_spoken">
+        <item quantity="one">%1$d hour</item>
+        <item quantity="other">%1$d hours</item>
+    </plurals>
+    <plurals name="minutes_spoken">
+        <item quantity="one">%1$d minute</item>
+        <item quantity="other">%1$d minutes</item>
+    </plurals>
+    <string name="fig_ahi_spoken">A H I</string>
+    <string name="fig_ahi">AHI</string>
+    <string name="fig_apnoeas">All apnoeas</string>
+    <string name="fig_obstructive">Obstructive apnoeas</string>
+    <string name="fig_central">Central apnoeas</string>
+    <string name="fig_unclassified">Unclassified apnoeas</string>
+    <string name="fig_hypopnoeas">Hypopnoeas</string>
+    <string name="fig_rera">Arousals (RERA)</string>
+    <string name="fig_leak">Mask leak</string>
+    <string name="fig_pressure_therapy">Therapy pressure</string>
+    <string name="fig_pressure_out">Pressure when breathing out</string>
+    <string name="fig_pressure_mask">Pressure at the mask</string>
+    <string name="fig_rate">Breathing rate</string>
+    <string name="fig_tidal">Tidal volume (air in each breath)</string>
+    <string name="fig_minute">Minute ventilation (air in each minute)</string>
+    <string name="fig_flow">Breathing flow</string>
+    <string name="fig_humidity">Room air humidity</string>
+    <string name="fig_humidifier_temp">Humidifier temperature</string>
+    <string name="fig_humidifier_power">Humidifier power</string>
+    <string name="fig_tube_temp">Tube temperature</string>
+    <string name="fig_tube_power">Tube power</string>
+    <string name="fig_blower_pressure">Blower pressure</string>
+    <string name="fig_blower_flow">Blower flow, median</string>
+    <!-- Column heads. Each must stay short: the column is about 56 dp wide. Use a short form of "median" where the word is long. -->
+    <string name="col_median">Median</string>
+    <string name="col_median_spoken">median</string>
+    <string formatted="false" name="col_p5">5%</string>
+    <string name="col_p5_spoken">5th percentile</string>
+    <string formatted="false" name="col_p70">70%</string>
+    <string name="col_p70_spoken">70th percentile</string>
+    <string formatted="false" name="col_p95">95%</string>
+    <string name="col_p95_spoken">95th percentile</string>
+    <string name="col_max">Max</string>
+    <string name="col_max_spoken">maximum</string>
+    <string name="unit_l_min">L/min</string>
+    <string name="unit_l_min_spoken">litres per minute</string>
+    <string name="unit_cmh2o">cmH₂O</string>
+    <string name="unit_cmh2o_spoken">centimetres of water</string>
+    <string name="unit_breaths_min">breaths/min</string>
+    <string name="unit_breaths_min_spoken">breaths per minute</string>
+    <string name="unit_ml">mL</string>
+    <string name="unit_ml_spoken">millilitres</string>
+    <string name="unit_mg_l">mg/L</string>
+    <string name="unit_mg_l_spoken">milligrams per litre</string>
+    <string name="unit_celsius">°C</string>
+    <string name="unit_celsius_spoken">degrees Celsius</string>
+    <string formatted="false" name="unit_percent">%</string>
+    <string name="unit_percent_spoken">percent</string>
+    <string name="unit_events_h_spoken">events per hour</string>
+    <string name="figure_missing">—</string>
+    <string name="figure_not_recorded">not recorded</string>
+    <!-- %1$s a label, %2$s a unit in words, %3$s the values, each as "median 9.8". -->
+    <string name="figure_row_spoken">%1$s, in %2$s. %3$s.</string>
+    <!-- %1$s a column in words, %2$s a value. -->
+    <string name="figure_cell_spoken">%1$s %2$s</string>
+    <!-- %1$s a label, %2$s a value, %3$s a unit in words. -->
+    <string name="figure_single_spoken">%1$s: %2$s %3$s.</string>
+    <plurals name="night_events_link">
+        <item quantity="one">%1$d breathing event in the list</item>
+        <item quantity="other">%1$d breathing events in the list</item>
+    </plurals>
+    <string name="timeline_legend_sessions">Thick line: therapy.</string>
+    <string name="timeline_legend_events">Tall mark: apnoea. Short mark: hypopnoea.</string>
+    <plurals name="timeline_sessions">
+        <item quantity="one">%1$d session</item>
+        <item quantity="other">%1$d sessions</item>
+    </plurals>
+    <plurals name="timeline_events">
+        <item quantity="one">%1$d event marked</item>
+        <item quantity="other">%1$d events marked</item>
+    </plurals>
+    <string name="timeline_description">Picture of the night from midday to midday, with %1$s and %2$s.</string>
+    <string name="timeline_description_no_events">Picture of the night from midday to midday, with %1$s.</string>
+
+    <!-- The list of breathing events -->
+    <string name="events_title">Breathing events</string>
+    <string name="events_note">The machine records each event with a time. For an apnoea with a length, this is the time it ended. The machine records no length for a hypopnoea. Its time can be its start or its end. Times are corrected to the phone\'s clock. A time with * is by the machine\'s clock, because PAPRelay could not correct it. Nights without events are not listed.</string>
+    <string name="events_empty">There are no breathing events here yet. They appear here after PAPRelay synchronises.</string>
+    <plurals name="events_count">
+        <item quantity="one">%1$d event</item>
+        <item quantity="other">%1$d events</item>
+    </plurals>
+    <string name="events_no_night">Without a night</string>
+    <plurals name="machine_clock_note">
+        <item quantity="one">* This time is by the machine\'s clock. PAPRelay could not correct it.</item>
+        <item quantity="other">* These times are by the machine\'s clock. PAPRelay could not correct them.</item>
+    </plurals>
+    <string name="events_machine_clock_spoken">By the machine\'s clock</string>
+    <string name="event_obstructive">Obstructive apnoea</string>
+    <string name="event_central">Central apnoea</string>
+    <string name="event_unclassified">Unclassified apnoea</string>
+    <string name="event_hypopnoea">Hypopnoea</string>
+    <!-- %1$s is a number of seconds, such as "12" or "10.5". -->
+    <string name="event_length">%1$s s</string>
+    <string name="event_length_spoken">Length: %1$s seconds</string>
 
     <!-- What is passed on, and where to -->
     <string name="choices_title">Sharing</string>
     <string name="choice_records">Nightly figures to health records</string>
-    <string name="choice_records_body">Usage, AHI, leak and pressure for each night are written to the health records in Health Connect. They appear there under lab results, from “PAPRelay (CPAP machine)”. They are not laboratory results.</string>
+    <string name="choice_records_body">Usage, AHI, leak, pressure and breathing for each night are written to the health records in Health Connect. They appear there under lab results, from “PAPRelay (CPAP machine)”. They are not laboratory results.</string>
     <string name="choice_records_unsupported">Health records are not available on this phone. They need Health Connect on Android 16 or later.</string>
     <string name="choice_not_allowed">Health Connect does not allow PAPRelay to write this. Open Health Connect and allow it, then switch this on.</string>
     <string name="choice_respiratory">Respiratory rate to Health Connect</string>
     <!-- Shown while respiratory rate is switched on and nothing of it is written yet, on machine software PAPRelay has not been compared with. -->
     <string name="rate_waiting">Respiratory rate starts after a night of therapy of one hour or more. First PAPRelay checks that it reads the data of this machine\'s software version correctly. If it has not started after a few nights, switch it off in Sharing.</string>
     <string name="choice_respiratory_body">One value for each minute of therapy. Leave this off if another device already writes your respiratory rate.</string>
-    <string name="choice_file">Table of nights</string>
-    <string name="choice_file_body">A file with one line for each night, kept up to date where you choose. If you keep it on a cloud drive, other programs can read it there. PAPRelay itself sends nothing: it hands the file to the place you chose.</string>
-    <string name="choice_file_on">The file is kept up to date.</string>
-    <!-- %1$s is the file\'s name. -->
-    <string name="choice_file_named">Kept up to date: %1$s</string>
-    <string name="choice_file_failed">The table of nights could not be written to its file the last time. PAPRelay will try again. If this happens again, choose the place again.</string>
+    <string name="choice_folder">Files of nights and events</string>
+    <!-- The two file names stay as they are in every language. -->
+    <string name="choice_folder_body">Two files, kept up to date in a folder that you choose. paprelay_nights.csv has one line for each night. paprelay_events.csv has one line for each breathing event. If the folder is on a cloud drive, other programs can read the files there. PAPRelay itself sends nothing: it hands the files to the folder.</string>
+    <string name="choice_folder_on">The files are kept up to date.</string>
+    <!-- %1$s is the folder\'s name. -->
+    <string name="choice_folder_named">Kept up to date in the folder %1$s</string>
+    <string name="choice_folder_failed">PAPRelay could not write the files to the folder the last time. PAPRelay will try again. If this happens again, choose the folder again.</string>
     <string name="action_use_this">Use this machine</string>
     <string name="action_open_settings">Open app settings</string>
 
@@ -115,23 +241,27 @@
     <string name="machine_unpaired">Not paired</string>
     <!-- The three steps of pairing, shown as a numbered list under "Not paired". One step each. -->
     <string name="pair_step_1">Remove the machine from the myAir app.</string>
+    <!-- "More", "myAir App" and "Connect" are the names in the machine's menu, and must match what the machine shows in this language. -->
     <string name="pair_step_2">On the machine, choose More, then myAir App, then Connect.</string>
-    <string name="pair_step_3">Choose Pair the machine.</string>
+    <string name="pair_step_3">Wait until the machine shows a code with four digits.</string>
+    <string name="machine_unpaired_hint">Tap Pair the machine. PAPRelay then shows the steps.</string>
+    <string name="pair_picture">The machine\'s screen shows a code with four digits.</string>
+    <string name="action_code_shown">The machine shows a code</string>
     <!-- The number in front of a step in a numbered list. %1$d is the number. -->
     <string name="list_number">%1$d.</string>
     <string name="machine_paired">AirSense 11 · serial ending %1$s</string>
     <string name="machine_paired_unknown">AirSense 11</string>
     <string name="machine_unreadable">Pair the machine again</string>
-    <string name="machine_unreadable_hint">This phone can no longer read its saved pairing. Put the machine in pairing mode and run the device check.</string>
+    <string name="machine_unreadable_hint">This phone can no longer read its saved pairing. Tap Pair the machine. PAPRelay then shows the steps.</string>
     <string name="machine_unavailable">The saved pairing could not be read</string>
-    <string name="machine_unavailable_hint">Run the device check. If this message appears again, open Device check, choose Forget machine, and pair again.</string>
+    <string name="machine_unavailable_hint">Run the device check. If this message appears again, open Device check, tap Forget machine, and pair again.</string>
     <string name="unused_hint">Android pauses apps that are not opened for some months. PAPRelay would then stop synchronising. Turn off the switch for unused apps for PAPRelay. Android calls it “Manage app if unused” or “Pause app activity if unused”.</string>
     <string name="busy_try_again">PAPRelay is busy. Try again in a moment.</string>
     <string name="machine_loading">Loading…</string>
     <!-- Under the name of the step that is running, while the check runs on the main screen. -->
     <string name="home_check_running">Keep the phone near the machine until the check ends.</string>
     <!-- After the first device check passed, before the first synchronisation. -->
-    <string name="home_paired_next">The machine is paired. Choose Synchronise now to copy the nights.</string>
+    <string name="home_paired_next">The machine is paired. Tap Synchronise now to copy the nights.</string>
     <!-- At the top of the device check page, under the picture. -->
     <string name="check_intro">The device check tests each connection, one after the other. It changes none of the machine\'s settings or data.</string>
 
@@ -244,6 +374,8 @@
     <!-- Dialogs -->
     <string name="passkey_title">Type the code shown on the machine</string>
     <string name="passkey_body">Pairing replaces the myAir app\'s connection to this machine.</string>
+    <!-- "More", "myAir App" and "Connect" are the names in the machine's menu, and must match what the machine shows in this language. -->
+    <string name="passkey_no_code">No code on the machine? Tap Cancel. Then, on the machine, choose More, then myAir App, then Connect.</string>
     <string name="passkey_label">Code</string>
     <string name="passkey_expiry">The code works for about two minutes.</string>
     <string name="choose_title">Which machine is yours?</string>
@@ -275,11 +407,11 @@
     <!-- Privacy screen, shown by Health Connect -->
     <string name="privacy_title">Privacy</string>
     <string name="privacy_heading_what">What PAPRelay does with your data</string>
-    <string name="privacy_what">PAPRelay reads therapy records from your machine over Bluetooth and stores them on this phone. If you leave it switched on, it writes each night\'s figures to the health records in Health Connect. If you switch it on, it writes respiratory rate to Health Connect, and keeps a table of nights in a file where you choose. It does this when you ask, and from time to time in the background when the machine is in range.</string>
+    <string name="privacy_what">PAPRelay reads therapy records from your machine over Bluetooth and stores them on this phone. If you leave it switched on, it writes each night\'s figures to the health records in Health Connect. If you switch it on, it writes respiratory rate to Health Connect. If you choose a folder, it keeps two files of nights and breathing events there. It does this when you ask, and from time to time in the background when the machine is in range.</string>
     <string name="privacy_heading_where">Where your data goes</string>
-    <string name="privacy_where">Your data goes nowhere else. PAPRelay has no internet permission, no accounts, no analytics and no advertising. Data leaves the app only through Health Connect, through a file you choose to have kept or saved, and when you share it with another app yourself.</string>
+    <string name="privacy_where">Your data goes nowhere else. PAPRelay has no internet permission, no accounts, no analytics and no advertising. Data leaves the app only through Health Connect, through the files in a folder that you choose, through a report that you save, and when you share it with another app yourself.</string>
     <string name="privacy_heading_read">What PAPRelay reads from Health Connect</string>
     <string name="privacy_read">PAPRelay reads nothing from Health Connect. It asks only for permission to write.</string>
     <string name="privacy_heading_delete">Removing your data</string>
-    <string name="privacy_delete">Uninstalling PAPRelay deletes everything it stored itself. A table of nights kept in a place you chose stays there until you delete it. Records it wrote to Health Connect can be removed in Health Connect.</string>
+    <string name="privacy_delete">Uninstalling PAPRelay deletes everything it stored itself. The files kept in a folder that you chose stay there until you delete them. Records it wrote to Health Connect can be removed in Health Connect.</string>
 </resources>

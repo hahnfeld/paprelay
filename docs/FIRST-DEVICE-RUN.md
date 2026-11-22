@@ -47,7 +47,7 @@ same period, read directly from its EDF files.
 | What | Compared | Result |
 |---|---|---|
 | Daily summaries | 30 days: each index, percentile, duration and mask-on/off time | All equal at the stored resolution |
-| Breathing events | Every event of three sessions | Same kind, same order, same duration; times within 1.5 s (the card stores whole seconds) |
+| Breathing events | Every event of three sessions | Same kind, same order, same duration; times within 2 s (the card stores whole seconds) |
 | Per-minute log, length | Three sessions | One sample for each minute of mask-on time on both sides |
 | Per-minute leak, pressures and minute ventilation | Against the card's 2-second signals, averaged per minute | Within one step of the per-minute resolution |
 | Per-minute respiratory rate | Same | Mean difference 0.13 to 0.28 breaths/min; within 0.5 on 94.6 % of the minutes. The machine's per-minute figure is its own average, not a resample of the 2-second signal, so exact equality is not expected |
@@ -67,8 +67,71 @@ What this established:
   day without therapy has a duration of zero and nothing else. The machine truncates
   indices to tenths.
 - Summary field 37 (respiratory flow, 5th and 95th percentile) is a plain value in
-  hundredths of L/s, as the reference says.
+  hundredths of a litre per second, as the reference says.
 - Not confirmed by either source: per-minute inspiratory time and I:E ratio.
+
+## What is passed on, and what is not yet
+
+What the comparison confirmed is passed on; nothing else is. The flags are in
+`as11/.../decode/As11Scales.kt` (`SummaryMetric.confirmed`, `RespiratoryEvent.confirmed`).
+
+Daily summary, **confirmed and passed on** (field numbers in brackets):
+
+| What | Given as |
+|---|---|
+| Duration, session count, each session's start and length (5, 6, 39) | Minutes; starts by the machine's clock, and corrected |
+| AHI, apnoea, hypopnoea, obstructive, central, unclassified apnoea and RERA indices (7–13) | Events per hour |
+| Leak (14): median, 70th, 95th percentile, maximum | L/min (stored in litres per second, times 60, exact) |
+| Inspiratory, expiratory and mean mask pressure (15, 20, 21): median, 95th, maximum | cmH2O |
+| Tidal volume (22), minute ventilation (23), respiratory rate (25): median, 95th, maximum | mL (stored in hundredths of a litre, times 1000, exact), L/min, breaths/min |
+| Ambient humidity (29), humidifier temperature (30), heated-tube temperature (31), humidifier power (32), heated-tube power (33): median | mg/L, °C, % (files only) |
+| Blower pressure (36): 5th and 95th percentile | cmH2O (files only) |
+| Respiratory flow (37): 5th and 95th percentile | L/min (stored in litres per second, times 60, exact) |
+| Blower flow (38): median | L/min (stored in litres per second, times 60, exact; files only) |
+
+Daily summary, **not yet confirmed and not passed on**:
+
+| What | What confirming it takes |
+|---|---|
+| Target minute ventilation (24), alveolar minute ventilation (42), I:E ratio (27) | Their flag only. The figures are named and mapped, and the plan's version, the table's columns and the breathing record follow. |
+| Inspiratory duration (26) | The flag, and a night figure finer than hundredths: it is stored in thousandths of a second. |
+| SpO2 (28), heart rate (41) | The flag, and a decision where they go among the five health records. Not present without an oximeter. |
+| Cheyne-Stokes respiration (16), SpO2 threshold (17), spontaneous trigger (18) and cycle (19) | Their meaning and unit. They are whole numbers whose scale the comparison did not cover. |
+| Humidifier connected (34), heated tube connected (35) | Their meaning. Their values match the card's Humidifier and HeatedTube codes, but what each code means is not known. |
+
+Breathing events: obstructive apnoea (4), central apnoea (3), hypopnoea (2) and unclassified
+apnoea (5) are **confirmed** and passed on: to the phone and the files, not to Health
+Connect. An apnoea with a length is stamped at its end; for a hypopnoea the time is passed
+on as stored, marked as either its start or its end. The unclassified apnoea was confirmed
+by a second comparison: every unclassified apnoea ("Apnea") on the card matched one code-5
+event, with the same length and the machine's time within 2 s of the card's, as for the
+other apnoeas.
+**Not yet confirmed**, and not passed on: RERA (6), Cheyne-Stokes start and end (8, 9), and
+codes not in the table. Codes 6, 8 and 9 did not occur in the compared history. Confirming
+one takes a night that has it, its raw Bluetooth event bytes, and the same night on the
+card.
+
+Mask on and off (`UsageEvents-TherapyStatusEvents`): downloaded by the device check only.
+The summary's sessions give the same starts and lengths, and they were compared.
+
+## 0.3.0 files against the SD card
+
+The two files that PAPRelay 0.3.0 wrote on a real phone were compared with the same
+machine's `STR.edf` (daily summaries) and its `DATALOG` event annotations (`*_EVE.edf`).
+
+| What | Compared | Result |
+|---|---|---|
+| `paprelay_nights.csv`: usage minutes and session count | Every compared night | Equal on every one |
+| `paprelay_nights.csv`: every value column | Every compared night with therapy | All equal at the stored resolution (leak and the other flows times 60 to L/min, exact) |
+| `paprelay_nights.csv`: each session's start by the machine's clock, and its length | Every compared night with therapy | Equal to the card's mask-on and mask-off |
+| `paprelay_nights.csv`: nights without therapy | Every compared night without therapy | Every value cell empty |
+| `paprelay_events.csv`: obstructive, central and hypopnoea events | Every compared event | Each matches one on the card, by kind, with the same length (apnoeas). The machine's time is always later than the card's, all within 2 s, because the card stores whole seconds |
+| `night_of` and `time_is` | Every compared event | Right for every one (noon-to-noon rule; `end` for the apnoeas) |
+| Corrected times | The session starts and events within the seven-day window | Corrected by the same measured offset |
+| Unclassified apnoea (code 5) | Every unclassified apnoea on the card | Not in the files of that build (code 5 was not yet confirmed); confirmed afterwards by a second comparison (above) |
+
+The card's EDF headers give the units mg/L, Celsius and % for humidity, temperatures and
+power.
 
 ## Still open
 

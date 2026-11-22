@@ -11,6 +11,9 @@ public enum class PapUnit {
     LITRES_PER_SECOND,
     LITRES_PER_MINUTE,
     LITRES,
+
+    /** Only ever a night figure's unit after an exact conversion from [LITRES]; nothing is stored in it. */
+    MILLILITRES,
     CM_H2O,
     BREATHS_PER_MINUTE,
     BEATS_PER_MINUTE,

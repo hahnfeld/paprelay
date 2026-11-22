@@ -42,12 +42,36 @@ enum class GlyphKind {
     /** Health Connect: the heart from the picture. */
     HEART,
 
-    /** A file: a sheet of paper with a folded corner. */
-    PAGE,
+    /** The folder for the two files: a tab on the top left, and the body below it. */
+    FOLDER,
 
     /** Handing something to another app: three points joined by two lines. */
     SHARE,
+
+    /** Back to an earlier night: the chevron, pointing the other way. */
+    CHEVRON_BACK,
+
+    /** Breathing events: marks on a line, the night's picture in small. */
+    TICKS,
+
+    /** An obstructive apnoea: a breath, then a flat line that ends at a wall. */
+    EVENT_OBSTRUCTIVE,
+
+    /** A central apnoea: a breath, then a flat line. */
+    EVENT_CENTRAL,
+
+    /** An unclassified apnoea: a breath, then three dots where the breaths would be. */
+    EVENT_UNCLASSIFIED,
+
+    /** A hypopnoea: a breath, then smaller breaths. */
+    EVENT_HYPOPNOEA,
 }
+
+/** The glyphs that show time or a direction, and so are mirrored in right-to-left languages. */
+private val MIRRORED = setOf(
+    GlyphKind.FORK, GlyphKind.CHEVRON, GlyphKind.CHEVRON_BACK,
+    GlyphKind.EVENT_OBSTRUCTIVE, GlyphKind.EVENT_CENTRAL, GlyphKind.EVENT_UNCLASSIFIED, GlyphKind.EVENT_HYPOPNOEA,
+)
 
 /**
  * One glyph, drawn in code in the picture's style (2 dp round lines) so that the app needs no
@@ -57,12 +81,12 @@ enum class GlyphKind {
  * Only the glyphs that show a direction are mirrored in right-to-left languages.
  */
 @Composable
-fun Glyph(kind: GlyphKind, modifier: Modifier = Modifier, enabled: Boolean = true) {
+fun Glyph(kind: GlyphKind, modifier: Modifier = Modifier, enabled: Boolean = true, color: Color? = null) {
     val scheme = MaterialTheme.colorScheme
-    val base = if (kind == GlyphKind.CHEVRON) scheme.onSurfaceVariant else scheme.onSurface
+    val base = color ?: if (kind == GlyphKind.CHEVRON) scheme.onSurfaceVariant else scheme.onSurface
     val ink = if (enabled) base else scheme.onSurface.copy(alpha = DISABLED_ALPHA)
     val paper = scheme.surface
-    val mirrored = (kind == GlyphKind.FORK || kind == GlyphKind.CHEVRON) && LocalLayoutDirection.current == LayoutDirection.Rtl
+    val mirrored = kind in MIRRORED && LocalLayoutDirection.current == LayoutDirection.Rtl
     val flip = if (mirrored) -1f else 1f
     Spacer(
         modifier.size(GLYPH_SIZE).scale(scaleX = flip, scaleY = 1f).drawWithCache {
@@ -132,22 +156,53 @@ fun Glyph(kind: GlyphKind, modifier: Modifier = Modifier, enabled: Boolean = tru
                     val heart = heartPath(20f * k).apply { translate(at(3.6f, 2f)) }
                     onDrawBehind { drawPath(heart, ink, style = line) }
                 }
-                GlyphKind.PAGE -> {
-                    // A sheet 14 by 20 at (5, 2), its corner folded over by a third of its width.
-                    val fold = 14f * 0.32f
-                    val sheet = polyline(5f, 2f, 19f - fold, 2f, 19f, 2f + fold, 19f, 22f, 5f, 22f).apply { close() }
-                    val corner = polyline(19f - fold, 2f, 19f - fold, 2f + fold, 19f, 2f + fold)
-                    val rows = Path().apply {
-                        for (row in listOf(0.55f, 0.75f)) {
-                            moveTo(7.8f * k, (2f + 20f * row) * k)
-                            lineTo(16.2f * k, (2f + 20f * row) * k)
-                        }
+                GlyphKind.FOLDER -> {
+                    val folder = polyline(3f, 20f, 3f, 5f, 10f, 5f, 12.5f, 7.5f, 21f, 7.5f, 21f, 20f).apply { close() }
+                    onDrawBehind {
+                        drawPath(folder, ink, style = line)
+                        drawLine(ink, at(3f, 11f), at(21f, 11f), thin.width, StrokeCap.Round)
+                    }
+                }
+                GlyphKind.CHEVRON_BACK -> {
+                    val chevron = polyline(15f, 6f, 9f, 12f, 15f, 18f)
+                    onDrawBehind { drawPath(chevron, ink, style = line) }
+                }
+                GlyphKind.TICKS -> onDrawBehind {
+                    drawLine(ink, at(3f, 18f), at(21f, 18f), width, StrokeCap.Round)
+                    for ((x, top) in TICK_TOPS) drawLine(ink, at(x, 18f), at(x, top), width, StrokeCap.Round)
+                }
+                GlyphKind.EVENT_UNCLASSIFIED -> {
+                    val breath = Path().apply {
+                        moveTo(2f * k, 12f * k)
+                        quadraticTo(4f * k, 5f * k, 6f * k, 12f * k)
+                        quadraticTo(8f * k, 19f * k, 10f * k, 12f * k)
                     }
                     onDrawBehind {
-                        drawPath(sheet, ink, style = line)
-                        drawPath(corner, ink, style = thin)
-                        drawPath(rows, ink, style = thin)
+                        drawPath(breath, ink, style = line)
+                        for (x in UNCLASSIFIED_DOTS) drawCircle(ink, 1.25f * k, at(x, 12f))
                     }
+                }
+                GlyphKind.EVENT_OBSTRUCTIVE, GlyphKind.EVENT_CENTRAL, GlyphKind.EVENT_HYPOPNOEA -> {
+                    // One full breath, then what the event does to the breaths that follow.
+                    val path = Path().apply {
+                        moveTo(2f * k, 12f * k)
+                        quadraticTo(4f * k, 5f * k, 6f * k, 12f * k)
+                        quadraticTo(8f * k, 19f * k, 10f * k, 12f * k)
+                        if (kind == GlyphKind.EVENT_HYPOPNOEA) {
+                            quadraticTo(12f * k, 9f * k, 14f * k, 12f * k)
+                            quadraticTo(16f * k, 15f * k, 18f * k, 12f * k)
+                            quadraticTo(19.5f * k, 10.6f * k, 21f * k, 12f * k)
+                        }
+                        if (kind == GlyphKind.EVENT_OBSTRUCTIVE) {
+                            // The air runs into a wall and stops there: the line ends at it, and does not cross it.
+                            lineTo(17f * k, 12f * k)
+                            moveTo(17f * k, 6f * k)
+                            lineTo(17f * k, 18f * k)
+                        } else {
+                            lineTo(22f * k, 12f * k)
+                        }
+                    }
+                    onDrawBehind { drawPath(path, ink, style = line) }
                 }
                 GlyphKind.SHARE -> {
                     val left = at(4.8f, 12f)
@@ -174,6 +229,11 @@ private val GLYPH_SIZE = 24.dp
 
 /** Where the fork's three branches end, on the 24-dp grid: straight on, and up and down to the end. */
 private val FORK_ENDS = listOf(Offset(21f, 12f), Offset(19.5f, 3.5f), Offset(19.5f, 20.5f))
+/** The breathing-events glyph's marks: where each stands on the line, and how high it reaches. */
+private val TICK_TOPS = listOf(6f to 9f, 10f to 13f, 14f to 6f, 18f to 12f)
+
+/** Where the unclassified apnoea's three dots sit on its line. */
+private val UNCLASSIFIED_DOTS = listOf(13.5f, 17f, 20.5f)
 private const val ARROW_REACH = 3f
 private const val COS45 = 0.70710677f
 private const val DISABLED_ALPHA = 0.38f

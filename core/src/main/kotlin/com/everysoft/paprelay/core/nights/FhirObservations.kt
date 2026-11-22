@@ -15,7 +15,8 @@ public class FhirResource(public val id: String, public val json: String) {
  * A night's figures as FHIR R4 Observation resources, for a phone's health-record store.
  *
  * A night becomes at most five Observations: usage, the event indices, leak, pressure and
- * breathing. Each has one headline value (the figure usually looked at) and carries the
+ * breathing. Figures that describe the machine rather than the person (humidifier, heated
+ * tube, blower; [NightFigure.healthRecord] false) are not written here. Each has one headline value (the figure usually looked at) and carries the
  * rest of its group as components, so that a simple reader shows something sensible and a
  * thorough one has everything. Each has a fixed id made of the machine, the night and the
  * group, so that storing a night again replaces what was stored before and never adds to it.
@@ -38,7 +39,7 @@ public object FhirObservations {
      * Raised whenever what is written for a given night changes (a label, a unit, a grouping),
      * so that nights already stored are recognised as out of date and stored again.
      */
-    public const val FORMAT: Int = 1
+    public const val FORMAT: Int = 3
 
     /** PAPRelay's own code system for the figures. A name, not an address that answers. */
     public const val CODE_SYSTEM: String = "https://github.com/hahnfeld/paprelay/fhir/CodeSystem/cpap-night"
@@ -68,7 +69,10 @@ public object FhirObservations {
                 NightFigure.UNCLASSIFIED_APNEA_INDEX, NightFigure.HYPOPNEA_INDEX, NightFigure.RERA_INDEX,
             ),
         ),
-        Group("leak", "CPAP mask leak in the night, 95th percentile", "CPAP mask leak in the night", NightFigure.LEAK_95, listOf(NightFigure.LEAK_MEDIAN, NightFigure.LEAK_MAX)),
+        Group(
+            "leak", "CPAP mask leak in the night, 95th percentile", "CPAP mask leak in the night", NightFigure.LEAK_95,
+            listOf(NightFigure.LEAK_MEDIAN, NightFigure.LEAK_70, NightFigure.LEAK_MAX),
+        ),
         Group(
             "pressure", "CPAP therapy pressure in the night, 95th percentile", "CPAP pressure in the night", NightFigure.THERAPY_PRESSURE_95,
             listOf(
@@ -79,14 +83,26 @@ public object FhirObservations {
         ),
         Group(
             "breathing", "Respiratory rate during CPAP therapy in the night, median", "Breathing during CPAP therapy in the night", NightFigure.RESPIRATORY_RATE_MEDIAN,
-            listOf(NightFigure.TIDAL_VOLUME_MEDIAN, NightFigure.MINUTE_VENTILATION_MEDIAN),
+            listOf(
+                NightFigure.RESPIRATORY_RATE_95, NightFigure.RESPIRATORY_RATE_MAX,
+                NightFigure.TIDAL_VOLUME_MEDIAN, NightFigure.TIDAL_VOLUME_95, NightFigure.TIDAL_VOLUME_MAX,
+                NightFigure.MINUTE_VENTILATION_MEDIAN, NightFigure.MINUTE_VENTILATION_95, NightFigure.MINUTE_VENTILATION_MAX,
+                NightFigure.RESPIRATORY_FLOW_5, NightFigure.RESPIRATORY_FLOW_95,
+                // Not yet confirmed, so no night has them yet (see NightFigure).
+                NightFigure.TARGET_VENTILATION_MEDIAN, NightFigure.TARGET_VENTILATION_95, NightFigure.TARGET_VENTILATION_MAX,
+                NightFigure.ALVEOLAR_VENTILATION_MEDIAN, NightFigure.ALVEOLAR_VENTILATION_95, NightFigure.ALVEOLAR_VENTILATION_MAX,
+                NightFigure.IE_RATIO_MEDIAN, NightFigure.IE_RATIO_95, NightFigure.IE_RATIO_MAX,
+            ),
         ),
     )
 
     init {
-        // Every figure belongs to exactly one group, or it would never be passed on.
+        // Every figure about the person belongs to exactly one group, or it would never be passed on;
+        // and none about the machine (humidifier, tube, blower) is put among them.
         val placed = GROUPS.flatMap { listOf(it.headline) + it.others }
-        check(placed.size == placed.toSet().size && placed.toSet() == NightFigure.entries.toSet()) { "the groups do not cover the figures once each" }
+        check(placed.size == placed.toSet().size && placed.toSet() == NightFigure.entries.filter { it.healthRecord }.toSet()) {
+            "the groups do not cover the figures once each"
+        }
     }
 
     /**

@@ -8,12 +8,15 @@ import com.everysoft.paprelay.as11.MachineClockReading
 import com.everysoft.paprelay.as11.SpoolAddress
 import com.everysoft.paprelay.as11.SpoolName
 import com.everysoft.paprelay.as11.SpoolRound
+import com.everysoft.paprelay.as11.decode.EventDecoder
 import com.everysoft.paprelay.as11.decode.Firmware
 import com.everysoft.paprelay.as11.decode.MinuteDecoder
 import com.everysoft.paprelay.as11.decode.MinuteSignal
 import com.everysoft.paprelay.as11.decode.RecordResult
 import com.everysoft.paprelay.as11.decode.SpoolDecodeException
 import com.everysoft.paprelay.as11.decode.SummaryDecoder
+import com.everysoft.paprelay.as11.plan.ClockCorrection
+import com.everysoft.paprelay.as11.plan.EventPlan
 import com.everysoft.paprelay.as11.plan.NightPlan
 import com.everysoft.paprelay.as11.plan.RespiratoryRatePlan
 import com.everysoft.paprelay.as11.plan.SessionPlan
@@ -21,7 +24,9 @@ import com.everysoft.paprelay.ble.BluetoothOffException
 import com.everysoft.paprelay.ble.NoAnswerException
 import com.everysoft.paprelay.core.ClockOffset
 import com.everysoft.paprelay.core.MachineTime
+import com.everysoft.paprelay.core.nights.BreathingEvent
 import com.everysoft.paprelay.core.nights.FhirObservations
+import com.everysoft.paprelay.core.nights.Night
 import com.everysoft.paprelay.core.nights.FhirResource
 import com.everysoft.paprelay.core.sync.LedgerEntry
 import com.everysoft.paprelay.core.sync.Reconcile
@@ -139,6 +144,8 @@ class SyncEngine(
     private val nights: NightStore? = null,
     /** The phone's health records, or null where there are none to write to. */
     private val records: NightRecords? = null,
+    /** Where the machine's breathing events are kept, or null to leave them alone. */
+    private val events: EventStore? = null,
 ) {
     private val running = Mutex()
 
@@ -265,10 +272,7 @@ class SyncEngine(
         // of reach: there is no telling which of them carry the old time and which the new.
         // No respiratory rate is written until the user has said how to treat them. The nightly
         // figures are dated by the machine's calendar and are still written (below).
-        val clockChanged = progress.state.clock?.let { before ->
-            val days = abs(machineNow.epochMs - before.machineMs) / DAY_MS
-            abs(offset.millis - before.offsetMs) > CLOCK_STEP_MS + days * DRIFT_PER_DAY_MS
-        } ?: false
+        val clockChanged = progress.state.clock?.let { stepped(it, machineNow, offset) } ?: false
         // Whether the per-minute log's moduli are known for this software, or only assumed.
         val compared = firmware.perMinuteCompared
         if (progress.state.softwareSeen != identity.applicationIdentifier) {
@@ -297,7 +301,7 @@ class SyncEngine(
             nights?.let { nightStore ->
                 val kept = readNights(nightStore)
                 if (kept.byDate.values.any { it.recorded != null }) {
-                    nightStore.write(Nights(kept.machineTag, kept.byDate.mapValues { (_, stored) -> StoredNight(stored.night, null) }))
+                    nightStore.write(Nights(kept.machineTag, kept.byDate.mapValues { (_, stored) -> StoredNight(stored.night, null) }, kept.planVersion))
                 }
             }
             // Every ledger entry is marked as begun and not confirmed, which is exactly what makes a
@@ -312,16 +316,71 @@ class SyncEngine(
         }
         store.write(progress.state)
 
+        // Session starts and breathing events are given in true time beside the machine's own, where
+        // the clock's error is known: not in a run that finds the clock set since the last one, when
+        // there is no telling which stamps carry the old time and which the new. Measured against the
+        // last run, and, while respiratory rate is switched on, against its own baseline
+        // ([clockChanged]): that one may be all there is (an installation from before this was kept),
+        // and a change it found stands until the user has accepted it. With respiratory rate off its
+        // baseline is not kept up, and says nothing about the clock now.
+        val rateClockChanged = progress.state.respiratoryRate && clockChanged
+        val correctionStepped = rateClockChanged || progress.state.correctionClock?.let { stepped(it, machineNow, offset) } == true
+        val correction = ClockCorrection(offset.takeIf { !correctionStepped }, machineNow, nowMs())
+
         // The nights first. They are whole days by the machine's own calendar, so they need no
         // clock correction and nothing that follows can hold them up; and they are what matters most.
-        val recordsFailure = nights(session, firmware, tag, machineNow, progress)
+        val recordsFailure = nights(session, firmware, tag, machineNow, correction, progress)
 
-        if (!progress.state.respiratoryRate) {
-            // Respiratory rate is off, so no per-minute data is written. The stored clock reading
-            // is kept, so that a clock change is still noticed if it is switched on later.
-            recordsFailure?.let { throw it }
-            return
+        // Then respiratory rate, if it is switched on. Whatever stops it is said at the end of the run,
+        // after the breathing events have been read: they need nothing of Health Connect.
+        var rateFailure: Exception? = null
+        if (progress.state.respiratoryRate) {
+            try {
+                respiratoryRate(session, identity, firmware, tag, machineNow, offset, clockChanged, progress)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                rateFailure = e
+            }
         }
+        // Respiratory rate is off, or has been dealt with. (When it is off, the stored clock reading
+        // is kept, so that a clock change is still noticed if it is switched on later.)
+
+        // Last, the breathing events, unless the connection itself has failed: then there is nothing to
+        // read them with, and the next run takes them up. Anything else that stopped respiratory rate
+        // (Health Connect, a changed clock, a per-minute log that cannot be read) does not stop them. A
+        // failure of their own is said at the end, like the others; it keeps nothing else from the phone.
+        var eventsFailure: Exception? = null
+        if (!connectionLost(rateFailure)) {
+            try {
+                breathingEvents(session, firmware, tag, machineNow, correction, progress)
+                // Only now: had the events not been read, a clock set since the last run would not be seen again.
+                progress.state = progress.state.with(correctionClock = ClockBaseline(offset.millis, machineNow.epochMs))
+                store.write(progress.state)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                eventsFailure = e
+            }
+        }
+        (rateFailure ?: eventsFailure ?: recordsFailure)?.let { throw it }
+    }
+
+    /**
+     * Reads the per-minute log from where the last run left off and brings Health Connect's
+     * respiratory rate into step, session by session.
+     */
+    private suspend fun respiratoryRate(
+        session: MachineSession,
+        identity: MachineIdentity,
+        firmware: Firmware,
+        tag: String,
+        machineNow: MachineTime,
+        offset: ClockOffset,
+        clockChanged: Boolean,
+        progress: Progress,
+    ) {
+        val compared = firmware.perMinuteCompared
         // What stands in the way of the respiratory rate (Health Connect missing, or not allowing it) is said
         // now that the nights are in: it is no reason to keep those from the phone.
         sink.notReady()?.let { throw Stop(it) }
@@ -579,7 +638,6 @@ class SyncEngine(
         progress.state = progress.state.with(resumeFromMs = resume)
         store.write(progress.state)
         progress.sessionInProgress = skippedInProgress
-        recordsFailure?.let { throw it }
     }
 
     /**
@@ -590,7 +648,14 @@ class SyncEngine(
      * becomes of the rest. A failure to pass them on is returned, not thrown, so that the caller
      * can finish its other work first.
      */
-    private suspend fun nights(session: MachineSession, firmware: Firmware, tag: String, machineNow: MachineTime, progress: Progress): HealthSinkException? {
+    private suspend fun nights(
+        session: MachineSession,
+        firmware: Firmware,
+        tag: String,
+        machineNow: MachineTime,
+        correction: ClockCorrection,
+        progress: Progress,
+    ): HealthSinkException? {
         val nightStore = nights ?: return null
         val onDisk = readNights(nightStore)
         if (onDisk.machineTag != null && onDisk.machineTag != tag) {
@@ -600,12 +665,16 @@ class SyncEngine(
         val before = if (onDisk.machineTag == tag) onDisk.byDate else emptyMap()
         val byDate = LinkedHashMap(before)
         var changed = onDisk.machineTag != tag
+        // Nights made under another plan (one that gave fewer figures, say) are read again, as far back
+        // as the machine holds them, once: the plan's version is kept only when the history was read to its end.
+        var planVersion = if (onDisk.machineTag == tag) onDisk.planVersion else null
+        val rereading = planVersion != NightPlan.VERSION
         // What this download has already given for a date: the start of its day, and when the machine wrote it.
         val given = HashMap<LocalDate, Pair<Long, Long?>>()
         val disputed = HashSet<LocalDate>()
         // From a little before the end of the newest finished night: the machine may still amend a day it has closed.
         val newestEnd = byDate.values.filter { it.night.complete }.maxOfOrNull { it.night.end.toInstant().toEpochMilli() }
-        val from = maxOf(EARLIEST_START_MS, newestEnd?.let { it - NIGHT_OVERLAP_MS } ?: (machineNow.epochMs - FIRST_WINDOW_MS))
+        val from = maxOf(EARLIEST_START_MS, newestEnd?.takeIf { !rereading }?.let { it - NIGHT_OVERLAP_MS } ?: (machineNow.epochMs - FIRST_WINDOW_MS))
         var address: SpoolAddress = SpoolAddress.FromMachineTime(from)
         var rounds = 0
         var emptyRounds = 0
@@ -631,7 +700,7 @@ class SyncEngine(
                         continue
                     }
                 }
-                val night = NightPlan.night(record, machineNow)
+                val night = NightPlan.night(record, machineNow, correction)?.let { keepCorrections(it, before[it.date]?.night) }
                 if (night == null) {
                     // A record that cannot stand as a night. For a day still being written that is to
                     // be expected; for one that has ended, a night is missing and the run says so.
@@ -662,14 +731,22 @@ class SyncEngine(
                     changed = true
                 }
             }
-            address = SpoolAddress.Continuation(round.next ?: break)
+            val next = round.next
+            if (next == null) {
+                if (rereading) {
+                    planVersion = NightPlan.VERSION
+                    changed = true
+                }
+                break
+            }
+            address = SpoolAddress.Continuation(next)
         }
         // The oldest go when there are more than anyone will look at.
         while (byDate.size > MAX_NIGHTS) {
             byDate.remove(byDate.keys.min())
             changed = true
         }
-        if (changed) nightStore.write(Nights(tag, byDate))
+        if (changed) nightStore.write(Nights(tag, byDate, planVersion))
 
         val records = records ?: return null
         if (!progress.state.healthRecords) return null
@@ -687,13 +764,13 @@ class SyncEngine(
                 // there now, whatever is remembered here.
                 for ((date, stored) in byDate.toMap()) byDate[date] = StoredNight(stored.night, null)
                 // Saved at once: if the run dies here, the next finds the place there and would believe the old marks.
-                nightStore.write(Nights(tag, byDate))
+                nightStore.write(Nights(tag, byDate, planVersion))
             }
             for (date in byDate.keys.sorted()) {
                 currentCoroutineContext().ensureActive()
                 val stored = byDate.getValue(date)
                 // What was written, and in which form: a change in either means writing it again.
-                val mark = "${FhirObservations.FORMAT}:${stored.night.fingerprint()}"
+                val mark = "${FhirObservations.FORMAT}:${stored.night.healthFingerprint()}"
                 if (!stored.night.complete || stored.recorded == mark) continue
                 val resources = FhirObservations.forNight(stored.night, tag)
                 // Whatever the night could have had before and has no longer must not linger. Asked for
@@ -704,7 +781,7 @@ class SyncEngine(
                 byDate[date] = StoredNight(stored.night, mark)
                 progress.written += resources.size
                 if (++unsaved >= SAVE_EVERY_NIGHTS) {
-                    nightStore.write(Nights(tag, byDate))
+                    nightStore.write(Nights(tag, byDate, planVersion))
                     unsaved = 0
                 }
             }
@@ -712,8 +789,144 @@ class SyncEngine(
         } catch (e: HealthSinkException) {
             e
         } finally {
-            if (unsaved > 0) runCatching { nightStore.write(Nights(tag, byDate)) }
+            if (unsaved > 0) runCatching { nightStore.write(Nights(tag, byDate, planVersion)) }
         }
+    }
+
+    /**
+     * Copies the breathing events from where the last run left off (a day before, as the machine may
+     * add to what it has written), each once. Kinds that are not passed on are not kept. A record
+     * that cannot be read leaves the run short and is read again next time, for as long as the hold
+     * limit allows.
+     */
+    private suspend fun breathingEvents(session: MachineSession, firmware: Firmware, tag: String, machineNow: MachineTime, correction: ClockCorrection, progress: Progress) {
+        val eventStore = events ?: return
+        val onDisk = eventStore.read()
+        val kept = if (onDisk.machineTag == tag) onDisk else Events.EMPTY
+        // What is kept stands: read again, an event keeps the corrected time it was first given.
+        val byId = LinkedHashMap<String, BreathingEvent>()
+        for (event in kept.all) byId[event.identity] = event
+        var resume = kept.resumeFromMs
+        var changed = onDisk.machineTag != tag
+        // Events kept under another set of kinds are read again from the start, once: the kinds that were
+        // added are in the nights before too. The re-reading is marked as begun, so that a history longer
+        // than one run takes is taken up where it reached, and the set is kept only once the log was read
+        // to its end.
+        val pending = PENDING + EventPlan.VERSION
+        var kinds = kept.kindsVersion
+        if (kinds != EventPlan.VERSION && kinds != pending) {
+            kinds = pending
+            resume = null
+            // Stored at once: a run cut off in its first round still leaves the re-reading begun.
+            eventStore.write(Events(tag, byId.values, null, kinds))
+            changed = false
+        }
+        val rereading = kinds == pending
+        var address: SpoolAddress = SpoolAddress.FromMachineTime(
+            maxOf(EARLIEST_START_MS, resume?.let { it - OVERLAP_MS } ?: (machineNow.epochMs - FIRST_WINDOW_MS)),
+        )
+        var rounds = 0
+        var emptyRounds = 0
+        var bytes = 0L
+        var troubled = false
+        // The newest stamp read, and the newest read before anything failed.
+        var newest: Long? = null
+        var lastBeforeTrouble: Long? = null
+
+        fun reached(): Long? = if (!troubled || newest == null) {
+            // Nothing read at all is no reason to move: on a first run, the history is still all to be read.
+            newest ?: resume
+        } else {
+            minOf(maxOf(lastBeforeTrouble ?: resume ?: Long.MIN_VALUE, machineNow.epochMs - HOLD_LIMIT_MS), newest ?: Long.MAX_VALUE)
+        }
+
+        fun save() {
+            val now = reached()
+            if (!changed && now == resume) return
+            eventStore.write(Events(tag, byId.values, now, kinds))
+            resume = now
+            changed = false
+        }
+
+        while (true) {
+            if (++rounds > MAX_EVENT_ROUNDS || bytes > MAX_EVENT_BYTES) {
+                // A long history is taken up by the next run, from where this one reached.
+                progress.partial = true
+                break
+            }
+            val round = session.pull(SpoolName.RESPIRATORY_EVENTS, address)
+            keepRaw(SpoolName.RESPIRATORY_EVENTS, round)
+            bytes += round.data.size
+            val log = try {
+                EventDecoder.respiratory(round.data, firmware)
+            } catch (e: SpoolDecodeException) {
+                // Not this log at all, or a layout not known: nothing in it can be told apart. The nights
+                // and the respiratory rate do not depend on it, so the run goes on without it.
+                troubled = true
+                progress.partial = true
+                break
+            }
+            if (log.entries.isNotEmpty()) {
+                emptyRounds = 0
+            } else if (++emptyRounds > MAX_EMPTY_ROUNDS) {
+                progress.partial = true
+                break
+            }
+            for (entry in log.entries) {
+                when (entry) {
+                    is RecordResult.Failed -> {
+                        // The events around it are kept; the list is short by at least one.
+                        troubled = true
+                        progress.partial = true
+                    }
+                    is RecordResult.Decoded -> {
+                        val record = entry.value
+                        newest = maxOf(newest ?: Long.MIN_VALUE, record.time.epochMs)
+                        if (!troubled) lastBeforeTrouble = newest
+                        val event = EventPlan.event(log, record, correction) ?: continue
+                        if (byId.putIfAbsent(event.identity, event) == null) changed = true
+                    }
+                }
+            }
+            val next = round.next
+            if (next == null && rereading) {
+                kinds = EventPlan.VERSION
+                changed = true
+            }
+            save()
+            address = SpoolAddress.Continuation(next ?: break)
+        }
+        // As many as the nights kept: events from before the oldest night go, and the oldest go beyond the bound.
+        val oldestNight = nights?.let { runCatching { it.read() }.getOrNull() }?.byDate?.values?.minOfOrNull { it.night.start.toInstant().toEpochMilli() }
+        if (oldestNight != null) changed = byId.values.removeAll { it.machineTime.epochMs < oldestNight } || changed
+        if (byId.size > EventStore.MAX_EVENTS) {
+            val keep = byId.values.sortedByDescending { it.machineTime.epochMs }.take(EventStore.MAX_EVENTS).map { it.identity }.toSet()
+            byId.keys.retainAll(keep)
+            changed = true
+        }
+        save()
+    }
+
+    /**
+     * [night] with each session's corrected start as it was first given, where [kept] has the same
+     * session: a correction, once made, is not made again with a later measurement.
+     */
+    private fun keepCorrections(night: Night, kept: Night?): Night {
+        val list = night.sessionList ?: return night
+        val before = kept?.sessionList?.associateBy { it.start.epochMs to it.minutes } ?: return night
+        val merged = list.map { session -> before[session.start.epochMs to session.minutes]?.let { session.withCorrected(it.correctedMs) } ?: session }
+        if (merged == list) return night
+        return Night(night.date, night.zoneOffsetMinutes, night.usageMinutes, night.sessions, night.hundredths, night.complete, night.hours, merged)
+    }
+
+    /** Whether [failure] is the connection itself failing, after which nothing more can be read in this run. */
+    private fun connectionLost(failure: Exception?): Boolean =
+        failure is As11Exception || failure is NoAnswerException || failure is BluetoothOffException
+
+    /** Whether the clock moved, since [before], by more than it drifts: it was set. */
+    private fun stepped(before: ClockBaseline, machineNow: MachineTime, offset: ClockOffset): Boolean {
+        val days = abs(machineNow.epochMs - before.machineMs) / DAY_MS
+        return abs(offset.millis - before.offsetMs) > CLOCK_STEP_MS + days * DRIFT_PER_DAY_MS
     }
 
     /** The nights as kept. A file that cannot be read is put aside under another name, and the list starts empty. */
@@ -768,6 +981,13 @@ class SyncEngine(
 
         /** How far before the newest finished night the summaries are asked for again. */
         const val NIGHT_OVERLAP_MS = 3 * DAY_MS
+
+        /** Marks a set of kinds whose history is being read again, and not yet to its end. */
+        private const val PENDING = "reading:"
+
+        /** Bounds on one run's reading of the breathing events; a longer history is taken up by the next. */
+        const val MAX_EVENT_ROUNDS = 40
+        const val MAX_EVENT_BYTES = 4_000_000L
 
         /** How many nights are kept on the phone: more than three years. */
         const val MAX_NIGHTS = 1200

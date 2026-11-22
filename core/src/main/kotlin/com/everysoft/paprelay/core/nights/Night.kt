@@ -2,6 +2,7 @@
 // PAPRelay — Copyright (C) 2026 PAPRelay contributors.
 package com.everysoft.paprelay.core.nights
 
+import com.everysoft.paprelay.core.MachineTime
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -14,9 +15,12 @@ public enum class NightUnit(public val symbol: String, public val ucum: String, 
     LITRES_PER_MINUTE("L/min", "L/min", "l_per_min"),
     CM_H2O("cmH2O", "cm[H2O]", "cmh2o"),
     BREATHS_PER_MINUTE("breaths/min", "{breaths}/min", "breaths_per_min"),
-    LITRES("L", "L", "l"),
+    MILLILITRES("mL", "mL", "ml"),
     HOURS("h", "h", "hours"),
     MINUTES("min", "min", "minutes"),
+    MILLIGRAMS_PER_LITRE("mg/L", "mg/L", "mg_per_l"),
+    CELSIUS("°C", "Cel", "celsius"),
+    PERCENT("%", "%", "percent"),
 }
 
 /**
@@ -33,8 +37,24 @@ public enum class NightUnit(public val symbol: String, public val ucum: String, 
  * @property label what it is, in plain English, for files and records read by other programs.
  * @property maxHundredths the most it can plausibly be, in hundredths of its unit. A stored value
  *   beyond it is a misreading, not a measurement, and is left out.
+ * @property healthRecord whether it describes the person's therapy and goes to the health records.
+ *   The others (humidifier, heated tube, blower) describe the machine, and go to the table only.
+ *
+ * New figures are added at the end, so that the columns of the table keep their places.
+ *
+ * Some figures here are named for a value the machine stores whose layout and factor have not
+ * been compared with an SD card (see `SummaryMetric.confirmed` in the `as11` module). A night
+ * never has one of them until that is done: the plan that makes nights reads only confirmed
+ * values, and the table has a column only for what the plan can give. They are named here so
+ * that confirming one is a change of one line in one place.
  */
-public enum class NightFigure(public val key: String, public val label: String, public val unit: NightUnit, public val maxHundredths: Long) {
+public enum class NightFigure(
+    public val key: String,
+    public val label: String,
+    public val unit: NightUnit,
+    public val maxHundredths: Long,
+    public val healthRecord: Boolean = true,
+) {
     AHI("ahi", "Residual apnea-hypopnea index on CPAP therapy, as the machine reports it (events per hour of use)", NightUnit.EVENTS_PER_HOUR, 20_000),
     APNEA_INDEX("apnea-index", "Residual apnea index on CPAP therapy (events per hour of use)", NightUnit.EVENTS_PER_HOUR, 20_000),
     HYPOPNEA_INDEX("hypopnea-index", "Residual hypopnea index on CPAP therapy (events per hour of use)", NightUnit.EVENTS_PER_HOUR, 20_000),
@@ -55,8 +75,38 @@ public enum class NightFigure(public val key: String, public val label: String, 
     MASK_PRESSURE_95("mask-pressure-95th", "Mean mask pressure, 95th percentile", NightUnit.CM_H2O, 4_000),
     MASK_PRESSURE_MAX("mask-pressure-max", "Mean mask pressure, maximum", NightUnit.CM_H2O, 4_000),
     RESPIRATORY_RATE_MEDIAN("respiratory-rate-median", "Respiratory rate during therapy, median", NightUnit.BREATHS_PER_MINUTE, 9_000),
-    TIDAL_VOLUME_MEDIAN("tidal-volume-median", "Tidal volume during therapy, median", NightUnit.LITRES, 500),
+    TIDAL_VOLUME_MEDIAN("tidal-volume-median", "Tidal volume during therapy, median", NightUnit.MILLILITRES, 500_000),
     MINUTE_VENTILATION_MEDIAN("minute-ventilation-median", "Minute ventilation during therapy, median", NightUnit.LITRES_PER_MINUTE, 6_000),
+
+    // Added in 0.3.0.
+    LEAK_70("leak-70th", "Mask leak, 70th percentile", NightUnit.LITRES_PER_MINUTE, 20_000),
+    RESPIRATORY_RATE_95("respiratory-rate-95th", "Respiratory rate during therapy, 95th percentile", NightUnit.BREATHS_PER_MINUTE, 9_000),
+    RESPIRATORY_RATE_MAX("respiratory-rate-max", "Respiratory rate during therapy, maximum", NightUnit.BREATHS_PER_MINUTE, 9_000),
+    TIDAL_VOLUME_95("tidal-volume-95th", "Tidal volume during therapy, 95th percentile", NightUnit.MILLILITRES, 500_000),
+    TIDAL_VOLUME_MAX("tidal-volume-max", "Tidal volume during therapy, maximum", NightUnit.MILLILITRES, 500_000),
+    MINUTE_VENTILATION_95("minute-ventilation-95th", "Minute ventilation during therapy, 95th percentile", NightUnit.LITRES_PER_MINUTE, 6_000),
+    MINUTE_VENTILATION_MAX("minute-ventilation-max", "Minute ventilation during therapy, maximum", NightUnit.LITRES_PER_MINUTE, 6_000),
+    RESPIRATORY_FLOW_5("respiratory-flow-5th", "Respiratory flow during therapy, 5th percentile", NightUnit.LITRES_PER_MINUTE, 60_000),
+    RESPIRATORY_FLOW_95("respiratory-flow-95th", "Respiratory flow during therapy, 95th percentile", NightUnit.LITRES_PER_MINUTE, 60_000),
+    BLOWER_PRESSURE_5("blower-pressure-5th", "Pressure at the machine's blower, 5th percentile", NightUnit.CM_H2O, 5_000, healthRecord = false),
+    BLOWER_PRESSURE_95("blower-pressure-95th", "Pressure at the machine's blower, 95th percentile", NightUnit.CM_H2O, 5_000, healthRecord = false),
+    BLOWER_FLOW_MEDIAN("blower-flow-median", "Flow at the machine's blower, median", NightUnit.LITRES_PER_MINUTE, 60_000, healthRecord = false),
+    AMBIENT_HUMIDITY_MEDIAN("ambient-humidity-median", "Humidity of the room air the machine takes in, median", NightUnit.MILLIGRAMS_PER_LITRE, 10_000, healthRecord = false),
+    HUMIDIFIER_TEMPERATURE_MEDIAN("humidifier-temperature-median", "Humidifier temperature, median", NightUnit.CELSIUS, 10_000, healthRecord = false),
+    HUMIDIFIER_POWER_MEDIAN("humidifier-power-median", "Humidifier power, median", NightUnit.PERCENT, 10_000, healthRecord = false),
+    HEATED_TUBE_TEMPERATURE_MEDIAN("heated-tube-temperature-median", "Heated tube temperature, median", NightUnit.CELSIUS, 10_000, healthRecord = false),
+    HEATED_TUBE_POWER_MEDIAN("heated-tube-power-median", "Heated tube power, median", NightUnit.PERCENT, 10_000, healthRecord = false),
+
+    // Named, and not yet given by any night: the machine's values for these are not yet confirmed.
+    TARGET_VENTILATION_MEDIAN("target-ventilation-median", "Target minute ventilation, median", NightUnit.LITRES_PER_MINUTE, 6_000),
+    TARGET_VENTILATION_95("target-ventilation-95th", "Target minute ventilation, 95th percentile", NightUnit.LITRES_PER_MINUTE, 6_000),
+    TARGET_VENTILATION_MAX("target-ventilation-max", "Target minute ventilation, maximum", NightUnit.LITRES_PER_MINUTE, 6_000),
+    ALVEOLAR_VENTILATION_MEDIAN("alveolar-ventilation-median", "Alveolar minute ventilation during therapy, median", NightUnit.LITRES_PER_MINUTE, 6_000),
+    ALVEOLAR_VENTILATION_95("alveolar-ventilation-95th", "Alveolar minute ventilation during therapy, 95th percentile", NightUnit.LITRES_PER_MINUTE, 6_000),
+    ALVEOLAR_VENTILATION_MAX("alveolar-ventilation-max", "Alveolar minute ventilation during therapy, maximum", NightUnit.LITRES_PER_MINUTE, 6_000),
+    IE_RATIO_MEDIAN("ie-ratio-median", "Ratio of breathing in to breathing out, median", NightUnit.PERCENT, 50_000),
+    IE_RATIO_95("ie-ratio-95th", "Ratio of breathing in to breathing out, 95th percentile", NightUnit.PERCENT, 50_000),
+    IE_RATIO_MAX("ie-ratio-max", "Ratio of breathing in to breathing out, maximum", NightUnit.PERCENT, 50_000),
     ;
 
     /** The figure's name as a table column, with its unit: `leak_95th_l_per_min`. */
@@ -66,6 +116,36 @@ public enum class NightFigure(public val key: String, public val label: String, 
         private val byKey = entries.associateBy { it.key }
 
         public fun ofKey(key: String): NightFigure? = byKey[key]
+    }
+}
+
+/**
+ * One time the mask went on, as the machine listed it in the day's summary.
+ *
+ * @property start when it began, by the machine's own clock, uncorrected: a night's figures are
+ *   all by the machine's clock (see [Night]).
+ * @property minutes how long it lasted, as stored.
+ * @property correctedMs the same start in true time, milliseconds since the epoch: [start] plus how
+ *   far the machine's clock was measured to be off when the session was first copied. Null when
+ *   that cannot be said with confidence (see the synchronising engine). Fixed once given.
+ */
+public class NightSession(public val start: MachineTime, public val minutes: Int, public val correctedMs: Long? = null) {
+    init {
+        require(minutes in 0..MAX_MINUTES) { "not a session's length" }
+    }
+
+    /** The same session with its corrected start, as it was first given. */
+    public fun withCorrected(ms: Long?): NightSession = NightSession(start, minutes, ms)
+
+    override fun equals(other: Any?): Boolean = other is NightSession && start == other.start && minutes == other.minutes && correctedMs == other.correctedMs
+
+    override fun hashCode(): Int = (start.hashCode() * 31 + minutes) * 31 + correctedMs.hashCode()
+
+    /** Shows nothing: when someone put the mask on is health data. */
+    override fun toString(): String = "NightSession"
+
+    public companion object {
+        public const val MAX_MINUTES: Int = 24 * 60
     }
 }
 
@@ -83,6 +163,9 @@ public enum class NightFigure(public val key: String, public val label: String, 
  *   the record did not carry, or carried with a value that cannot be right, is absent, never zero.
  * @property complete false while the day is still running by the machine's clock: its figures
  *   may yet change, and it is shown as such and not passed on.
+ * @property sessionList each session, in the machine's order, when the record listed every one with
+ *   its start and length. Null when that is not known (a session with no stored length). When
+ *   known, there are [sessions] of them.
  */
 public class Night(
     public val date: LocalDate,
@@ -92,7 +175,10 @@ public class Night(
     hundredths: Map<NightFigure, Long>,
     public val complete: Boolean,
     public val hours: Int = 24,
+    sessionList: List<NightSession>? = null,
 ) {
+    public val sessionList: List<NightSession>? = sessionList?.let { java.util.Collections.unmodifiableList(ArrayList(it)) }
+
     public val hundredths: Map<NightFigure, Long> = java.util.Collections.unmodifiableMap(java.util.EnumMap<NightFigure, Long>(NightFigure::class.java).apply { putAll(hundredths) })
 
     init {
@@ -101,6 +187,13 @@ public class Night(
         require(usageMinutes in 0..hours * 60) { "not a day's usage" }
         require(sessions in 0..MAX_SESSIONS) { "not a day's sessions" }
         require(this.hundredths.all { (figure, value) -> value in 0..figure.maxHundredths }) { "a figure out of range" }
+        this.sessionList?.let { list ->
+            require(list.size == sessions) { "not the day's sessions" }
+            // A session belongs to the day it starts in; the machine lets one start on either end of it.
+            val from = start.toInstant().toEpochMilli()
+            val to = end.toInstant().toEpochMilli()
+            require(list.all { it.start.epochMs in from..to }) { "a session outside its day" }
+        }
     }
 
     /** The machine's local noon that begins the day, and the moment it ends. */
@@ -115,14 +208,23 @@ public class Night(
 
     /**
      * Identifies exactly what this night says, so that a change in any figure is noticed and an
-     * unchanged night is not passed on again. Holds no health value in readable form.
+     * unchanged night is not kept again. Holds no health value in readable form.
      */
-    public fun fingerprint(): String {
+    public fun fingerprint(): String = digest(forHealthRecords = false)
+
+    /**
+     * The same, of what goes to the health records only: a change in a figure that describes the
+     * machine, or in the list of sessions, does not make the night's records be written again.
+     */
+    public fun healthFingerprint(): String = digest(forHealthRecords = true)
+
+    private fun digest(forHealthRecords: Boolean): String {
         val digest = java.security.MessageDigest.getInstance("SHA-256")
         val text = buildString {
             append(date).append(';').append(zoneOffsetMinutes).append(';').append(hours).append(';')
             append(usageMinutes).append(';').append(sessions).append(';').append(complete)
-            for ((figure, value) in hundredths) append(';').append(figure.key).append('=').append(value)
+            for ((figure, value) in hundredths) if (figure.healthRecord || !forHealthRecords) append(';').append(figure.key).append('=').append(value)
+            if (!forHealthRecords) sessionList?.let { list -> append(";sessions=").append(list.joinToString("/") { "${it.start.epochMs}+${it.minutes}=${it.correctedMs ?: "-"}" }) }
         }
         return digest.digest(text.toByteArray(Charsets.US_ASCII)).joinToString("") { "%02x".format(it) }
     }

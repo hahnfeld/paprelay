@@ -214,8 +214,10 @@ class EventDecoderTest {
         fun onsetOf(code: Long) = respiratory(asCaptured(4) { message(1) { event(code, t, duration = 10_000) } }).decoded.single().onset
         assertEquals(MachineTime(t - 10_000), onsetOf(3))
         assertEquals(MachineTime(t - 10_000), onsetOf(4))
+        // The unclassified apnoea, seen in a second comparison: stamped at its end, like the others.
+        assertEquals(MachineTime(t - 10_000), onsetOf(5))
         // Never seen with a duration, so nothing is assumed about them, nor about kinds not known at all.
-        for (code in listOf(2L, 5L, 6L, 8L, 9L, 42L)) assertNull(onsetOf(code), "code $code")
+        for (code in listOf(2L, 6L, 8L, 9L, 42L)) assertNull(onsetOf(code), "code $code")
         // And a usage event is a moment, whatever number it carries.
         assertNull(usage(asCaptured(6) { message(1) { event(3, t, duration = 10_000) } }).decoded.single().onset)
     }

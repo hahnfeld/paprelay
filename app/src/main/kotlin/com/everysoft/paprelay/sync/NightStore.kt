@@ -2,8 +2,10 @@
 // PAPRelay — Copyright (C) 2026 PAPRelay contributors.
 package com.everysoft.paprelay.sync
 
+import com.everysoft.paprelay.core.MachineTime
 import com.everysoft.paprelay.core.nights.Night
 import com.everysoft.paprelay.core.nights.NightFigure
+import com.everysoft.paprelay.core.nights.NightSession
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -17,10 +19,8 @@ import kotlinx.serialization.json.long
 import kotlinx.serialization.json.put
 import java.io.File
 import java.io.IOException
-import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
-import java.nio.file.StandardOpenOption
 import java.time.LocalDate
 
 /**
@@ -32,8 +32,15 @@ import java.time.LocalDate
  */
 class StoredNight(val night: Night, val recorded: String?)
 
-/** The nights of one machine, by the date each began. */
-class Nights(val machineTag: String?, val byDate: Map<LocalDate, StoredNight>) {
+/**
+ * The nights of one machine, by the date each began.
+ *
+ * @property planVersion the [com.everysoft.paprelay.as11.plan.NightPlan.VERSION] under which the
+ *   machine's whole history was last read for these nights, or null if it has not been. Under any
+ *   other than the current one (a value was confirmed, say), the history is read again once, so
+ *   that older nights gain the figures they lacked.
+ */
+class Nights(val machineTag: String?, val byDate: Map<LocalDate, StoredNight>, val planVersion: String? = null) {
     /** Newest first. */
     val all: List<Night> get() = byDate.values.map { it.night }.sortedByDescending { it.date }
 
@@ -58,7 +65,14 @@ class NightStore(private val file: File) {
     fun read(): Nights {
         if (!file.exists()) return Nights.EMPTY
         return try {
-            decode(Json.parseToJsonElement(file.readText(Charsets.UTF_8)).jsonObject)
+            val json = Json.parseToJsonElement(file.readText(Charsets.UTF_8)).jsonObject
+            if (olderFormat(json)) {
+                // Kept by a version before 0.3.0. Nothing in it is needed: the nights are built again
+                // from the machine, and their records written again in the new form. Not damage.
+                file.delete()
+                return Nights.EMPTY
+            }
+            decode(json)
         } catch (e: IOException) {
             throw e
         } catch (e: Exception) {
@@ -79,19 +93,7 @@ class NightStore(private val file: File) {
     }
 
     /** @throws IOException if it could not be stored; what was there before is then still in place. */
-    fun write(nights: Nights) {
-        val directory = file.absoluteFile.parentFile ?: throw IOException("no directory for the nights")
-        directory.mkdirs()
-        val temporary = File(directory, file.name + ".new")
-        val bytes = encode(nights).toString().toByteArray(Charsets.UTF_8)
-        FileChannel.open(temporary.toPath(), StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING).use { channel ->
-            val buffer = java.nio.ByteBuffer.wrap(bytes)
-            while (buffer.hasRemaining()) channel.write(buffer)
-            channel.force(true)
-        }
-        Files.move(temporary.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
-        runCatching { FileChannel.open(directory.toPath(), StandardOpenOption.READ).use { it.force(true) } }
-    }
+    fun write(nights: Nights) = AtomicFiles.write(file, encode(nights).toString().toByteArray(Charsets.UTF_8))
 
     /** Removes the nights and everything that was ever put aside: all of it is the user's health data. */
     fun delete() {
@@ -101,7 +103,15 @@ class NightStore(private val file: File) {
     }
 
     internal companion object {
-        private const val FORMAT = 1L
+        /**
+         * 3 (0.3.0): the sessions one by one, the plan version, flows in litres a minute and tidal
+         * volume in millilitres. A file of an earlier format is treated as absent (see [read]): its
+         * hundredths may be of other units, and the nights are built again from the machine's history.
+         */
+        private const val FORMAT = 3L
+
+        /** Far above any version identifier [com.everysoft.paprelay.as11.plan.NightPlan.VERSION] gives. */
+        private const val MAX_PLAN_VERSION = 64
 
         /** More than three years of days: a bound on what a damaged file can ask to have built. */
         private const val MAX_NIGHTS = 1200
@@ -109,6 +119,7 @@ class NightStore(private val file: File) {
         fun encode(nights: Nights): JsonObject = buildJsonObject {
             put("format", FORMAT)
             nights.machineTag?.let { put("machineTag", it) }
+            nights.planVersion?.let { put("planVersion", it) }
             put(
                 "nights",
                 buildJsonArray {
@@ -123,6 +134,22 @@ class NightStore(private val file: File) {
                                 if (night.hours != 24) put("hours", night.hours)
                                 if (!night.complete) put("running", true)
                                 put("figures", buildJsonObject { for ((figure, value) in night.hundredths) put(figure.key, value) })
+                                night.sessionList?.let { list ->
+                                    put(
+                                        "sessionList",
+                                        buildJsonArray {
+                                            for (session in list) {
+                                                add(
+                                                    buildJsonArray {
+                                                        add(JsonPrimitive(session.start.epochMs))
+                                                        add(JsonPrimitive(session.minutes))
+                                                        session.correctedMs?.let { add(JsonPrimitive(it)) }
+                                                    },
+                                                )
+                                            }
+                                        },
+                                    )
+                                }
                                 stored.recorded?.let { put("recorded", it) }
                             },
                         )
@@ -130,6 +157,9 @@ class NightStore(private val file: File) {
                 },
             )
         }
+
+        /** A file a version before this one wrote, in a format of its own (which is a number below [FORMAT]). */
+        fun olderFormat(json: JsonObject): Boolean = (json["format"] as? JsonPrimitive)?.content?.toLongOrNull()?.let { it in 1 until FORMAT } == true
 
         fun decode(json: JsonObject): Nights {
             require(json.getValue("format").jsonPrimitive.long == FORMAT) { "written by another version" }
@@ -151,11 +181,19 @@ class NightStore(private val file: File) {
                     hundredths = figures,
                     complete = (entry["running"] as? JsonPrimitive)?.content != "true",
                     hours = (entry["hours"] as? JsonPrimitive)?.int ?: 24,
+                    sessionList = (entry["sessionList"] as? JsonArray)?.let { list ->
+                        require(list.size <= Night.MAX_SESSIONS) { "too many sessions" }
+                        list.map { pair ->
+                            val parts = (pair as JsonArray).also { require(it.size in 2..3) { "not a session" } }
+                            NightSession(MachineTime(parts[0].jsonPrimitive.long), parts[1].jsonPrimitive.int, parts.getOrNull(2)?.jsonPrimitive?.long)
+                        }
+                    },
                 )
                 val recorded = (entry["recorded"] as? JsonPrimitive)?.content?.also { require(FINGERPRINT.matches(it)) { "not a fingerprint" } }
                 require(byDate.put(night.date, StoredNight(night, recorded)) == null) { "a night is listed twice" }
             }
-            return Nights((json["machineTag"] as? JsonPrimitive)?.content, byDate)
+            val planVersion = (json["planVersion"] as? JsonPrimitive)?.content?.also { require(it.length <= MAX_PLAN_VERSION) { "not a plan version" } }
+            return Nights((json["machineTag"] as? JsonPrimitive)?.content, byDate, planVersion)
         }
 
         /** The format of the records it was written in, then the night's fingerprint. */

@@ -219,18 +219,24 @@ public enum class UsageEvent(public val code: Int) {
 /**
  * Codes in the `TherapyEvents-RespiratoryEvents` log. The numbering has gaps.
  *
- * Seen in a real capture: obstructive apnoeas, central apnoeas and hypopnoeas.
+ * Seen in a real capture: obstructive apnoeas, central apnoeas and hypopnoeas; and, in a
+ * second comparison, unclassified apnoeas (every one on the card matched, stamped at its end
+ * with a length, like the others).
  * An apnoea is written when it ends and stamped with that moment;
  * for a hypopnoea, which has no stored length, whether the stamp is its start
  * or its end cannot be told. See [EventRecord]. The other codes are as the
  * reference gives them and have not been seen.
+ *
+ * @property confirmed whether events of this kind were seen in a real capture and
+ *   matched the same machine's SD card (kind, order, length and time). Only these
+ *   are passed on.
  */
-public enum class RespiratoryEvent(public val code: Int) {
+public enum class RespiratoryEvent(public val code: Int, public val confirmed: Boolean = false) {
     NO_EVENT(1),
-    HYPOPNEA(2),
-    CENTRAL_APNEA(3),
-    OBSTRUCTIVE_APNEA(4),
-    APNEA(5),
+    HYPOPNEA(2, confirmed = true),
+    CENTRAL_APNEA(3, confirmed = true),
+    OBSTRUCTIVE_APNEA(4, confirmed = true),
+    APNEA(5, confirmed = true),
     RERA(6),
     CSR_START(8),
     CSR_END(9),

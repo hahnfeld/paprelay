@@ -129,14 +129,13 @@ class Svg:
 
     # ---- other icons
 
-    def page(self, x, y, w, h, rows=3):
-        """A sheet of paper with a folded corner."""
-        fold = w * 0.32
-        self.add(f'<path class="ink" d="M{f(x)} {f(y)}H{f(x + w - fold)}L{f(x + w)} {f(y + fold)}V{f(y + h)}H{f(x)}Z"/>')
-        self.add(f'<path class="thin" d="M{f(x + w - fold)} {f(y)}V{f(y + fold)}H{f(x + w)}"/>')
-        for row in range(rows):
-            at = y + h * (0.48 + 0.16 * row)
-            self.add(f'<path class="thin" d="M{f(x + w * 0.2)} {f(at)}H{f(x + w * 0.8)}"/>')
+    def folder(self, x, y, w, h):
+        """A folder: a tab on the top left, and the body below it."""
+        tab = w * 0.4
+        self.add(
+            f'<path class="ink" d="M{f(x)} {f(y + h)}V{f(y)}H{f(x + tab)}L{f(x + tab + 6)} {f(y + 7)}H{f(x + w)}V{f(y + h)}Z"/>'
+        )
+        self.add(f'<path class="thin" d="M{f(x)} {f(y + 14)}H{f(x + w)}"/>')
 
     def share(self, x, y, size):
         """The share icon: three points joined by two lines."""
@@ -210,6 +209,14 @@ class Svg:
         self.add(f'<circle class="{cls}" cx="{f(x + 12 * k)}" cy="{f(y + 12 * k)}" r="{f(9 * k)}"/>')
         self.add(f'<circle class="solid" cx="{f(x + 12 * k)}" cy="{f(y + 7.6 * k)}" r="{f(1.3 * k)}"/>')
         self.add(f'<path class="{cls}" d="M{f(x + 12 * k)} {f(y + 11 * k)}V{f(y + 16.6 * k)}"/>')
+
+    def ticks(self, x, y, size, cls="thin"):
+        """Breathing events: marks on a line, the night's picture in small."""
+        k = size / 24
+        d = f"M{f(x + 3 * k)} {f(y + 18 * k)}H{f(x + 21 * k)}"
+        for tx, top in ((6, 9), (10, 13), (14, 6), (18, 12)):
+            d += f"M{f(x + tx * k)} {f(y + 18 * k)}V{f(y + top * k)}"
+        self.add(f'<path class="{cls}" d="{d}"/>')
 
     def chevron(self, x, y, size, cls="line"):
         k = size / 24
@@ -335,7 +342,7 @@ class Svg:
 
 
 def overview():
-    s = Svg(232, "The machine sends data to the phone by Bluetooth. The phone passes it on to Health Connect, to a file, or to another app. PAPRelay does not use the internet.")
+    s = Svg(232, "The machine sends data to the phone by Bluetooth. The phone passes it on to Health Connect, to two files in a folder, or to another app. PAPRelay does not use the internet.")
     u = 56
     mw = s.machine(20, 66, u)
     s.text(20 + mw / 2, 66 + u + 20, "Machine", "t", "middle")
@@ -351,8 +358,8 @@ def overview():
         s.add(f'<path class="ink" d="M247 {y - 6}L253 {y}L247 {y + 6}"/>')
     s.heart(264, 16, 44)
     s.text(314, 43, "Health Connect", "b")
-    s.page(266, 73, 32, 42)
-    s.text(314, 99, "A file", "b")
+    s.folder(264, 76, 38, 34)
+    s.text(314, 99, "Two files", "b")
     s.share(262, 130, 40)
     s.text(314, 155, "Another app", "b")
     s.cloud_off(22, 188, 30)
@@ -413,7 +420,7 @@ def setup():
     mw = s.machine(62, y + 8, 36)
     s.bubble(62 + mw + 12, y + 10, 62, 30, "1 2 3 4", 62 + mw + 3)
     s.phone(62 + mw + 12 + 62 + 12, y - 2, 56)
-    s.lines(label_x, y + 24, ["Pair the machine", "Type the code"])
+    s.lines(label_x, y + 24, ["Pair the machine,", "then type the code"])
 
     # Step 4: the device check.
     y = top + 3 * row
@@ -429,8 +436,8 @@ def setup():
 
 
 def home():
-    s = Svg(590, "The home screen of PAPRelay, with six numbered parts: 1 the picture, 2 last night, 3 the status, 4 the Synchronise now button, 5 the rows for Nights, Sharing and Device check, 6 the i for About.")
-    x, y, w, h = 84, 20, 284, 550
+    s = Svg(632, "The home screen of PAPRelay, with six numbered parts: 1 the picture, 2 last night, 3 the status, 4 the Synchronise now button, 5 the rows for Nights, Breathing events, Sharing and Device check, 6 the i for About.")
+    x, y, w, h = 84, 20, 284, 592
     s.add(f'<rect class="ink" x="{x}" y="{y}" width="{w}" height="{h}" rx="28"/>')
     s.add(f'<path class="ink" d="M{x + 112} {y + h - 16}H{x + w - 112}"/>')
     left = x + 24
@@ -447,15 +454,15 @@ def home():
     s.text(left, y + 330, "Last synchronised 5 minutes ago.", "x")
     s.button(left, y + 348, 150, 36, "Synchronise now")
     # The rows that lead to the other pages: glyph, name, chevron, with a faint line above each.
-    glyphs = (s.moon, s.fork, s.checked_link)
-    for index, (draw, label) in enumerate(zip(glyphs, ("Nights", "Sharing", "Device check"))):
+    glyphs = (s.moon, s.ticks, s.fork, s.checked_link)
+    for index, (draw, label) in enumerate(zip(glyphs, ("Nights", "Breathing events", "Sharing", "Device check"))):
         top = y + 404 + index * 42
         s.add(f'<path class="faint" d="M{left} {top}H{right}"/>')
         mid = top + 21
         draw(left, mid - 10, 20)
         s.text(left + 34, mid + 4.5, label, "c")
         s.chevron(right - 20, mid - 10, 20)
-    for index, at in enumerate((y + 92, y + 228, y + 318, y + 366, y + 467, y + 42)):
+    for index, at in enumerate((y + 92, y + 228, y + 318, y + 366, y + 488, y + 42)):
         s.add(f'<path class="faint" d="M{x + w + 8} {at}H{x + w + 28}"/>')
         s.number(x + w + 46, at, index + 1)
     return s.save("home.svg")
@@ -505,7 +512,7 @@ def night():
 
 
 def sharing():
-    s = Svg(346, "The Sharing page: a switch for nightly figures to health records, shown on; a switch for respiratory rate to Health Connect, shown off; Table of nights with the button Choose where to keep it; and the button Share the recent nights as text.")
+    s = Svg(346, "The Sharing page: a switch for nightly figures to health records, shown on; a switch for respiratory rate to Health Connect, shown off; Files of nights and events with the button Choose a folder; and the button Share the recent nights as text.")
     row = 80
     top = 22
     for index in range(1, 4):
@@ -519,13 +526,38 @@ def sharing():
     s.heart(86, y + 7, 44)
     s.lines(142, y + 24, ["Respiratory rate", "to Health Connect"], "b", 21)
     y = top + 2 * row
-    s.page(88, y + 8, 32, 42)
-    s.text(142, y + 20, "Table of nights", "b")
-    s.button(142, y + 30, 204, 30, "Choose where to keep it", filled=False)
+    s.folder(86, y + 12, 38, 34)
+    s.text(142, y + 20, "Files of nights and events", "b")
+    s.button(142, y + 30, 150, 30, "Choose a folder", filled=False)
     y = top + 3 * row
     s.share(84, y + 10, 40)
     s.button(142, y + 15, 268, 30, "Share the recent nights as text", filled=False)
     return s.save("sharing.svg")
+
+
+def timeline():
+    s = Svg(200, "The picture of one night on the Nights page: a grey line from midday to midday, the sessions as thick lines on it, a tall mark for each apnoea and a short mark for each hypopnoea, with the hours below.")
+    x1, x2, base = 40, 440, 82
+    s.add(f'<path class="line" d="M{x1} {base}H{x2}"/>')
+
+    def at(hours):
+        return x1 + (x2 - x1) * hours / 24
+
+    for index, label in enumerate(("12", "18", "00", "06", "12")):
+        x = at(index * 6)
+        s.add(f'<path class="line" d="M{f(x)} {base}V{base + 9}"/>')
+        s.text(x, base + 30, label, "x", "middle")
+    # Two sessions: 22:40 to 04:45, and 05:00 to 06:10.
+    for start, end in ((10.67, 16.75), (17.0, 18.17)):
+        s.add(f'<path class="ink" d="M{f(at(start))} {base}H{f(at(end))}" style="stroke-width: 9"/>')
+    # Apnoeas reach higher than hypopnoeas.
+    for hours, tall in ((11.6, True), (12.4, False), (13.1, False), (14.2, True), (15.0, False), (15.6, True), (17.4, False)):
+        top = base - 46 if tall else base - 26
+        s.add(f'<path class="thin" d="M{f(at(hours))} {top}V{base - 12}"/>')
+    # The legend under the hours, as in the app.
+    s.text(x1, base + 58, "Thick line: therapy. Tall mark: apnoea. Short mark: hypopnoea.", "s")
+    s.text(x1, base + 78, "Placed by the machine's clock, from midday to midday.", "x")
+    return s.save("timeline.svg")
 
 
 def modules():
@@ -540,7 +572,7 @@ def modules():
 
 
 def flow():
-    s = Svg(296, "How the data flows: from the machine over Bluetooth to the link, the protocol, the decoders and the plans, then to the sync engine, which keeps its state on the phone and writes to Health Connect, to a file and to the screen.")
+    s = Svg(296, "How the data flows: from the machine over Bluetooth to the link, the protocol, the decoders and the plans, then to the sync engine, which keeps its state, the nights and the breathing events on the phone and writes to Health Connect, to two files in a folder and to the screen.")
     mw = s.machine(20, 28, 36)
     s.text(20 + mw / 2, 84, "Machine", "s", "middle")
     s.link(20 + mw + 6, 98, 46, "active")
@@ -553,13 +585,13 @@ def flow():
     s.box(20, 110, 140, 48, "Stored state", cls="line")
     s.add('<path class="line" d="M162 134H178"/>')
     s.box(180, 110, 276, 48, "Sync engine")
-    targets = [(214, "heart", "Health Connect"), (318, "page", "A file"), (410, "phone", "The screen")]
+    targets = [(214, "heart", "Health Connect"), (318, "folder", "Two files"), (410, "phone", "The screen")]
     for cx, icon, title in targets:
         s.arrow(cx, 161, cx, 190)
         if icon == "heart":
             s.heart(cx - 18.5, 198, 44)
-        elif icon == "page":
-            s.page(cx - 16, 200, 32, 42)
+        elif icon == "folder":
+            s.folder(cx - 19, 204, 38, 34)
         else:
             s.phone(cx - 12, 196, 48)
         s.text(cx, 268, title, "t", "middle")
@@ -567,7 +599,7 @@ def flow():
 
 
 def main():
-    written = [draw() for draw in (overview, picture, setup, home, when, night, sharing, modules, flow)]
+    written = [draw() for draw in (overview, picture, setup, home, when, night, timeline, sharing, modules, flow)]
     stale = sorted(path.name for path in OUT.glob("*.svg") if path.name not in written)
     print(f"wrote {len(written)} diagrams to {OUT}")
     if stale:

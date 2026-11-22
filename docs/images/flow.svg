@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 296" width="480" height="296" role="img" aria-label="How the data flows: from the machine over Bluetooth to the link, the protocol, the decoders and the plans, then to the sync engine, which keeps its state on the phone and writes to Health Connect, to a file and to the screen.">
-<title>How the data flows: from the machine over Bluetooth to the link, the protocol, the decoders and the plans, then to the sync engine, which keeps its state on the phone and writes to Health Connect, to a file and to the screen.</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 296" width="480" height="296" role="img" aria-label="How the data flows: from the machine over Bluetooth to the link, the protocol, the decoders and the plans, then to the sync engine, which keeps its state, the nights and the breathing events on the phone and writes to Health Connect, to two files in a folder and to the screen.">
+<title>How the data flows: from the machine over Bluetooth to the link, the protocol, the decoders and the plans, then to the sync engine, which keeps its state, the nights and the breathing events on the phone and writes to Health Connect, to two files in a folder and to the screen.</title>
 <style>
   .paper { fill: #ffffff; stroke: #d0d7de; stroke-width: 1; }
   .ink { fill: none; stroke: #1f2328; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
@@ -70,12 +70,9 @@
 <text class="t" x="214" y="268" text-anchor="middle">Health Connect</text>
 <path class="ink" d="M318 161L318 190"/>
 <path class="ink" d="M312 184L318 190L324 184"/>
-<path class="ink" d="M302 200H323.8L334 210.2V242H302Z"/>
-<path class="thin" d="M323.8 200V210.2H334"/>
-<path class="thin" d="M308.4 220.2H327.6"/>
-<path class="thin" d="M308.4 226.9H327.6"/>
-<path class="thin" d="M308.4 233.6H327.6"/>
-<text class="t" x="318" y="268" text-anchor="middle">A file</text>
+<path class="ink" d="M299 238V204H314.2L320.2 211H337V238Z"/>
+<path class="thin" d="M299 218H337"/>
+<text class="t" x="318" y="268" text-anchor="middle">Two files</text>
 <path class="ink" d="M410 161L410 190"/>
 <path class="ink" d="M404 184L410 190L416 184"/>
 <rect class="ink" x="399" y="198.9" width="22" height="42.2" rx="4.3"/>

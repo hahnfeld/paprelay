@@ -153,8 +153,8 @@ class SyncState(
     val respiratoryRate: Boolean = false,
     /** Whether each night's figures are written to the phone's health records, where the phone has them. */
     val healthRecords: Boolean = true,
-    /** The file the user made for the table of nights, as the system names it, or null for none. */
-    val exportFile: String? = null,
+    /** The folder the user chose for the tables, as the system names it, or null for none. */
+    val exportFolder: String? = null,
     /**
      * For software the per-minute log was not compared on: one past the last minute that was on
      * the machine when its per-minute log was first read to the end under that software. Only a
@@ -163,9 +163,16 @@ class SyncState(
      * the app set to the moment the software was first seen, so that no such value is taken for it.
      */
     val softwareOwnFromMs: Long? = null,
+    /**
+     * The machine's clock as measured at the last run that copied nights and events, whatever is
+     * switched on. A clock found to have been set since then corrects nothing in that run (see
+     * [com.everysoft.paprelay.as11.plan.ClockCorrection]). Kept apart from [clock], which only a run
+     * that writes respiratory rate moves.
+     */
+    val correctionClock: ClockBaseline? = null,
 ) {
     init {
-        require((exportFile?.length ?: 0) <= MAX_FILE_NAME) { "not a file" }
+        require((exportFolder?.length ?: 0) <= MAX_FILE_NAME) { "not a folder" }
         require(leakLimitLitresPerMinute == null || leakLimitLitresPerMinute in 0..MAX_LEAK_LIMIT) { "not a leak limit" }
         require((vouchedSoftware?.length ?: 0) <= MAX_IDENTIFIER && (softwareSeen?.length ?: 0) <= MAX_IDENTIFIER) { "not a software identifier" }
     }
@@ -185,11 +192,12 @@ class SyncState(
         softwareSinceMs: Long? = this.softwareSinceMs,
         respiratoryRate: Boolean = this.respiratoryRate,
         healthRecords: Boolean = this.healthRecords,
-        exportFile: String? = this.exportFile,
+        exportFolder: String? = this.exportFolder,
         softwareOwnFromMs: Long? = this.softwareOwnFromMs,
+        correctionClock: ClockBaseline? = this.correctionClock,
     ) = SyncState(
         machineTag, ledger, resumeFromMs, lastReport, lastCompleteAtMs, leakLimitLitresPerMinute, clock, rewriteRequested, vouchedSoftware,
-        rulesVersion, softwareSeen, softwareSinceMs, respiratoryRate, healthRecords, exportFile, softwareOwnFromMs,
+        rulesVersion, softwareSeen, softwareSinceMs, respiratoryRate, healthRecords, exportFolder, softwareOwnFromMs, correctionClock,
     )
 
     /** Everything about a machine forgotten; what the user has chosen kept. */
@@ -197,7 +205,7 @@ class SyncState(
         leakLimitLitresPerMinute = leakLimitLitresPerMinute,
         respiratoryRate = respiratoryRate,
         healthRecords = healthRecords,
-        exportFile = exportFile,
+        exportFolder = exportFolder,
     )
 
     /**
@@ -315,9 +323,18 @@ class SyncStore(private val file: File) {
             state.softwareSeen?.let { put("softwareSeen", it) }
             state.softwareSinceMs?.let { put("softwareSinceMs", it) }
             state.softwareOwnFromMs?.let { put("softwareOwnFromMs", it) }
+            state.correctionClock?.let { clock ->
+                put(
+                    "correctionClock",
+                    buildJsonObject {
+                        put("offsetMs", clock.offsetMs)
+                        put("machineMs", clock.machineMs)
+                    },
+                )
+            }
             put("respiratoryRate", state.respiratoryRate)
             if (!state.healthRecords) put("healthRecords", false)
-            state.exportFile?.let { put("exportFile", it) }
+            state.exportFolder?.let { put("exportFolder", it) }
             state.lastReport?.let { report ->
                 put(
                     "lastReport",
@@ -399,8 +416,9 @@ class SyncStore(private val file: File) {
                 // A state from before this was a choice wrote respiratory rate always. If it wrote any, it goes on doing so.
                 respiratoryRate = (json["respiratoryRate"] as? JsonPrimitive)?.content?.let { it == "true" } ?: ledger.isNotEmpty(),
                 healthRecords = (json["healthRecords"] as? JsonPrimitive)?.content != "false",
-                exportFile = (json["exportFile"] as? JsonPrimitive)?.content,
+                exportFolder = (json["exportFolder"] as? JsonPrimitive)?.content,
                 softwareOwnFromMs = (json["softwareOwnFromMs"] as? JsonPrimitive)?.long,
+                correctionClock = (json["correctionClock"] as? JsonObject)?.let { ClockBaseline(it.getValue("offsetMs").jsonPrimitive.long, it.getValue("machineMs").jsonPrimitive.long) },
             )
         }
 
