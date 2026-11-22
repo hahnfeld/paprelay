@@ -36,28 +36,52 @@ data class Links(val machine: LinkState, val health: LinkState, val phoneFault: 
 /** True once a device check has been started, so that its steps say something. */
 fun checkStarted(steps: List<Step>, running: Boolean): Boolean = running || steps.any { it.state != StepState.PENDING }
 
+/** What the picture and the sentence under it on the home screen describe. */
+enum class HomeShows {
+    /** The pairing has not been read yet. */
+    NOTHING,
+
+    /** The device check: the one running, or the last one. */
+    CHECK,
+
+    /** Synchronising: the run in progress, or the last one. */
+    SYNC,
+}
+
 /**
- * The picture on the home screen.
+ * Which of the two the home screen describes, so that the picture and the sentence always tell
+ * of the same event.
  *
- * With a machine paired, in a build that synchronises, it shows how synchronising stands.
- * While a check runs, or before there is a machine, it shows the check. It also shows the
- * check when the check has something to say and synchronising does not yet: just after the
- * first pairing, the check's ticks are worth more than two grey lines. Until the pairing has
- * been read it shows nothing in particular.
+ * A running check is shown, and so is the check in a build that does not synchronise or before
+ * there is a machine. Otherwise it is whichever ended last: just after the first pairing that is
+ * the check, so its ticks stay until the first synchronisation. A synchronisation in progress, and
+ * a damaged record of synchronising (whose way out is on the home screen), always come first.
  */
-fun homeLinks(
-    pairing: PairingState,
-    steps: List<Step>,
-    checkRunning: Boolean,
-    syncEnabled: Boolean,
-    sync: SyncStatus,
-    healthAllowed: Boolean,
-): Links {
-    if (pairing == PairingState.Loading) return Links(LinkState.NONE, LinkState.NONE)
-    val syncSaysNothing = sync.lastReport == null && !sync.running && !sync.storeUnreadable
-    val showSync = syncEnabled && pairing is PairingState.Paired && !checkRunning &&
-        !(syncSaysNothing && checkStarted(steps, checkRunning))
-    return if (showSync) syncLinks(sync, healthAllowed) else checkLinks(steps, pairing, checkRunning, healthAllowed)
+fun homeShows(pairing: PairingState, checkRunning: Boolean, checkFinishedAtMs: Long?, syncEnabled: Boolean, sync: SyncStatus): HomeShows {
+    if (pairing == PairingState.Loading) return HomeShows.NOTHING
+    if (checkRunning || !syncEnabled || pairing !is PairingState.Paired) return HomeShows.CHECK
+    if (sync.running || sync.storeUnreadable) return HomeShows.SYNC
+    val lastSync = sync.lastReport?.atMs
+    return if (checkFinishedAtMs != null && (lastSync == null || checkFinishedAtMs > lastSync)) HomeShows.CHECK else HomeShows.SYNC
+}
+
+/** The picture on the home screen, for what [homeShows] chose. */
+fun homeLinks(shows: HomeShows, pairing: PairingState, steps: List<Step>, checkRunning: Boolean, sync: SyncStatus, healthAllowed: Boolean): Links =
+    when (shows) {
+        HomeShows.NOTHING -> Links(LinkState.NONE, LinkState.NONE)
+        HomeShows.CHECK -> checkLinks(steps, pairing, checkRunning, healthAllowed)
+        HomeShows.SYNC -> syncLinks(sync, healthAllowed)
+    }
+
+/** How a finished check went, in the terms the screens use to describe it. */
+enum class CheckOutcome { PASSED, FAILED, STOPPED, INCOMPLETE }
+
+/** "Passed" means the last step did, not merely that nothing went wrong. */
+fun checkOutcome(steps: List<Step>): CheckOutcome = when {
+    steps.any { it.state == StepState.CANCELLED } -> CheckOutcome.STOPPED
+    steps.any { it.state == StepState.FAILED } -> CheckOutcome.FAILED
+    steps.lastOrNull()?.state == StepState.PASSED -> CheckOutcome.PASSED
+    else -> CheckOutcome.INCOMPLETE
 }
 
 /** How the two legs stand during a device check, or after one. */

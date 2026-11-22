@@ -70,6 +70,7 @@ private fun Root(app: PapRelayApp) {
     val nights by app.sync.nights.collectAsState()
     val forgetting by check.forgetting.collectAsState()
     val stopping by check.stopping.collectAsState()
+    val checkFinishedAtMs by check.finishedAtMs.collectAsState()
     var page by rememberSaveable { mutableStateOf(PAGE_HOME) }
     var confirmForget by rememberSaveable { mutableStateOf(false) }
     var confirmRewrite by rememberSaveable { mutableStateOf(false) }
@@ -299,10 +300,6 @@ private fun Root(app: PapRelayApp) {
             permissionRefused = permissionRefused,
             onRun = { request(PENDING_CHECK) },
             onStop = { check.cancel() },
-            onSync = {
-                page = PAGE_HOME
-                request(PENDING_SYNC)
-            },
             onExport = { export.launch("paprelay-device-check.txt") },
             onRewrite = { confirmRewrite = true },
             onForget = { confirmForget = true },
@@ -313,6 +310,8 @@ private fun Root(app: PapRelayApp) {
             pairing = pairing,
             steps = steps,
             checkRunning = running,
+            checkStopping = stopping,
+            checkFinishedAtMs = checkFinishedAtMs,
             busy = forgetting,
             syncEnabled = app.sync.enabled,
             sync = sync,
@@ -326,11 +325,9 @@ private fun Root(app: PapRelayApp) {
             onAllowHealth = { request(PENDING_SYNC) },
             onAcceptClock = { confirmClock = true },
             onStartAgain = { app.sync.startAgain() },
-            onPair = {
-                // The steps are worth watching while the machine is paired for the first time.
-                page = PAGE_CHECK
-                request(PENDING_CHECK)
-            },
+            // Runs here, on the home screen, whose picture fills in as the check goes.
+            onCheck = { request(PENDING_CHECK) },
+            onStopCheck = { check.cancel() },
             onOpenCheck = { page = PAGE_CHECK },
             onOpenNights = { page = PAGE_NIGHTS },
             onOpenChoices = { page = PAGE_CHOICES },

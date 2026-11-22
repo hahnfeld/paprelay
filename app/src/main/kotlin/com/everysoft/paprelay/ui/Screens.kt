@@ -193,14 +193,17 @@ private fun Secondary(text: String, modifier: Modifier = Modifier) {
 }
 
 /**
- * The main screen: the picture, the machine, one sentence on how things stand, and one button.
- * Everything for finding faults is on the device-check screen.
+ * The main screen: the picture, the machine, one sentence on how things stand, the button for
+ * this moment, and the rows that lead to the other pages. Pairing runs here, so that the picture
+ * can be watched while it fills in. Everything for finding faults is on the device-check screen.
  */
 @Composable
 fun HomeScreen(
     pairing: PairingState,
     steps: List<Step>,
     checkRunning: Boolean,
+    checkStopping: Boolean,
+    checkFinishedAtMs: Long?,
     busy: Boolean,
     syncEnabled: Boolean,
     sync: SyncStatus,
@@ -214,7 +217,8 @@ fun HomeScreen(
     onAllowHealth: () -> Unit,
     onAcceptClock: () -> Unit,
     onStartAgain: () -> Unit,
-    onPair: () -> Unit,
+    onCheck: () -> Unit,
+    onStopCheck: () -> Unit,
     onOpenCheck: () -> Unit,
     onOpenNights: () -> Unit,
     onOpenChoices: () -> Unit,
@@ -224,17 +228,33 @@ fun HomeScreen(
     onAbout: () -> Unit,
 ) {
     val paired = pairing is PairingState.Paired
-    val checkStarted = checkStarted(steps, checkRunning)
-    Page(
-        title = stringResource(R.string.app_name),
-        action = { TextButton(onClick = onAbout) { Text(stringResource(R.string.about_title)) } },
-    ) {
+    // The picture and the sentence under it always tell of the same event: the check or synchronising.
+    val shows = homeShows(pairing, checkRunning, checkFinishedAtMs, syncEnabled, sync)
+    // A build that synchronises, with a machine it can synchronise (or whose pairing it may yet read).
+    val synchronising = syncEnabled && (paired || pairing == PairingState.Unavailable)
+    Page(title = stringResource(R.string.app_name), action = { InfoButton(onAbout) }) {
         // The picture comes first: it says what the app does and how far it has got.
-        FlowDiagram(homeLinks(pairing, steps, checkRunning, syncEnabled, sync, healthAllowed))
+        FlowDiagram(homeLinks(shows, pairing, steps, checkRunning, sync, healthAllowed))
         Spacer(Modifier.height(28.dp))
-        MachineLine(pairing)
 
-        val free = !sync.running && !checkRunning && !busy
+        if (checkRunning) {
+            // While the check runs, the step it is on takes the place of the machine's name, and
+            // nothing leads away from the screen.
+            Text(
+                steps.firstOrNull { it.state == StepState.RUNNING }?.let { stringResource(CheckSteps.title(it.id)) }
+                    ?: stringResource(R.string.verdict_running),
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+            )
+            Secondary(stringResource(R.string.home_check_running), Modifier.padding(top = 4.dp))
+            Spacer(Modifier.height(20.dp))
+            StopButton(checkStopping, onStopCheck)
+            return@Page
+        }
+
+        MachineLine(pairing)
+        val free = !sync.running && !busy
+
         if (paired && syncEnabled) {
             // What the app is for: the latest finished night, in the machine's own figures.
             nights.firstOrNull { it.complete }?.let { night ->
@@ -242,13 +262,19 @@ fun HomeScreen(
                 NightSummary(night, prominent = true)
                 Spacer(Modifier.height(8.dp))
             }
-            // Only the sentence is announced when it changes; the time under it ticks on quietly.
-            Text(
-                syncLine(sync),
-                style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier.padding(top = 12.dp).semantics { liveRegion = LiveRegionMode.Polite },
-            )
-            lastTimeLine(sync)?.let { Secondary(it, Modifier.padding(top = 4.dp)) }
+            if (shows == HomeShows.CHECK) {
+                CheckSummary(steps, Modifier.padding(top = 12.dp), next = sync.lastReport == null)
+                // A check after an earlier synchronisation does not make that synchronisation any less true.
+                if (sync.lastReport != null) lastTimeLine(sync)?.let { Secondary(it, Modifier.padding(top = 4.dp)) }
+            } else {
+                // Only the sentence is announced when it changes; the time under it ticks on quietly.
+                Text(
+                    syncLine(sync),
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.padding(top = 12.dp).semantics { liveRegion = LiveRegionMode.Polite },
+                )
+                lastTimeLine(sync)?.let { Secondary(it, Modifier.padding(top = 4.dp)) }
+            }
             Spacer(Modifier.height(20.dp))
             // Wraps instead of clipping at large font sizes.
             FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -287,21 +313,24 @@ fun HomeScreen(
                 Secondary(stringResource(R.string.choice_file_failed), Modifier.padding(top = 12.dp))
             }
         } else {
+            // The last check, until the machine is paired; in a test build, always.
+            if (checkStarted(steps, running = false)) CheckSummary(steps, Modifier.padding(top = 16.dp), next = false)
             if (paired) Secondary(stringResource(R.string.debug_no_sync), Modifier.padding(top = 12.dp))
             Spacer(Modifier.height(20.dp))
             when (pairing) {
                 PairingState.Loading -> Unit
                 // Pairing is the first part of the device check, which then proves the rest works.
                 PairingState.Absent, PairingState.Unreadable ->
-                    Button(onClick = onPair, enabled = !busy && !checkRunning) { Text(stringResource(R.string.action_pair)) }
+                    Button(onClick = onCheck, enabled = free) { Text(stringResource(R.string.action_pair)) }
                 PairingState.Unavailable, is PairingState.Paired ->
-                    Button(onClick = onOpenCheck) { Text(stringResource(R.string.action_device_check)) }
+                    Button(onClick = onCheck, enabled = free) { Text(stringResource(R.string.action_run_check)) }
             }
         }
 
         // Not said twice: the sentence above already says it when the last run was stopped by this.
-        val saidAbove = paired && syncEnabled && free && !sync.storeUnreadable && sync.lastReport?.outcome == SyncOutcome.BLUETOOTH_NOT_ALLOWED
-        if (permissionRefused && !checkRunning && !saidAbove) {
+        val saidAbove = paired && syncEnabled && shows == HomeShows.SYNC && free && !sync.storeUnreadable &&
+            sync.lastReport?.outcome == SyncOutcome.BLUETOOTH_NOT_ALLOWED
+        if (permissionRefused && !saidAbove) {
             Secondary(stringResource(R.string.permission_needed), Modifier.padding(top = 12.dp))
             TextButton(onClick = onOpenSettings, modifier = Modifier.offset(x = (-12).dp)) {
                 Text(stringResource(R.string.action_open_settings))
@@ -316,17 +345,105 @@ fun HomeScreen(
             }
         }
 
-        // Where the primary button is not already the way to the check.
-        if (paired && syncEnabled || pairing == PairingState.Unreadable || pairing == PairingState.Absent && checkStarted) {
+        // The ways to the other pages. Before there is a machine, the check is worth opening only
+        // once it has something to show.
+        if (paired || pairing == PairingState.Unavailable || checkStarted(steps, running = false)) {
             Spacer(Modifier.height(24.dp))
-            // Text buttons carry 12 dp of padding; pulled out so the first label sits on the text margin.
-            FlowRow(Modifier.offset(x = (-12).dp)) {
-                if (paired && syncEnabled) {
-                    if (nights.any { it.complete }) TextButton(onClick = onOpenNights) { Text(stringResource(R.string.nights_title)) }
-                    TextButton(onClick = onOpenChoices) { Text(stringResource(R.string.choices_title)) }
-                }
-                TextButton(onClick = onOpenCheck) { Text(stringResource(R.string.action_device_check)) }
+            if (synchronising) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                DestinationRow(GlyphKind.MOON, R.string.nights_title, onOpenNights)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                DestinationRow(GlyphKind.FORK, R.string.choices_title, onOpenChoices)
             }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            DestinationRow(GlyphKind.CHECKED_LINK, R.string.action_device_check, onOpenCheck)
+        }
+    }
+}
+
+/**
+ * How the last check went, where the sentence about synchronising would be: one line for the
+ * whole check and, when a step failed, which one and why. With [next], a passed check says what
+ * to do now.
+ */
+@Composable
+private fun CheckSummary(steps: List<Step>, modifier: Modifier = Modifier, next: Boolean) {
+    val outcome = checkOutcome(steps)
+    Column(modifier) {
+        Text(
+            if (outcome == CheckOutcome.PASSED && next) stringResource(R.string.home_paired_next) else verdict(steps, running = false),
+            style = if (outcome == CheckOutcome.PASSED && next) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.titleMedium,
+            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+        )
+        if (outcome == CheckOutcome.FAILED) {
+            steps.firstOrNull { it.state == StepState.FAILED }?.let { failed ->
+                Text(stringResource(CheckSteps.title(failed.id)), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 8.dp))
+                failed.detail?.let { detail ->
+                    Text(
+                        detail.text(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Stopping can take a moment: a step that must not be cut short is finished first. */
+@Composable
+private fun StopButton(stopping: Boolean, onStop: () -> Unit) {
+    OutlinedButton(onClick = onStop, enabled = !stopping) {
+        Text(stringResource(if (stopping) R.string.action_stopping else R.string.action_stop))
+    }
+}
+
+/** The "i" at the end of the home screen's title row, which opens About. */
+@Composable
+private fun InfoButton(onClick: () -> Unit) {
+    val description = stringResource(R.string.about_title)
+    Box(
+        Modifier
+            .size(48.dp)
+            .clip(CircleShape)
+            .clickable(onClick = onClick)
+            .semantics {
+                contentDescription = description
+                role = Role.Button
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Glyph(GlyphKind.INFO)
+    }
+}
+
+/**
+ * A row that leads somewhere: a glyph, the words, and, for another page of the app, a chevron.
+ * The whole row answers to a tap and is read out as its words alone. It carries no status:
+ * that belongs to the picture.
+ */
+@Composable
+private fun DestinationRow(glyph: GlyphKind, @StringRes label: Int, onClick: () -> Unit, chevron: Boolean = true) {
+    val text = stringResource(label)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp)
+            .clickable(role = Role.Button, onClick = onClick)
+            .clearAndSetSemantics {
+                contentDescription = text
+                role = Role.Button
+            }
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Glyph(glyph)
+        Spacer(Modifier.width(16.dp))
+        Text(text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+        if (chevron) {
+            Spacer(Modifier.width(8.dp))
+            Glyph(GlyphKind.CHEVRON)
         }
     }
 }
@@ -417,6 +534,8 @@ fun NightsScreen(nights: List<Night>, onShare: () -> Unit, onBack: () -> Unit) {
                     }
                     Secondary(stringResource(R.string.nights_note))
                     Spacer(Modifier.height(12.dp))
+                    // The page is always reachable from the home screen, so it says why it is empty.
+                    if (finished.isEmpty()) Text(stringResource(R.string.nights_empty), style = MaterialTheme.typography.bodyLarge)
                 }
                 itemsIndexed(finished, key = { _, night -> night.date.toEpochDay() }) { index, night ->
                     if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -447,6 +566,7 @@ fun ChoicesScreen(
         // A choice is stored once the run in progress has finished, so it is not offered during one.
         if (sync.running) Secondary(stringResource(R.string.sync_running), Modifier.padding(bottom = 8.dp))
         Choice(
+            glyph = GlyphKind.HEART,
             title = R.string.choice_records,
             body = if (recordsSupported) R.string.choice_records_body else R.string.choice_records_unsupported,
             checked = recordsSupported && sync.healthRecords,
@@ -455,38 +575,42 @@ fun ChoicesScreen(
         )
         if (recordsBlocked) NotAllowed(onOpenHealthConnect)
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Choice(R.string.choice_respiratory, R.string.choice_respiratory_body, sync.respiratoryRate, enabled = !sync.running, onChange = onRespiratoryRate)
+        Choice(GlyphKind.HEART, R.string.choice_respiratory, R.string.choice_respiratory_body, sync.respiratoryRate, enabled = !sync.running, onChange = onRespiratoryRate)
         val ran = sync.lastReport?.outcome.let { it == SyncOutcome.COMPLETE || it == SyncOutcome.PARTIAL }
         if (sync.rateWaiting && ran && !respiratoryBlocked) Secondary(stringResource(R.string.rate_waiting), Modifier.padding(bottom = 14.dp))
         if (respiratoryBlocked) NotAllowed(onOpenHealthConnect)
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Column(Modifier.fillMaxWidth().padding(vertical = 14.dp)) {
-            Text(stringResource(R.string.choice_file), style = MaterialTheme.typography.bodyLarge)
-            Secondary(stringResource(R.string.choice_file_body), Modifier.padding(top = 2.dp))
-            if (sync.exportFile != null) {
-                Text(
-                    when {
-                        sync.exportFailed -> stringResource(R.string.choice_file_failed)
-                        sync.exportName != null -> stringResource(R.string.choice_file_named, sync.exportName)
-                        else -> stringResource(R.string.choice_file_on)
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (sync.exportFailed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.padding(top = 6.dp),
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onChooseFile, enabled = !sync.running) {
-                    Text(stringResource(if (sync.exportFile == null) R.string.action_choose_file else R.string.action_other_file))
+        Row(Modifier.fillMaxWidth().padding(vertical = 14.dp)) {
+            Glyph(GlyphKind.PAGE)
+            Spacer(Modifier.width(16.dp))
+            Column(Modifier.weight(1f)) {
+                Text(stringResource(R.string.choice_file), style = MaterialTheme.typography.bodyLarge)
+                Secondary(stringResource(R.string.choice_file_body), Modifier.padding(top = 2.dp))
+                if (sync.exportFile != null) {
+                    Text(
+                        when {
+                            sync.exportFailed -> stringResource(R.string.choice_file_failed)
+                            sync.exportName != null -> stringResource(R.string.choice_file_named, sync.exportName)
+                            else -> stringResource(R.string.choice_file_on)
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (sync.exportFailed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
                 }
-                if (sync.exportFile != null) TextButton(onClick = onNoFile, enabled = !sync.running) { Text(stringResource(R.string.action_no_file)) }
+                Spacer(Modifier.height(8.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onChooseFile, enabled = !sync.running) {
+                        Text(stringResource(if (sync.exportFile == null) R.string.action_choose_file else R.string.action_other_file))
+                    }
+                    if (sync.exportFile != null) TextButton(onClick = onNoFile, enabled = !sync.running) { Text(stringResource(R.string.action_no_file)) }
+                }
             }
         }
         if (hasNights) {
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            Spacer(Modifier.height(8.dp))
-            TextButton(onClick = onShare, modifier = Modifier.offset(x = (-12).dp)) { Text(stringResource(R.string.action_share_nights)) }
+            // Hands the nights to the system's share sheet, not to another page: no chevron.
+            DestinationRow(GlyphKind.SHARE, R.string.action_share_nights, onShare, chevron = false)
         }
     }
 }
@@ -504,7 +628,7 @@ private fun NotAllowed(onOpenHealthConnect: () -> Unit) {
 
 /** A choice with a switch: the whole row answers to a tap, and is read out as one thing. */
 @Composable
-private fun Choice(@StringRes title: Int, @StringRes body: Int, checked: Boolean, enabled: Boolean, onChange: (Boolean) -> Unit) {
+private fun Choice(glyph: GlyphKind, @StringRes title: Int, @StringRes body: Int, checked: Boolean, enabled: Boolean, onChange: (Boolean) -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -512,6 +636,9 @@ private fun Choice(@StringRes title: Int, @StringRes body: Int, checked: Boolean
             .padding(vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // Level with the first line of the title, however many lines the text below it takes.
+        Glyph(glyph, Modifier.align(Alignment.Top), enabled = enabled)
+        Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f)) {
             Text(stringResource(title), style = MaterialTheme.typography.bodyLarge)
             Secondary(stringResource(body), Modifier.padding(top = 2.dp))
@@ -547,7 +674,10 @@ private fun MachineLine(pairing: PairingState) {
     }
 }
 
-/** The device check: for pairing, and for finding out what is wrong when something is. */
+/**
+ * The device check: for finding out what is wrong when something is, for a report to send, and
+ * for the two rare actions that remove or rewrite stored data. Pairing starts on the home screen.
+ */
 @Composable
 fun CheckScreen(
     pairing: PairingState,
@@ -562,7 +692,6 @@ fun CheckScreen(
     permissionRefused: Boolean,
     onRun: () -> Unit,
     onStop: () -> Unit,
-    onSync: () -> Unit,
     onExport: () -> Unit,
     onRewrite: () -> Unit,
     onForget: () -> Unit,
@@ -570,35 +699,25 @@ fun CheckScreen(
     onBack: () -> Unit,
 ) {
     val paired = pairing is PairingState.Paired
-    val passed = !running && steps.lastOrNull()?.state == StepState.PASSED && steps.none { it.state == StepState.FAILED || it.state == StepState.CANCELLED }
     Page(title = stringResource(R.string.action_device_check), onBack = onBack) {
-        // The same picture as on the home screen, driven by the steps: its lines fill in as the check
-        // reaches each part, so the first pairing can be followed without reading the list.
+        // The same picture as on the home screen, driven by the steps: its lines fill in as the
+        // check reaches each part.
         FlowDiagram(checkLinks(steps, pairing, running, healthAllowed))
         Spacer(Modifier.height(28.dp))
+        Secondary(stringResource(R.string.check_intro))
+        Spacer(Modifier.height(16.dp))
         MachineLine(pairing)
         // Why nothing here can be started just now.
         if (syncRunning) Secondary(stringResource(R.string.sync_running), Modifier.padding(top = 4.dp))
         Spacer(Modifier.height(20.dp))
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (running) {
-                // Stopping can take a moment: a step that must not be cut short is finished first.
-                OutlinedButton(onClick = onStop, enabled = !stopping) {
-                    Text(stringResource(if (stopping) R.string.action_stopping else R.string.action_stop))
-                }
-            } else {
-                // Held back while a pairing is being forgotten or the machine is in use, so a check cannot start on it.
-                val free = !busy && !syncRunning && pairing != PairingState.Loading
-                // Everything works: what comes next is to synchronise, and that is the button to see.
-                val next = passed && paired && syncEnabled
-                if (next) {
-                    Button(onClick = onSync, enabled = free) { Text(stringResource(R.string.action_sync)) }
-                    OutlinedButton(onClick = onRun, enabled = free) { Text(stringResource(R.string.action_run_check)) }
-                } else {
-                    // One check for every case: with a machine already paired it skips pairing by itself.
-                    Button(onClick = onRun, enabled = free) { Text(stringResource(R.string.action_run_check)) }
-                }
-            }
+        if (running) {
+            StopButton(stopping, onStop)
+        } else {
+            // One check for every case. With a machine already paired it does not pair again.
+            // Held back while a pairing is being forgotten or the machine is in use, so a check cannot start on it.
+            val free = !busy && !syncRunning && pairing != PairingState.Loading
+            val unpaired = pairing == PairingState.Absent || pairing == PairingState.Unreadable
+            Button(onClick = onRun, enabled = free) { Text(stringResource(if (unpaired) R.string.action_pair else R.string.action_run_check)) }
         }
 
         if (permissionRefused && !running) {
@@ -624,7 +743,6 @@ fun CheckScreen(
                 if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 StepRow(step)
             }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         }
 
         val idle = !running && !busy && !syncRunning
@@ -633,8 +751,10 @@ fun CheckScreen(
         // Offered whenever something is stored, readable or not, so there is always a way to start over.
         val canForget = paired || pairing == PairingState.Unreadable || pairing == PairingState.Unavailable
         if (canExport || canRewrite || canForget) {
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, modifier = Modifier.padding(top = if (checkStarted(steps, running)) 0.dp else 24.dp))
             Spacer(Modifier.height(16.dp))
-            // Text buttons carry 12 dp of padding; pulled out so their labels sit on the text margin.
+            // Actions, not places: plain text buttons, without glyphs. Text buttons carry 12 dp of
+            // padding; pulled out so their labels sit on the text margin.
             Column(Modifier.offset(x = (-12).dp)) {
                 if (canExport) TextButton(onClick = onExport) { Text(stringResource(R.string.action_export)) }
                 if (canRewrite) TextButton(onClick = onRewrite, enabled = idle) { Text(stringResource(R.string.action_rewrite)) }
@@ -651,14 +771,13 @@ fun CheckScreen(
 /** One line that says how the whole check went. Shown only once a check has started. */
 @Composable
 private fun verdict(steps: List<Step>, running: Boolean): String {
+    if (running) return stringResource(R.string.verdict_running)
     val failed = steps.count { it.state == StepState.FAILED }
-    return when {
-        running -> stringResource(R.string.verdict_running)
-        steps.any { it.state == StepState.CANCELLED } -> stringResource(R.string.verdict_stopped)
-        failed > 0 -> pluralStringResource(R.plurals.verdict_failed, failed, failed)
-        // "Passed" means the last step did, not merely that nothing went wrong.
-        steps.lastOrNull()?.state == StepState.PASSED -> stringResource(R.string.verdict_passed)
-        else -> stringResource(R.string.verdict_incomplete)
+    return when (checkOutcome(steps)) {
+        CheckOutcome.STOPPED -> stringResource(R.string.verdict_stopped)
+        CheckOutcome.FAILED -> pluralStringResource(R.plurals.verdict_failed, failed, failed)
+        CheckOutcome.PASSED -> stringResource(R.string.verdict_passed)
+        CheckOutcome.INCOMPLETE -> stringResource(R.string.verdict_incomplete)
     }
 }
 

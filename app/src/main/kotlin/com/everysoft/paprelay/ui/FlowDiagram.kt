@@ -238,7 +238,7 @@ private fun DrawScope.phone(w: Float, h: Float, color: Color, width: Float) {
 }
 
 /** A heart filling a box 0.84 units wide and one unit tall. */
-private fun heartPath(unit: Float): Path {
+internal fun heartPath(unit: Float): Path {
     val w = unit * 0.84f
     val h = unit
     return Path().apply {

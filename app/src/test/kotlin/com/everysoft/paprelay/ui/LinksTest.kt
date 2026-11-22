@@ -30,9 +30,14 @@ class LinksTest {
 
     private fun synced(outcome: SyncOutcome) = neverSynced.with(lastReport = SyncReport(atMs = 1, outcome = outcome, sessions = 1, readingsWritten = 1))
 
+    /** What the home screen draws, as MainActivity puts it together. */
+    private fun home(pairing: PairingState, steps: List<Step>, running: Boolean, finishedAt: Long?, syncEnabled: Boolean, sync: SyncStatus, allowed: Boolean): Links =
+        homeLinks(homeShows(pairing, running, finishedAt, syncEnabled, sync), pairing, steps, running, sync, allowed)
+
     @Test
     fun `nothing in particular is shown before the pairing has been read`() {
-        assertEquals(Links(LinkState.NONE, LinkState.NONE), homeLinks(PairingState.Loading, allPassed, false, true, synced(SyncOutcome.COMPLETE), true))
+        assertEquals(HomeShows.NOTHING, homeShows(PairingState.Loading, false, 5, true, synced(SyncOutcome.COMPLETE)))
+        assertEquals(Links(LinkState.NONE, LinkState.NONE), home(PairingState.Loading, allPassed, false, 5, true, synced(SyncOutcome.COMPLETE), true))
     }
 
     @Test
@@ -71,36 +76,64 @@ class LinksTest {
 
     @Test
     fun `after a passed check with no synchronisation yet, home keeps the check's ticks`() {
-        assertEquals(Links(LinkState.OK, LinkState.OK), homeLinks(paired, allPassed, false, true, neverSynced, true))
+        assertEquals(HomeShows.CHECK, homeShows(paired, false, 10, true, neverSynced))
+        assertEquals(Links(LinkState.OK, LinkState.OK), home(paired, allPassed, false, 10, true, neverSynced, true))
     }
 
     @Test
     fun `after a failed check with no synchronisation yet, home keeps the check's failure`() {
         val failed = steps(StepState.PASSED, StepState.PASSED, StepState.SKIPPED, StepState.FAILED)
-        assertEquals(LinkState.FAILED, homeLinks(paired, failed, false, true, neverSynced, true).machine)
+        assertEquals(LinkState.FAILED, home(paired, failed, false, 10, true, neverSynced, true).machine)
     }
 
     @Test
-    fun `once synchronising has something to say, home shows it instead of the check`() {
-        assertEquals(Links(LinkState.ACTIVE, LinkState.READY), homeLinks(paired, allPassed, false, true, neverSynced.with(running = true), true))
-        assertEquals(Links(LinkState.FAILED, LinkState.READY), homeLinks(paired, allPassed, false, true, synced(SyncOutcome.CONNECTION_LOST), true))
-        assertTrue(homeLinks(paired, allPassed, false, true, neverSynced.with(storeUnreadable = true), true).phoneFault)
+    fun `home shows whichever of the check and synchronising ended last`() {
+        val earlier = neverSynced.with(lastReport = SyncReport(atMs = 100, outcome = SyncOutcome.CONNECTION_LOST, sessions = 1, readingsWritten = 0))
+        // The check came after the synchronisation: its ticks are shown.
+        assertEquals(HomeShows.CHECK, homeShows(paired, false, 200, true, earlier))
+        assertEquals(Links(LinkState.OK, LinkState.OK), home(paired, allPassed, false, 200, true, earlier, true))
+        // The synchronisation came after the check: its failure is shown.
+        assertEquals(HomeShows.SYNC, homeShows(paired, false, 50, true, earlier))
+        assertEquals(Links(LinkState.FAILED, LinkState.READY), home(paired, allPassed, false, 50, true, earlier, true))
+        // The same moment counts for synchronising, which has the newer news by the time it reports.
+        assertEquals(HomeShows.SYNC, homeShows(paired, false, 100, true, earlier))
+    }
+
+    @Test
+    fun `a synchronisation in progress or a damaged record is shown even after a newer check`() {
+        assertEquals(Links(LinkState.ACTIVE, LinkState.READY), home(paired, allPassed, false, 10, true, neverSynced.with(running = true), true))
+        assertEquals(HomeShows.SYNC, homeShows(paired, false, 10, true, neverSynced.with(storeUnreadable = true)))
+        assertTrue(home(paired, allPassed, false, 10, true, neverSynced.with(storeUnreadable = true), true).phoneFault)
     }
 
     @Test
     fun `with no check and no synchronisation, home shows the legs as ready`() {
-        assertEquals(Links(LinkState.READY, LinkState.NONE), homeLinks(paired, untouched, false, true, neverSynced, false))
+        // After a restart the check is forgotten: synchronising, with nothing yet, is shown.
+        assertEquals(HomeShows.SYNC, homeShows(paired, false, null, true, neverSynced))
+        assertEquals(Links(LinkState.READY, LinkState.NONE), home(paired, untouched, false, null, true, neverSynced, false))
     }
 
     @Test
     fun `while a check runs, home shows the check even after synchronising`() {
         val running = steps(StepState.RUNNING)
-        assertEquals(Links(LinkState.READY, LinkState.ACTIVE), homeLinks(paired, running, true, true, synced(SyncOutcome.COMPLETE), true))
+        assertEquals(Links(LinkState.READY, LinkState.ACTIVE), home(paired, running, true, null, true, synced(SyncOutcome.COMPLETE), true))
     }
 
     @Test
-    fun `a build that does not synchronise always shows the check`() {
-        assertEquals(Links(LinkState.OK, LinkState.OK), homeLinks(paired, allPassed, false, false, synced(SyncOutcome.CONNECTION_LOST), true))
+    fun `before there is a machine, or in a build that does not synchronise, home shows the check`() {
+        assertEquals(HomeShows.CHECK, homeShows(PairingState.Absent, false, null, true, neverSynced))
+        assertEquals(HomeShows.CHECK, homeShows(PairingState.Unavailable, false, null, true, synced(SyncOutcome.COMPLETE)))
+        assertEquals(Links(LinkState.OK, LinkState.OK), home(paired, allPassed, false, null, false, synced(SyncOutcome.CONNECTION_LOST), true))
+    }
+
+    @Test
+    fun `a check's outcome is read the way the screens say it`() {
+        assertEquals(CheckOutcome.PASSED, checkOutcome(allPassed))
+        assertEquals(CheckOutcome.FAILED, checkOutcome(steps(StepState.PASSED, StepState.FAILED, StepState.SKIPPED)))
+        // Stopped wins over a failure: the user ended it.
+        assertEquals(CheckOutcome.STOPPED, checkOutcome(steps(StepState.FAILED, StepState.CANCELLED)))
+        // Nothing failed, but the last step did not pass either.
+        assertEquals(CheckOutcome.INCOMPLETE, checkOutcome(steps(StepState.PASSED, StepState.NOTED, StepState.SKIPPED, StepState.SKIPPED, StepState.SKIPPED, StepState.SKIPPED, StepState.SKIPPED)))
     }
 
     @Test

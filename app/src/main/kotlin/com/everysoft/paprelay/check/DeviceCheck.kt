@@ -166,6 +166,14 @@ class DeviceCheck(
     private val _forgetting = MutableStateFlow(false)
     val forgetting: StateFlow<Boolean> = _forgetting
 
+    /**
+     * When the last run ended, by the phone's clock: passed, failed or stopped. Null before the
+     * first run, and again once the machine is forgotten. Kept in memory only, like the steps,
+     * so that the screen can tell whether the check or a synchronisation happened last.
+     */
+    private val _finishedAtMs = MutableStateFlow<Long?>(null)
+    val finishedAtMs: StateFlow<Long?> = _finishedAtMs
+
     fun reportText(): String = synchronized(report) { report.toString() }
 
     fun hasReport(): Boolean = synchronized(report) { report.isNotEmpty() }
@@ -204,6 +212,9 @@ class DeviceCheck(
             } finally {
                 _passkeyRequest.value = null
                 _machineChoice.value = null
+                // Stamped while the machine is still held, so that any synchronisation that follows
+                // is seen as the later of the two.
+                _finishedAtMs.value = System.currentTimeMillis()
                 // Given up before the screen hears that the run is over, so that whatever the
                 // screen starts next finds the machine free.
                 claim.release()
@@ -258,7 +269,10 @@ class DeviceCheck(
     private suspend fun clearData() {
         withContext(Dispatchers.IO) { dataDirectory().deleteRecursively() }
         synchronized(this) {
-            if (job?.isCompleted != false) _steps.value = template()
+            if (job?.isCompleted != false) {
+                _steps.value = template()
+                _finishedAtMs.value = null
+            }
         }
     }
 
