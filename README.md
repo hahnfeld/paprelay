@@ -193,6 +193,40 @@ Open **Sharing** to choose where the data goes.
 - **Share the recent nights as text**. Sends the recent nights as text to an app that you
   choose.
 
+### See the records in Health Connect
+
+PAPRelay only writes to Health Connect. To see what it wrote, open Health Connect itself.
+The names below are from Health Connect on Android 16. Some phones use other names.
+
+1. Open the phone's **Settings** and search for "Health Connect". On a Pixel phone, it is in
+   **Settings › Security and privacy › Privacy controls › Health Connect**.
+2. Tap **App permissions**, then **PAPRelay**. On the **App access** screen, check that
+   **All medical records** is switched on. If **Respiratory rate to Health Connect** is on in PAPRelay, check that
+   respiratory rate is allowed too.
+
+   ![The App access screen for PAPRelay in Health Connect: the PAPRelay icon and name, Allow all switched on, and under Allowed to write, All medical records switched on. Number 2 marks All medical records.](docs/images/hc-access.svg)
+
+3. Go back to the main screen of Health Connect. Tap **App data**, then **PAPRelay**. On some
+   phones, this is under **Data and access**. Respiratory rate is under **Vitals**, if it is
+   switched on in PAPRelay. The nightly figures are under **Medical records › Lab
+   results**.
+
+   ![The App data screen for PAPRelay in Health Connect: under Vitals, Respiratory rate, if it is switched on in PAPRelay; under Medical records, Lab results. Number 3 marks both rows.](docs/images/hc-data.svg)
+
+4. Tap **Lab results**. The list has up to five entries for each night: usage, AHI, leak,
+   pressure and breathing. Each entry shows the date of the night, "PAPRelay (CPAP
+   machine)" and a title, for example "CPAP therapy usage in the night (hours)". Tap an
+   entry to see its value.
+
+   ![The Lab results screen for PAPRelay in Health Connect: a list with one entry for each figure of a night. Each entry shows the date, PAPRelay (CPAP machine) and a title, for example CPAP therapy usage in the night (hours). Number 4 marks the first entry. The date is an example.](docs/images/hc-records.svg)
+
+The nightly figures are filed under lab results because Health Connect has no other place
+for them. They are not laboratory results (see [Intended use](docs/INTENDED-USE.md)).
+
+Health Connect shows the records. The Google Health app shows "Medical data cannot be
+synced" for them, with the reason that the data "does not contain a name or date of
+birth". The records contain no name and no date of birth.
+
 ### The two files
 
 PAPRelay writes two CSV files in the folder, and does not change any other file there.
@@ -236,7 +270,7 @@ version. Choose a folder on the **Sharing** page.
 | "PAPRelay cannot yet read this machine's software." | PAPRelay does not know this machine's software version yet. Please [report it](CONTRIBUTING.md#machines-and-software-versions). |
 | Last night shows only "so far". | This is normal before midday. The machine adds its own figures after midday, and the next synchronisation brings them. |
 | "Not every night has been copied yet." for several days, or "PAPRelay could not read some of the data from the machine." | Open **Device check**, tap **Run device check**, then **Save report**, and [report the problem](https://github.com/hahnfeld/paprelay/issues). |
-| Health Connect shows nothing. | Open **Sharing** and check the switches. In Health Connect, allow PAPRelay to write. Phones with Android 14 or 15 have no health records. |
+| Health Connect shows nothing. | Open **Sharing** and check the switches. In Health Connect, allow PAPRelay to write (see [See the records in Health Connect](#see-the-records-in-health-connect)). Phones with Android 14 or 15 have no health records. |
 | "Respiratory rate starts after a night of therapy of one hour or more" is still shown after several nights. | PAPRelay cannot yet read respiratory rate from this machine's software. Switch it off in **Sharing**, and please [report it](CONTRIBUTING.md#machines-and-software-versions). The nightly figures are not affected. |
 | **Breathing events** is empty. | Events appear after the next synchronisation. If the list is still empty after a night of therapy, open **Device check**, tap **Run device check**, then **Save report**, and [report it](https://github.com/hahnfeld/paprelay/issues). |
 | The two files are not in the folder. | Open **Sharing**. If it says that PAPRelay could not write the files, choose the folder again. The files appear after the first finished night. |

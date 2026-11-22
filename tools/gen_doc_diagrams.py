@@ -244,6 +244,46 @@ class Svg:
             dx = r * 0.5
             self.add(f'<path class="line" d="M{f(x + dx)} {f(cy - r * 0.86)}A{f(r)} {f(r)} 0 0 1 {f(x + dx)} {f(cy + r * 0.86)}"/>')
 
+    def wave_mark(self, cx, cy, r):
+        """PAPRelay's icon in small: two waves in a ring."""
+        self.add(f'<circle class="ink" cx="{f(cx)}" cy="{f(cy)}" r="{f(r)}"/>')
+        a = r * 0.52
+        for dy, cls in ((-r * 0.16, "ink"), (r * 0.2, "line")):
+            y = cy + dy
+            self.add(
+                f'<path class="{cls}" d="M{f(cx - a)} {f(y + a * 0.12)}C{f(cx - a * 0.6)} {f(y - a * 0.5)} {f(cx - a * 0.25)} {f(y - a * 0.5)} {f(cx)} {f(y)}'
+                f'S{f(cx + a * 0.6)} {f(y + a * 0.5)} {f(cx + a)} {f(y - a * 0.12)}"/>'
+            )
+
+    def back(self, x, cy):
+        """The back arrow at the top left of a screen."""
+        self.add(f'<path class="thin" d="M{f(x + 16)} {f(cy)}H{f(x)}M{f(x + 7)} {f(cy - 7)}L{f(x)} {f(cy)}L{f(x + 7)} {f(cy + 7)}"/>')
+
+    def records_glyph(self, x, y, size):
+        """Health Connect's mark for medical records: a case with a cross on it."""
+        k = size / 24
+        self.add(f'<rect class="thin" x="{f(x + 3 * k)}" y="{f(y + 7 * k)}" width="{f(18 * k)}" height="{f(14 * k)}" rx="{f(2 * k)}"/>')
+        self.add(
+            f'<path class="thin" d="M{f(x + 9 * k)} {f(y + 7 * k)}V{f(y + 4 * k)}H{f(x + 15 * k)}V{f(y + 7 * k)}'
+            f'M{f(x + 12 * k)} {f(y + 11 * k)}V{f(y + 17 * k)}M{f(x + 9 * k)} {f(y + 14 * k)}H{f(x + 15 * k)}"/>'
+        )
+
+    def pulse(self, x, y, size):
+        """A trace with one beat: Health Connect's mark for vitals."""
+        k = size / 24
+        self.add(
+            f'<path class="thin" d="M{f(x + 2 * k)} {f(y + 13 * k)}H{f(x + 7 * k)}L{f(x + 10 * k)} {f(y + 4 * k)}'
+            f'L{f(x + 14 * k)} {f(y + 20 * k)}L{f(x + 17 * k)} {f(y + 13 * k)}H{f(x + 22 * k)}"/>'
+        )
+
+    def tube(self, x, y, size):
+        """A test tube: Health Connect's mark for lab results."""
+        k = size / 24
+        self.add(
+            f'<path class="thin" d="M{f(x + 7 * k)} {f(y + 3 * k)}H{f(x + 17 * k)}M{f(x + 8.5 * k)} {f(y + 3 * k)}V{f(y + 17 * k)}'
+            f'A{f(3.5 * k)} {f(3.5 * k)} 0 0 0 {f(x + 15.5 * k)} {f(y + 17 * k)}V{f(y + 3 * k)}M{f(x + 8.5 * k)} {f(y + 11 * k)}H{f(x + 12 * k)}"/>'
+        )
+
     def button(self, x, y, w, h, words, filled=True):
         shape = "solid" if filled else "thin"
         cls = "c on" if filled else "c"
@@ -571,6 +611,102 @@ def sharing():
     return s.save("sharing.svg")
 
 
+# ---- Health Connect's own screens, drawn simply: where to find what PAPRelay wrote
+
+HC_X, HC_Y, HC_W = 56, 20, 340
+
+
+def hc_screen(s, title):
+    """The top of a Health Connect screen for PAPRelay: the open phone, the title, the icon and the name.
+
+    Returns the y below the name, where the screen's own rows start."""
+    x, y, w = HC_X, HC_Y, HC_W
+    s.add(f'<path class="ink" d="M{x} {s.height - 12}V{y + 28}A28 28 0 0 1 {x + 28} {y}H{x + w - 28}A28 28 0 0 1 {x + w} {y + 28}V{s.height - 12}"/>')
+    s.back(x + 24, y + 44)
+    s.text(x + 56, y + 50, title, "b")
+    s.wave_mark(x + w / 2, y + 102, 28)
+    s.text(x + w / 2, y + 156, "PAPRelay", "b", "middle")
+    return y + 180
+
+
+def hc_card(s, top, h):
+    s.add(f'<rect class="faint" x="{HC_X + 16}" y="{f(top)}" width="{HC_W - 32}" height="{f(h)}" rx="14"/>')
+
+
+def hc_callout(s, n, *rows):
+    """A number to the right of the phone, joined to one row, or by a bracket to several."""
+    edge = HC_X + HC_W
+    if len(rows) == 1:
+        at = rows[0]
+        s.add(f'<path class="faint" d="M{edge + 8} {f(at)}H{edge + 28}"/>')
+    else:
+        at = (rows[0] + rows[-1]) / 2
+        s.add(f'<path class="faint" d="M{edge + 8} {f(rows[0])}H{edge + 18}V{f(rows[-1])}H{edge + 8}M{edge + 18} {f(at)}H{edge + 28}"/>')
+    s.number(edge + 46, at, n)
+
+
+def hc_access():
+    s = Svg(386, "The App access screen for PAPRelay in Health Connect: the PAPRelay icon and name, Allow all switched on, and under Allowed to write, All medical records switched on. Number 2 marks All medical records.")
+    y = hc_screen(s, "App access")
+    x, w = HC_X, HC_W
+    s.add(f'<rect class="thin" x="{x + 16}" y="{y}" width="{w - 32}" height="52" rx="26"/>')
+    s.text(x + 38, y + 31.5, "Allow all", "b")
+    s.switch(x + w - 32 - 46, y + 13, True)
+    s.text(x + 24, y + 90, "Allowed to write", "s")
+    top = y + 104
+    hc_card(s, top, 52)
+    s.records_glyph(x + 32, top + 14, 24)
+    s.text(x + 68, top + 31.5, "All medical records", "t")
+    s.switch(x + w - 32 - 46, top + 13, True)
+    hc_callout(s, 2, top + 26)
+    return s.save("hc-access.svg")
+
+
+def hc_data():
+    s = Svg(410, "The App data screen for PAPRelay in Health Connect: under Vitals, Respiratory rate, if it is switched on in PAPRelay; under Medical records, Lab results. Number 3 marks both rows.")
+    y = hc_screen(s, "App data")
+    x, w = HC_X, HC_W
+    mids = []
+    for index, (section, glyph, label) in enumerate((("Vitals", s.pulse, "Respiratory rate"), ("Medical records", s.tube, "Lab results"))):
+        at = y + 20 + index * 98
+        s.text(x + 24, at, section, "s")
+        top = at + 14
+        hc_card(s, top, 52)
+        glyph(x + 32, top + 14, 24)
+        s.text(x + 68, top + 31.5, label, "t")
+        mids.append(top + 26)
+    hc_callout(s, 3, *mids)
+    return s.save("hc-data.svg")
+
+
+def hc_records():
+    s = Svg(588, "The Lab results screen for PAPRelay in Health Connect: a list with one entry for each figure of a night. Each entry shows the date, PAPRelay (CPAP machine) and a title, for example CPAP therapy usage in the night (hours). Number 4 marks the first entry. The date is an example.")
+    y = hc_screen(s, "Lab results")
+    x, w = HC_X, HC_W
+    # The titles are the ones PAPRelay writes (core/.../nights/FhirObservations.kt), broken as a phone breaks them.
+    titles = [
+        ["CPAP therapy usage in the night", "(hours)"],
+        ["Residual apnea-hypopnea index on CPAP", "therapy, as the machine reports it", "(events per hour of use)"],
+        ["CPAP mask leak in the night,", "95th percentile"],
+        ["CPAP therapy pressure in the", "night, 95th percentile"],
+    ]
+    top = y
+    first = None
+    for rows in titles:
+        h = 46 + (len(rows) - 1) * 18 + 14
+        hc_card(s, top, h)
+        s.text(x + 32, top + 24, "January 1, 2026 • PAPRelay (CPAP machine)", "x")
+        s.lines(x + 32, top + 46, rows, "c", 18)
+        s.chevron(x + w - 44, top + h / 2 - 10, 20)
+        if first is None:
+            first = top + h / 2
+        top += h + 6
+    # The list goes on below: the top of the next entry.
+    s.add(f'<path class="faint" d="M{x + 16} {s.height - 12}V{f(top + 14)}A14 14 0 0 1 {x + 30} {f(top)}H{x + w - 30}A14 14 0 0 1 {x + w - 16} {f(top + 14)}V{s.height - 12}"/>')
+    hc_callout(s, 4, first)
+    return s.save("hc-records.svg")
+
+
 def timeline():
     s = Svg(256, "The picture of one night on the Nights page: a grey line from midday to midday, the sessions as thick lines on it, a tall mark for each apnoea and a short mark for each hypopnoea, with the hours below. On a night shown so far, a session that had not ended when the machine was last read ends in an open ring.")
     x1, x2, base = 40, 440, 82
@@ -643,7 +779,7 @@ def flow():
 
 
 def main():
-    written = [draw() for draw in (overview, picture, setup, home, home_morning, when, night, timeline, sharing, modules, flow)]
+    written = [draw() for draw in (overview, picture, setup, home, home_morning, when, night, timeline, sharing, hc_access, hc_data, hc_records, modules, flow)]
     stale = sorted(path.name for path in OUT.glob("*.svg") if path.name not in written)
     print(f"wrote {len(written)} diagrams to {OUT}")
     if stale:

@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 386" width="480" height="386" role="img" aria-label="The App access screen for PAPRelay in Health Connect: the PAPRelay icon and name, Allow all switched on, and under Allowed to write, All medical records switched on. Number 2 marks All medical records.">
+<title>The App access screen for PAPRelay in Health Connect: the PAPRelay icon and name, Allow all switched on, and under Allowed to write, All medical records switched on. Number 2 marks All medical records.</title>
+<style>
+  .paper { fill: #ffffff; stroke: #d0d7de; stroke-width: 1; }
+  .ink { fill: none; stroke: #1f2328; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+  .thin { fill: none; stroke: #1f2328; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .line { fill: none; stroke: #6e7781; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+  .faint { fill: none; stroke: #afb8c1; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .dash { stroke-dasharray: 7 7; }
+  .solid { fill: #1f2328; stroke: none; }
+  .hole { fill: #ffffff; stroke: none; }
+  .bad { fill: #cf222e; stroke: none; }
+  .badline { fill: none; stroke: #cf222e; stroke-width: 2.4; stroke-linecap: round; }
+  .onbad { fill: none; stroke: #ffffff; stroke-width: 2.4; stroke-linecap: round; }
+  text { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #1f2328; }
+  .t { font-size: 16px; }
+  .b { font-size: 16px; font-weight: 600; }
+  .s { font-size: 14px; fill: #57606a; }
+  .c { font-size: 13px; }
+  .x { font-size: 12px; fill: #57606a; }
+  .num { font-size: 14px; font-weight: 700; fill: #ffffff; }
+  .on { fill: #ffffff; }
+  @media (prefers-color-scheme: dark) {
+    .paper { fill: #0d1117; stroke: #30363d; }
+    .ink, .thin { stroke: #e6edf3; }
+    .line { stroke: #8b949e; }
+    .faint { stroke: #484f58; }
+    .solid { fill: #e6edf3; }
+    .hole { fill: #0d1117; }
+    .bad { fill: #f85149; }
+    .badline { stroke: #f85149; }
+    .onbad { stroke: #0d1117; }
+    text { fill: #e6edf3; }
+    .s, .x { fill: #8b949e; }
+    .num, .on { fill: #0d1117; }
+  }
+</style>
+<rect class="paper" x="0.5" y="0.5" width="479" height="385" rx="12"/>
+<path class="ink" d="M56 374V48A28 28 0 0 1 84 20H368A28 28 0 0 1 396 48V374"/>
+<path class="thin" d="M96 64H80M87 57L80 64L87 71"/>
+<text class="b" x="112" y="70" text-anchor="start">App access</text>
+<circle class="ink" cx="226" cy="122" r="28"/>
+<path class="ink" d="M211.4 119.3C217.3 110.2 222.4 110.2 226 117.5S234.7 124.8 240.6 115.8"/>
+<path class="line" d="M211.4 129.3C217.3 120.3 222.4 120.3 226 127.6S234.7 134.9 240.6 125.9"/>
+<text class="b" x="226" y="176" text-anchor="middle">PAPRelay</text>
+<rect class="thin" x="72" y="200" width="308" height="52" rx="26"/>
+<text class="b" x="94" y="231.5" text-anchor="start">Allow all</text>
+<rect class="solid" x="318" y="213" width="46" height="26" rx="13"/>
+<circle class="hole" cx="351" cy="226" r="8.5"/>
+<text class="s" x="80" y="290" text-anchor="start">Allowed to write</text>
+<rect class="faint" x="72" y="304" width="308" height="52" rx="14"/>
+<rect class="thin" x="91" y="325" width="18" height="14" rx="2"/>
+<path class="thin" d="M97 325V322H103V325M100 329V335M97 332H103"/>
+<text class="t" x="124" y="335.5" text-anchor="start">All medical records</text>
+<rect class="solid" x="318" y="317" width="46" height="26" rx="13"/>
+<circle class="hole" cx="351" cy="330" r="8.5"/>
+<path class="faint" d="M404 330H424"/>
+<circle class="solid" cx="442" cy="330" r="13"/>
+<text class="num" x="442" y="335" text-anchor="middle">2</text>
+</svg>
