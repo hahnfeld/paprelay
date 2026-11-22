@@ -70,7 +70,7 @@ private fun Root(app: PapRelayApp) {
     val nights by app.sync.nights.collectAsState()
     val forgetting by check.forgetting.collectAsState()
     val stopping by check.stopping.collectAsState()
-    val checkFinishedAtMs by check.finishedAtMs.collectAsState()
+    val checkEnd by check.ended.collectAsState()
     var page by rememberSaveable { mutableStateOf(PAGE_HOME) }
     var confirmForget by rememberSaveable { mutableStateOf(false) }
     var confirmRewrite by rememberSaveable { mutableStateOf(false) }
@@ -262,6 +262,9 @@ private fun Root(app: PapRelayApp) {
     }
 
     BackHandler(enabled = page != PAGE_HOME) { page = PAGE_HOME }
+    // A check runs on the home screen and outlives it, but leaving the app in the middle of pairing
+    // loses sight of the code to type. Back does nothing then; Stop is on the screen.
+    BackHandler(enabled = page == PAGE_HOME && running) {}
 
     when (page) {
         PAGE_ABOUT -> AboutScreen(onBack = { page = PAGE_HOME })
@@ -311,7 +314,7 @@ private fun Root(app: PapRelayApp) {
             steps = steps,
             checkRunning = running,
             checkStopping = stopping,
-            checkFinishedAtMs = checkFinishedAtMs,
+            checkEnd = checkEnd,
             busy = forgetting,
             syncEnabled = app.sync.enabled,
             sync = sync,

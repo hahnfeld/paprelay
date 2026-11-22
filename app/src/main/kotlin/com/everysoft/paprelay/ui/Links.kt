@@ -2,6 +2,7 @@
 // PAPRelay — Copyright (C) 2026 PAPRelay contributors.
 package com.everysoft.paprelay.ui
 
+import com.everysoft.paprelay.check.CheckEnd
 import com.everysoft.paprelay.check.CheckSteps
 import com.everysoft.paprelay.check.Step
 import com.everysoft.paprelay.check.StepState
@@ -53,16 +54,18 @@ enum class HomeShows {
  * of the same event.
  *
  * A running check is shown, and so is the check in a build that does not synchronise or before
- * there is a machine. Otherwise it is whichever ended last: just after the first pairing that is
- * the check, so its ticks stay until the first synchronisation. A synchronisation in progress, and
- * a damaged record of synchronising (whose way out is on the home screen), always come first.
+ * there is a machine. Otherwise it is whichever ended last: the check, for as long as the latest
+ * synchronisation is still the one there was when the check ended. Just after the first pairing
+ * that is the check, so its ticks stay until the first synchronisation. No two clocks are
+ * compared, so a synchronisation stamped while the phone's clock was wrong cannot hide a later
+ * check. A synchronisation in progress, and a damaged record of synchronising (whose way out is on
+ * the home screen), always come first.
  */
-fun homeShows(pairing: PairingState, checkRunning: Boolean, checkFinishedAtMs: Long?, syncEnabled: Boolean, sync: SyncStatus): HomeShows {
+fun homeShows(pairing: PairingState, checkRunning: Boolean, checkEnd: CheckEnd?, syncEnabled: Boolean, sync: SyncStatus): HomeShows {
     if (pairing == PairingState.Loading) return HomeShows.NOTHING
     if (checkRunning || !syncEnabled || pairing !is PairingState.Paired) return HomeShows.CHECK
     if (sync.running || sync.storeUnreadable) return HomeShows.SYNC
-    val lastSync = sync.lastReport?.atMs
-    return if (checkFinishedAtMs != null && (lastSync == null || checkFinishedAtMs > lastSync)) HomeShows.CHECK else HomeShows.SYNC
+    return if (checkEnd != null && checkEnd.lastSyncAtMs == sync.lastReport?.atMs) HomeShows.CHECK else HomeShows.SYNC
 }
 
 /** The picture on the home screen, for what [homeShows] chose. */

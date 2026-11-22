@@ -101,6 +101,17 @@ object CheckSteps {
     }
 }
 
+/**
+ * The end of a device check, as the screens weigh it against synchronising. Which synchronisation
+ * was the latest when the check ended is noted by its report's own stamp, so that a later one is
+ * recognised as later without comparing two clocks: a report stamped while the phone's clock was
+ * wrong would otherwise outrank every check that follows it.
+ */
+class CheckEnd(
+    /** The stamp of the latest synchronisation's report when the check ended, or null if there was none. */
+    val lastSyncAtMs: Long?,
+)
+
 /** More than one machine is in range and the user has to say which is theirs. */
 class MachineChoice(val options: List<Message>, val answer: CompletableDeferred<Int>)
 
@@ -133,6 +144,8 @@ class DeviceCheck(
     /** Whether each is switched on to be written to Health Connect: the nights as health records, and respiratory rate. */
     private val recordsWanted: () -> Boolean,
     private val vitalsWanted: () -> Boolean,
+    /** The time stamp of the latest synchronisation's report, if there is one: it tells that report apart from any later one. */
+    private val lastSyncAtMs: () -> Long?,
     private val claim: MachineClaim,
     /** Removes what synchronising remembers about the machine, when the machine is forgotten. */
     private val forgetSync: suspend () -> Unit,
@@ -167,12 +180,13 @@ class DeviceCheck(
     val forgetting: StateFlow<Boolean> = _forgetting
 
     /**
-     * When the last run ended, by the phone's clock: passed, failed or stopped. Null before the
-     * first run, and again once the machine is forgotten. Kept in memory only, like the steps,
-     * so that the screen can tell whether the check or a synchronisation happened last.
+     * How the last run stands against synchronising: set when a run ends (passed, failed or
+     * stopped), null before the first run and again once the machine is forgotten. Kept in memory
+     * only, like the steps, so that the screen can tell whether the check or a synchronisation
+     * happened last.
      */
-    private val _finishedAtMs = MutableStateFlow<Long?>(null)
-    val finishedAtMs: StateFlow<Long?> = _finishedAtMs
+    private val _ended = MutableStateFlow<CheckEnd?>(null)
+    val ended: StateFlow<CheckEnd?> = _ended
 
     fun reportText(): String = synchronized(report) { report.toString() }
 
@@ -212,9 +226,8 @@ class DeviceCheck(
             } finally {
                 _passkeyRequest.value = null
                 _machineChoice.value = null
-                // Stamped while the machine is still held, so that any synchronisation that follows
-                // is seen as the later of the two.
-                _finishedAtMs.value = System.currentTimeMillis()
+                // Noted while the machine is still held, so that no synchronisation can end in between.
+                _ended.value = CheckEnd(lastSyncAtMs())
                 // Given up before the screen hears that the run is over, so that whatever the
                 // screen starts next finds the machine free.
                 claim.release()
@@ -271,7 +284,7 @@ class DeviceCheck(
         synchronized(this) {
             if (job?.isCompleted != false) {
                 _steps.value = template()
-                _finishedAtMs.value = null
+                _ended.value = null
             }
         }
     }

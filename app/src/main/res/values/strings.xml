@@ -69,7 +69,7 @@
     <string name="night_leak_spoken">Leak, 95th percentile, %1$s litres per minute</string>
     <string name="night_pressure_spoken">Pressure, 95th percentile, %1$s centimetres of water</string>
     <string name="nights_title">Nights</string>
-    <string name="nights_empty">There are no nights here yet. Each night appears after midday on the next day.</string>
+    <string name="nights_empty">There are no nights here yet. A night appears here after PAPRelay synchronises. A night ends at midday.</string>
     <string name="nights_note">The machine\'s own figures. A night runs from midday to midday, and its figures arrive after it has ended. AHI is the number of apnoeas and hypopnoeas for each hour of use. Leak and pressure are the values that were not exceeded for 95% of the time in use.</string>
 
     <!-- What is passed on, and where to -->
@@ -128,7 +128,7 @@
     <!-- After the first device check passed, before the first synchronisation. -->
     <string name="home_paired_next">The machine is paired. Choose Synchronise now to copy the nights.</string>
     <!-- At the top of the device check page, under the picture. -->
-    <string name="check_intro">The device check tests each connection, one after the other. It changes nothing on the machine.</string>
+    <string name="check_intro">The device check tests each connection, one after the other. It changes none of the machine\'s settings or data.</string>
 
     <string name="permission_needed">PAPRelay needs the Nearby devices permission to reach the machine. If Android does not ask for it, allow it in the app settings.</string>
 

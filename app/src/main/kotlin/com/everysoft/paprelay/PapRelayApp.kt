@@ -32,6 +32,7 @@ class PapRelayApp : Application() {
             this, scope, pairingStore, scanner, healthConnect, healthRecords,
             recordsWanted = { sync.status.value.healthRecords },
             vitalsWanted = { sync.status.value.respiratoryRate },
+            lastSyncAtMs = { sync.status.value.lastReport?.atMs },
             claim,
         ) { sync.forget() }
     }

@@ -173,17 +173,24 @@ class Svg:
         )
 
     def fork(self, x, y, size, cls="thin"):
-        """One source, three destinations."""
+        """One source, three branches, each ending in an open arrowhead."""
         k = size / 24
+        c = 0.5 ** 0.5
+        reach = 3
 
         def q(px, py):
             return f"{f(x + px * k)} {f(y + py * k)}"
 
         self.add(f'<circle class="solid" cx="{f(x + 4 * k)}" cy="{f(y + 12 * k)}" r="{f(2.25 * k)}"/>')
-        self.add(f'<path class="{cls}" d="M{q(6.5, 12)}L{q(19, 12)}M{q(6.5, 12)}L{q(18.6, 5.6)}M{q(6.5, 12)}L{q(18.6, 18.4)}"/>')
-        for cy in (12, 5, 19):
-            self.add(f'<circle class="hole" cx="{f(x + 20.5 * k)}" cy="{f(y + cy * k)}" r="{f(3.25 * k)}"/>')
-            self.add(f'<circle class="{cls}" cx="{f(x + 20.5 * k)}" cy="{f(y + cy * k)}" r="{f(2.25 * k)}"/>')
+        d = ""
+        for tx, ty in ((21, 12), (19.5, 3.5), (19.5, 20.5)):
+            d += f"M{q(6.5, 12)}L{q(tx, ty)}"
+            length = ((tx - 6.5) ** 2 + (ty - 12) ** 2) ** 0.5
+            ax, ay = (tx - 6.5) / length, (ty - 12) / length
+            for sign in (1, -1):
+                wx, wy = ax * c - sign * ay * c, sign * ax * c + ay * c
+                d += f"M{q(tx - wx * reach, ty - wy * reach)}L{q(tx, ty)}"
+        self.add(f'<path class="{cls}" d="{d}"/>')
 
     def checked_link(self, x, y, size, cls="thin"):
         """A line with the picture's tick on it."""
@@ -193,9 +200,9 @@ class Svg:
             return f"{f(x + px * k)} {f(y + py * k)}"
 
         self.add(f'<path class="{cls}" d="M{q(2, 12)}H{f(x + 22 * k)}"/>')
-        self.add(f'<circle class="hole" cx="{f(x + 12 * k)}" cy="{f(y + 12 * k)}" r="{f(7.5 * k)}"/>')
-        self.add(f'<circle class="{cls}" cx="{f(x + 12 * k)}" cy="{f(y + 12 * k)}" r="{f(5.5 * k)}"/>')
-        self.add(f'<path class="{cls}" d="M{q(9.4, 12.1)}L{q(11.2, 14)}L{q(14.8, 10.2)}"/>')
+        self.add(f'<circle class="hole" cx="{f(x + 12 * k)}" cy="{f(y + 12 * k)}" r="{f(6 * k)}"/>')
+        self.add(f'<circle class="{cls}" cx="{f(x + 12 * k)}" cy="{f(y + 12 * k)}" r="{f(4.5 * k)}"/>')
+        self.add(f'<path class="{cls}" d="M{q(9.87, 12.08)}L{q(11.34, 13.64)}L{q(14.3, 10.52)}"/>')
 
     def info(self, x, y, size, cls="thin"):
         """An "i" in a ring."""

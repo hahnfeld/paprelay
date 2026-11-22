@@ -98,6 +98,7 @@ import android.text.format.DateFormat
 import android.text.format.DateUtils
 import java.util.Locale
 import kotlinx.coroutines.delay
+import com.everysoft.paprelay.check.CheckEnd
 import com.everysoft.paprelay.check.CheckSteps
 import com.everysoft.paprelay.check.Message
 import com.everysoft.paprelay.check.Step
@@ -203,7 +204,7 @@ fun HomeScreen(
     steps: List<Step>,
     checkRunning: Boolean,
     checkStopping: Boolean,
-    checkFinishedAtMs: Long?,
+    checkEnd: CheckEnd?,
     busy: Boolean,
     syncEnabled: Boolean,
     sync: SyncStatus,
@@ -229,7 +230,7 @@ fun HomeScreen(
 ) {
     val paired = pairing is PairingState.Paired
     // The picture and the sentence under it always tell of the same event: the check or synchronising.
-    val shows = homeShows(pairing, checkRunning, checkFinishedAtMs, syncEnabled, sync)
+    val shows = homeShows(pairing, checkRunning, checkEnd, syncEnabled, sync)
     // A build that synchronises, with a machine it can synchronise (or whose pairing it may yet read).
     val synchronising = syncEnabled && (paired || pairing == PairingState.Unavailable)
     Page(title = stringResource(R.string.app_name), action = { InfoButton(onAbout) }) {
@@ -252,7 +253,9 @@ fun HomeScreen(
             return@Page
         }
 
-        MachineLine(pairing)
+        // Before there is a machine, a failed check says what to do; the advice on pairing would repeat it.
+        val failedUnpaired = !paired && checkOutcome(steps) == CheckOutcome.FAILED
+        MachineLine(pairing, pairingHint = !failedUnpaired)
         val free = !sync.running && !busy
 
         if (paired && syncEnabled) {
@@ -284,12 +287,14 @@ fun HomeScreen(
                     Button(onClick = onStartAgain, enabled = free) { Text(stringResource(R.string.action_start_again)) }
                 } else {
                     Button(onClick = onSync, enabled = free) { Text(stringResource(R.string.action_sync)) }
-                    // A second button only when it is the way forward.
+                    // A second button only when it is the way forward. One that answers the last
+                    // synchronisation's outcome only while the screen tells of that synchronisation.
+                    val fromSync = shows == HomeShows.SYNC
                     when {
                         !free -> Unit
-                        outcome == SyncOutcome.CLOCK_CHANGED ->
+                        fromSync && outcome == SyncOutcome.CLOCK_CHANGED ->
                             OutlinedButton(onClick = onAcceptClock) { Text(stringResource(R.string.action_accept_clock)) }
-                        outcome == SyncOutcome.BLUETOOTH_NOT_ALLOWED ->
+                        fromSync && outcome == SyncOutcome.BLUETOOTH_NOT_ALLOWED ->
                             OutlinedButton(onClick = onOpenSettings) { Text(stringResource(R.string.action_open_settings)) }
                         // Something is switched on to go to Health Connect and is not allowed there. Asking is
                         // tried first; once Android has stopped asking, the way is through Health Connect itself.
@@ -405,6 +410,9 @@ private fun InfoButton(onClick: () -> Unit) {
     val description = stringResource(R.string.about_title)
     Box(
         Modifier
+            // Pushed into the page margin, so that the "i" lines up with the chevrons of the rows
+            // below. offset follows the reading direction, so this mirrors in right-to-left layouts.
+            .offset(x = 12.dp)
             .size(48.dp)
             .clip(CircleShape)
             .clickable(onClick = onClick)
@@ -648,17 +656,21 @@ private fun Choice(glyph: GlyphKind, @StringRes title: Int, @StringRes body: Int
     }
 }
 
+/**
+ * The machine, or why there is none. [pairingHint] false leaves out the advice on how to pair,
+ * where a failed check under it already gives the advice that fits.
+ */
 @Composable
-private fun MachineLine(pairing: PairingState) {
+private fun MachineLine(pairing: PairingState, pairingHint: Boolean = true) {
     when (pairing) {
         PairingState.Loading -> Text(stringResource(R.string.machine_loading), style = MaterialTheme.typography.titleMedium)
         PairingState.Absent -> {
             Text(stringResource(R.string.machine_unpaired), style = MaterialTheme.typography.titleMedium)
-            Secondary(stringResource(R.string.machine_unpaired_hint), Modifier.padding(top = 4.dp))
+            if (pairingHint) Secondary(stringResource(R.string.machine_unpaired_hint), Modifier.padding(top = 4.dp))
         }
         PairingState.Unreadable -> {
             Text(stringResource(R.string.machine_unreadable), style = MaterialTheme.typography.titleMedium)
-            Secondary(stringResource(R.string.machine_unreadable_hint), Modifier.padding(top = 4.dp))
+            if (pairingHint) Secondary(stringResource(R.string.machine_unreadable_hint), Modifier.padding(top = 4.dp))
         }
         PairingState.Unavailable -> {
             Text(stringResource(R.string.machine_unavailable), style = MaterialTheme.typography.titleMedium)

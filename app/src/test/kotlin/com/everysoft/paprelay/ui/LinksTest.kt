@@ -3,6 +3,7 @@
 package com.everysoft.paprelay.ui
 
 import com.everysoft.paprelay.as11.PairingCredentials
+import com.everysoft.paprelay.check.CheckEnd
 import com.everysoft.paprelay.check.CheckSteps
 import com.everysoft.paprelay.check.Step
 import com.everysoft.paprelay.check.StepState
@@ -31,13 +32,16 @@ class LinksTest {
     private fun synced(outcome: SyncOutcome) = neverSynced.with(lastReport = SyncReport(atMs = 1, outcome = outcome, sessions = 1, readingsWritten = 1))
 
     /** What the home screen draws, as MainActivity puts it together. */
-    private fun home(pairing: PairingState, steps: List<Step>, running: Boolean, finishedAt: Long?, syncEnabled: Boolean, sync: SyncStatus, allowed: Boolean): Links =
-        homeLinks(homeShows(pairing, running, finishedAt, syncEnabled, sync), pairing, steps, running, sync, allowed)
+    private fun home(pairing: PairingState, steps: List<Step>, running: Boolean, end: CheckEnd?, syncEnabled: Boolean, sync: SyncStatus, allowed: Boolean): Links =
+        homeLinks(homeShows(pairing, running, end, syncEnabled, sync), pairing, steps, running, sync, allowed)
+
+    /** A check that ended while [sync] was the latest synchronisation. */
+    private fun endedAfter(sync: SyncStatus) = CheckEnd(sync.lastReport?.atMs)
 
     @Test
     fun `nothing in particular is shown before the pairing has been read`() {
-        assertEquals(HomeShows.NOTHING, homeShows(PairingState.Loading, false, 5, true, synced(SyncOutcome.COMPLETE)))
-        assertEquals(Links(LinkState.NONE, LinkState.NONE), home(PairingState.Loading, allPassed, false, 5, true, synced(SyncOutcome.COMPLETE), true))
+        assertEquals(HomeShows.NOTHING, homeShows(PairingState.Loading, false, endedAfter(neverSynced), true, synced(SyncOutcome.COMPLETE)))
+        assertEquals(Links(LinkState.NONE, LinkState.NONE), home(PairingState.Loading, allPassed, false, endedAfter(neverSynced), true, synced(SyncOutcome.COMPLETE), true))
     }
 
     @Test
@@ -76,34 +80,48 @@ class LinksTest {
 
     @Test
     fun `after a passed check with no synchronisation yet, home keeps the check's ticks`() {
-        assertEquals(HomeShows.CHECK, homeShows(paired, false, 10, true, neverSynced))
-        assertEquals(Links(LinkState.OK, LinkState.OK), home(paired, allPassed, false, 10, true, neverSynced, true))
+        assertEquals(HomeShows.CHECK, homeShows(paired, false, endedAfter(neverSynced), true, neverSynced))
+        assertEquals(Links(LinkState.OK, LinkState.OK), home(paired, allPassed, false, endedAfter(neverSynced), true, neverSynced, true))
     }
 
     @Test
     fun `after a failed check with no synchronisation yet, home keeps the check's failure`() {
         val failed = steps(StepState.PASSED, StepState.PASSED, StepState.SKIPPED, StepState.FAILED)
-        assertEquals(LinkState.FAILED, home(paired, failed, false, 10, true, neverSynced, true).machine)
+        assertEquals(LinkState.FAILED, home(paired, failed, false, endedAfter(neverSynced), true, neverSynced, true).machine)
     }
 
     @Test
     fun `home shows whichever of the check and synchronising ended last`() {
         val earlier = neverSynced.with(lastReport = SyncReport(atMs = 100, outcome = SyncOutcome.CONNECTION_LOST, sessions = 1, readingsWritten = 0))
         // The check came after the synchronisation: its ticks are shown.
-        assertEquals(HomeShows.CHECK, homeShows(paired, false, 200, true, earlier))
-        assertEquals(Links(LinkState.OK, LinkState.OK), home(paired, allPassed, false, 200, true, earlier, true))
-        // The synchronisation came after the check: its failure is shown.
-        assertEquals(HomeShows.SYNC, homeShows(paired, false, 50, true, earlier))
-        assertEquals(Links(LinkState.FAILED, LinkState.READY), home(paired, allPassed, false, 50, true, earlier, true))
-        // The same moment counts for synchronising, which has the newer news by the time it reports.
-        assertEquals(HomeShows.SYNC, homeShows(paired, false, 100, true, earlier))
+        assertEquals(HomeShows.CHECK, homeShows(paired, false, endedAfter(earlier), true, earlier))
+        assertEquals(Links(LinkState.OK, LinkState.OK), home(paired, allPassed, false, endedAfter(earlier), true, earlier, true))
+        // A synchronisation came after the check: its failure is shown.
+        val later = earlier.with(lastReport = SyncReport(atMs = 300, outcome = SyncOutcome.CONNECTION_LOST, sessions = 1, readingsWritten = 0))
+        assertEquals(HomeShows.SYNC, homeShows(paired, false, endedAfter(earlier), true, later))
+        assertEquals(Links(LinkState.FAILED, LinkState.READY), home(paired, allPassed, false, endedAfter(earlier), true, later, true))
+        // The first synchronisation after a check made before any.
+        assertEquals(HomeShows.SYNC, homeShows(paired, false, endedAfter(neverSynced), true, later))
+    }
+
+    @Test
+    fun `a synchronisation stamped by a clock that was ahead does not hide a later check`() {
+        val day = 86_400_000L
+        val now = 1_800_000_000_000L
+        // Stamped while the phone's clock was a day fast; the clock was then put right and a check run.
+        val ahead = neverSynced.with(lastReport = SyncReport(atMs = now + day, outcome = SyncOutcome.PHONE_CLOCK_WRONG, sessions = 0, readingsWritten = 0))
+        assertEquals(HomeShows.CHECK, homeShows(paired, false, endedAfter(ahead), true, ahead))
+        assertEquals(Links(LinkState.OK, LinkState.OK), home(paired, allPassed, false, endedAfter(ahead), true, ahead, true))
+        // The next synchronisation, stamped by the right clock and so "earlier", is still the newer event.
+        val next = ahead.with(lastReport = SyncReport(atMs = now + 60_000, outcome = SyncOutcome.COMPLETE, sessions = 1, readingsWritten = 1))
+        assertEquals(HomeShows.SYNC, homeShows(paired, false, endedAfter(ahead), true, next))
     }
 
     @Test
     fun `a synchronisation in progress or a damaged record is shown even after a newer check`() {
-        assertEquals(Links(LinkState.ACTIVE, LinkState.READY), home(paired, allPassed, false, 10, true, neverSynced.with(running = true), true))
-        assertEquals(HomeShows.SYNC, homeShows(paired, false, 10, true, neverSynced.with(storeUnreadable = true)))
-        assertTrue(home(paired, allPassed, false, 10, true, neverSynced.with(storeUnreadable = true), true).phoneFault)
+        assertEquals(Links(LinkState.ACTIVE, LinkState.READY), home(paired, allPassed, false, endedAfter(neverSynced), true, neverSynced.with(running = true), true))
+        assertEquals(HomeShows.SYNC, homeShows(paired, false, endedAfter(neverSynced), true, neverSynced.with(storeUnreadable = true)))
+        assertTrue(home(paired, allPassed, false, endedAfter(neverSynced), true, neverSynced.with(storeUnreadable = true), true).phoneFault)
     }
 
     @Test
