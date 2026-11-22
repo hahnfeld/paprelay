@@ -5,9 +5,10 @@ with the real machine and the real phone. Pairing runs it the first time, on the
 screen: the picture shows each connection as it is tested. You can run it again at any time
 from **Device check** on the home screen.
 
-The check changes none of the machine's settings or data. Pairing replaces the myAir
-app's connection to the machine. For each thing that is switched on under **Sharing**,
-the check writes a made-up test entry to Health Connect and removes it again.
+The check changes none of the machine's settings or data. The machine keeps one
+Bluetooth pairing at a time, so remove it from the myAir app before you pair PAPRelay.
+For each thing that is switched on under **Sharing**, the check writes a made-up test
+entry to Health Connect and removes it again.
 
 ## Run it
 
@@ -31,7 +32,7 @@ name. It is made to be attached to a problem report.
 | Step | Question | If it fails |
 |---|---|---|
 | Health Connect | Can PAPRelay write what is switched on in Sharing, and remove it again? | Allow PAPRelay in Health Connect, or switch the item off in Sharing. Phones before Android 16 have no health records. |
-| Find the machine | Can the phone hear the machine? | Put the machine in pairing mode. Make sure it is not paired with myAir. |
+| Find the machine | Can the phone hear the machine? | Put the machine in pairing mode. Remove it from the myAir app and forget it in the phone's Bluetooth settings. |
 | Pair | Does the key exchange with the code work? | Start pairing on the machine again. The code works for about two minutes. |
 | Connect securely | Does the machine accept a new connection and prove that it holds the key? | Move closer. If the machine no longer accepts the phone, choose **Forget machine** and pair again. |
 | Confirm the machine | Is this the machine that was paired? | The check stops. Nothing is downloaded. |
@@ -58,7 +59,7 @@ If one of these fails where the first succeeded, please
 downloaded from the machine. It sends nothing to the machine. Data already in Health
 Connect stays there.
 
-To use the myAir app again, pair the machine with myAir as usual.
+To use the myAir app again, tap **Forget machine** so that PAPRelay stops connecting, then pair myAir as usual.
 
 ## Data on the phone
 

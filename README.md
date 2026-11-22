@@ -1,89 +1,101 @@
 # PAPRelay
 
-PAPRelay copies the data from a ResMed AirSense 11 CPAP machine to your Android phone.
-It uses Bluetooth. It does not use the internet.
+PAPRelay is an Android app that copies the data from a ResMed AirSense 11 CPAP machine to
+your phone over Bluetooth. From the phone, it can send the data to Health Connect, to two
+CSV files in a folder that you choose, or to another app.
 
-![The machine sends data to the phone by Bluetooth. The phone passes it on to Health Connect, to two files in a folder, or to another app.](docs/images/overview.svg)
+![The machine sends data to the phone by Bluetooth, with no internet. The phone sends it to Health Connect, to two files in a folder, or to another app.](docs/images/overview.svg)
 
 > [!IMPORTANT]
 > PAPRelay is an independent project. It is **not made, endorsed or supported by ResMed**
-> (the manufacturer of the machine) or by Google.
+> (the maker of the machine) or by Google.
 >
-> PAPRelay is **for personal use only**: one person, with their own machine and their own phone.
->
-> PAPRelay is **not a medical device**. Values can be wrong, late or missing. Do not use it
-> to decide about treatment. Ask your doctor.
->
-> There is no warranty.
+> PAPRelay is **for personal use only**: one person, with their own machine and their own
+> phone. It is **not a medical device**. Values can be wrong, late or missing. Do not use
+> them to make decisions about your treatment. Ask your doctor. There is no warranty.
+> See [Intended use](docs/INTENDED-USE.md) for details.
 
 ## What it does
 
-- It reads the nights that the machine has stored: hours of use, AHI (breathing events
-  for each hour of use), leak, pressure, breathing and humidifier figures, and the list
-  of breathing events.
-- It shows them on the phone as the machine recorded them, and can pass them on to
-  Health Connect, to two files in a folder that you choose, or to another app.
-- It cannot change the machine's settings, start or stop therapy, or delete data on the
-  machine.
+PAPRelay reads what the machine has stored for each night:
+
+- hours of use, and the start and length of each session;
+- AHI (the number of apnoeas and hypopnoeas for each hour of use) and the other indices;
+- leak, pressure and breathing figures;
+- humidifier, heated tube and blower figures;
+- each breathing event: obstructive, central and unclassified apnoeas, and hypopnoeas.
+
+The app shows the figures exactly as the machine recorded them, and can send them to other places (see
+[Where the data goes](#where-the-data-goes)). It only reads from the machine: it cannot
+change the settings, start or stop therapy, or delete data.
 
 ## What you need
 
 - A ResMed AirSense 11.
-- A phone with Android 14 or later. Health records need Android 16 or later.
+- A phone with Android 14 or later. Health records in Health Connect need Android 16 or
+  later.
 
-The machine seems to keep one pairing only. **When you pair PAPRelay, expect the myAir app
-to lose its connection to the machine.** If you pair myAir again later, expect PAPRelay to
-lose its connection. Then pair PAPRelay again.
+The machine keeps one Bluetooth pairing at a time, so remove it from the myAir app before
+you pair PAPRelay. To use myAir again, open **Device check** in PAPRelay and tap **Forget machine**, so that
+PAPRelay stops connecting. Then pair myAir as usual.
 
 ## Get the app
 
 On the phone, open the [releases page](https://github.com/hahnfeld/paprelay/releases),
 download the newest file that ends in `.apk`, and open it. Android asks you to allow the
-installation.
+installation. You can also [build the app yourself](docs/BUILDING.md).
 
-You can also [build it yourself](docs/BUILDING.md).
+Official releases are signed with a certificate that has this SHA-256 fingerprint:
+
+```
+8e1afb37ff59274a5c8dc521b80d37833c0c1f0a5198a7d9df5e8daeecf89806
+```
+
+[Checking a downloaded release](docs/BUILDING.md#checking-a-downloaded-release) explains
+how to compare a downloaded file with it.
 
 ## First-time setup
 
-Keep the phone within a few metres of the machine.
+Keep the phone within a few metres of the machine during setup.
 
-![The five steps of the setup, as pictures.](docs/images/setup.svg)
+![The five setup steps: remove the machine from myAir; on the machine, choose More, myAir App, OK, Downloaded, Connect; in PAPRelay, tap Pair the machine and type the code; wait for the ticks; tap Synchronise now.](docs/images/setup.svg)
 
 1. Remove the machine from the myAir app. If the phone's Bluetooth settings list the
-   machine, remove ("forget") it there too.
-2. On the machine, choose **More**, then **myAir App**, then **Connect**. The machine now waits for
-   the phone.
-3. In PAPRelay, tap **Pair the machine**. PAPRelay shows these steps again. When the machine
-   shows a code with four digits, tap **The machine shows a code**. Allow "Nearby devices";
-   this is Android's name for Bluetooth. On Android 16 or later, Android then asks if
-   PAPRelay may write to Health Connect. Allow this too. Type the code in PAPRelay. The code
-   works for about two minutes. If the machine shows no code, tap **Cancel** and start
-   again at step 2.
-4. Wait. PAPRelay tests every connection. The lines in the picture fill in one after the
-   other. A tick means that the connection works.
-5. Tap **Synchronise now**. After this, PAPRelay synchronises by itself.
+   machine, tap **Forget** there. Closing the myAir app is not enough.
+2. On the machine, choose **More**, then **myAir App**, then **OK, Downloaded**, then
+   **Connect**. The machine now waits for the phone.
+3. In PAPRelay, tap **Pair the machine**.
+   - Allow **Nearby devices** (Bluetooth).
+   - On Android 16 or later, also allow PAPRelay to write to Health Connect.
+   - When the machine shows a four-digit code, tap **The machine shows a code**.
+   - Type the code. It works for about two minutes.
+
+   No code on the machine? Tap **Cancel** and start again at step 2.
+4. Wait while PAPRelay tests each connection. The lines in the picture appear one by one,
+   and a tick means that a connection works. A red cross means that it does not: see
+   [If something does not work](#if-something-does-not-work).
+5. Tap **Synchronise now**. After that, PAPRelay synchronises automatically.
 
 ## The home screen
 
-![The home screen with six numbered parts.](docs/images/home.svg)
+![The home screen with six numbered parts: the picture of the connections, last night's figures, the last synchronisation, the Synchronise now button, the buttons for the other pages, and the i for About. The figures are examples.](docs/images/home.svg)
 
-1. The picture shows the machine, the phone and Health Connect, and the two connections
+1. The picture of the machine, the phone and Health Connect, with the two connections
    between them.
 2. Last night: hours of use and AHI, then leak and pressure.
-3. What happened the last time PAPRelay synchronised. Just after a device check, what the
-   check found.
-4. Tap to synchronise now.
-5. **Nights** shows one night at a time, with all its figures. Swipe, or tap the arrows, to
-   see an earlier or later night. **Breathing events** lists the events, newest first.
-   **Sharing** sets where the data goes. **Device check** tests the connections and saves
-   a report.
-6. The **i** opens About.
+3. The result of the last synchronisation or, just after a device check, the result of
+   the check.
+4. The **Synchronise now** button.
+5. The other pages:
+   - **Nights** shows one night at a time, with all its figures.
+   - **Breathing events** lists the events, newest first.
+   - **Sharing** sets where the data goes.
+   - **Device check** tests the connections and can save a report.
+6. The **i** opens **About**.
 
-The figures in this picture are examples.
+The lines in the picture show the state of each connection:
 
-The lines in the picture change:
-
-![What the lines in the picture mean.](docs/images/picture.svg)
+![The six states of the lines in the picture, as listed below.](docs/images/picture.svg)
 
 - Two short lines: not set up yet.
 - A grey line: set up and waiting.
@@ -92,133 +104,142 @@ The lines in the picture change:
 - A red cross on a line: it did not work.
 - A red cross on the phone: the phone has a problem.
 
-## Where the data goes
+## Nights and breathing events
 
-Open **Sharing** to choose.
+For the machine, a night runs from midday (12:00) to midday and has the date of the
+evening. PAPRelay shows a night only after it has ended, because the machine can still
+change the figures until then. This means that last night's figures arrive **in the
+afternoon**, not in the morning.
 
-![The Sharing page.](docs/images/sharing.svg)
+![One night runs from midday to midday. The figures arrive on the phone after the second midday.](docs/images/night.svg)
 
-- Nightly figures to health records: on at the start. Health Connect has no place for
-  CPAP data, so the nights appear there under lab results, from "PAPRelay (CPAP machine)".
-  They are not laboratory results. The breathing events, and the figures that describe
-  the machine (humidifier, heated tube, blower), are not written there. They are in the
-  two files.
-- Respiratory rate: off at the start. It is one value for each minute of therapy. Leave it
-  off if a watch or a ring already writes your respiratory rate. With machine
-  software other than version 19.8.8.0, respiratory rate starts with the first night of an
-  hour or more after you first switch it on, after the machine's software changes, or
-  after PAPRelay was installed again. Earlier nights are not written. Until then the app says that it waits.
-- Files of nights and events: two files (CSV), kept up to date in a folder that you choose
-  once, for example on a cloud drive. See [The two files](#the-two-files).
-- Share: sends the recent nights as text to an app that you choose. Sharing is only on
-  this page.
+Open **Nights** to see one night at a time, newest first. Swipe, or tap the arrows beside
+the date, to see an earlier or later night.
 
-### The two files
+![The picture of one night: the sessions as thick lines, a tall mark for each apnoea and a short mark for each hypopnoea.](docs/images/timeline.svg)
 
-PAPRelay writes these two files in the folder, and touches nothing else there. Each run
-writes them again whole. Each file has one header line, and the units are in the column
-names. An empty cell means that the machine recorded no value. It is never a guessed zero.
-The newest line is first.
+- The picture shows the night from midday to midday. A thick line is therapy. A tall mark
+  is an apnoea, and a short mark is a hypopnoea.
+- Below the picture are all the night's figures, in sections: use, events, leak,
+  pressure, breathing, humidifier and tube, and the machine.
+- A dash (—) means that the machine recorded no value. PAPRelay never shows a guessed
+  zero.
+- The machine's clock can be a few minutes wrong, so PAPRelay corrects times to the
+  phone's clock. A time marked with * is by the machine's clock, because PAPRelay could
+  not correct it.
 
-- `paprelay_nights.csv` has one line for each finished night: the date, hours of use, the
-  number of sessions, every figure (AHI and its parts, leak, pressure, breathing,
-  humidifier, heated tube and blower), and each session's start and length. Session
-  starts are given twice: corrected to the phone's clock, and by the machine's clock.
-  Leak and the other flows are in litres per minute, tidal volume in millilitres.
-- `paprelay_events.csv` has one line for each breathing event (obstructive apnoea, central
-  apnoea, unclassified apnoea, hypopnoea) of the finished nights: its night, its time
-  corrected to the phone's clock, its time by the machine's clock, what that time is
-  (`time_is`), and its length. The time of an apnoea with a length is when it ended
-(`end`). The
-  machine records no length for a hypopnoea. Its time can be its start or its end
-  (`start_or_end`). The events of the day still running are added when that night is
-  finished.
-
-A corrected time is empty when PAPRelay cannot correct it with confidence: the event is
-more than a week older than the synchronisation that first copied it, or the machine's
-clock was changed just before. The machine's own time is always there.
-
-For a spreadsheet: the files use commas between cells and a full stop for decimals. Times
-are in ISO 8601 with their offset from UTC, for example `2026-11-14T23:05:00-07:00`. A
-night's session starts and lengths are lists in one cell, separated by spaces. If your
-spreadsheet uses commas for decimals, import the file as CSV with "." as the decimal
-separator.
-
-PAPRelay 0.3.0 and later do not use a file chosen in an earlier version. Choose a folder
-on the **Sharing** page.
+**Breathing events** lists each event with its time and, for an apnoea, its length. For an
+apnoea with a length, the time is when it ended. The machine records no length for a
+hypopnoea, and its time can be its start or its end. To see the events of one night, tap the line with the
+number of events on that night's page.
 
 ## When it synchronises
 
 ![PAPRelay synchronises when you tap the button, when the phone is near the machine, and about every hour.](docs/images/when.svg)
 
-When the phone is away from the machine, PAPRelay waits and tries again later. The machine
-keeps the recent nights, so PAPRelay copies the missing nights then.
+If the phone is away from the machine, PAPRelay tries again later. The machine keeps its
+recent nights, so PAPRelay copies any missing nights the next time it reaches the machine.
 
-## When a night arrives
+The first synchronisation copies up to 400 days of data from the machine.
 
-![One night runs from midday to midday. The figures arrive on the phone after the second midday.](docs/images/night.svg)
+## Where the data goes
 
-For the machine, one night runs from midday (12:00) to midday. PAPRelay shows a night
-only after it has ended. Until then the machine can still change the figures. So last
-night's figures arrive **in the afternoon**, not in the morning.
+Open **Sharing** to choose where the data goes.
 
-## A night, and its events
+![The Sharing page: a switch for nightly figures to health records, shown on; a switch for respiratory rate to Health Connect, shown off; Files of nights and events with the button Choose a folder; and the button Share the recent nights as text.](docs/images/sharing.svg)
 
-Open **Nights**. The newest night is shown first. Swipe, or tap the arrows beside the date,
-to see an earlier or later night.
+- **Nightly figures to health records** (on at first). PAPRelay writes usage, AHI, leak,
+  pressure and breathing for each night to the health records in Health Connect. Health
+  Connect has no place for CPAP data, so the nights appear under lab results, from
+  "PAPRelay (CPAP machine)". They are not laboratory results. The breathing events and the
+  figures that describe the machine (humidifier, heated tube, blower) go only to the two
+  files.
+- **Respiratory rate to Health Connect** (off at first). One value for each minute of
+  therapy. Leave it off if a watch or a ring already writes your respiratory rate. On
+  machine software 19.8.8.0, it starts once the machine holds a session of 30 minutes or
+  more. After a software change, this session must be one recorded after the change.
+  On other software versions, it waits for a session of one hour or more, and the app
+  says that it is waiting. It waits again after the machine's software changes, or after
+  you install PAPRelay again. On these versions, respiratory rate recorded before you
+  switched it on, before the software changed, or before you installed PAPRelay again is
+  not written.
+- **Files of nights and events**. The two files, kept up to date in a folder that you
+  choose once, for example on a cloud drive. See [The two files](#the-two-files).
+- **Share the recent nights as text**. Sends the recent nights as text to an app that you
+  choose.
 
-![The picture of one night: the sessions as thick lines, a tall mark for each apnoea and a short mark for each hypopnoea.](docs/images/timeline.svg)
+### The two files
 
-- The picture shows the night from midday to midday. A thick line is therapy. A tall mark
-  is an apnoea, a short mark a hypopnoea.
-- Below it are all the night's figures, in sections: use, events, leak, pressure,
-  breathing, humidifier and tube, and the machine.
-- A dash (—) means that the machine recorded no value. PAPRelay never shows a guessed zero.
-- Times are corrected to the phone's clock. A time with * is by the machine's clock,
-  because PAPRelay could not correct it.
+PAPRelay writes two CSV files in the folder, and does not change any other file there.
+When the data changes, PAPRelay writes both files again in full. Each file has one header line,
+the units are in the column names, and the newest line comes first. An empty cell means
+that the machine recorded no value.
 
-**Breathing events** lists each event with its time and, for an apnoea, its length. The
-time of an apnoea with a length is when it ended. The machine records no length for a hypopnoea. Its
-time can be its start or its end. From a night, tap the line with the number of events to see that
-night's events.
+- `paprelay_nights.csv` has one line for each finished night: the date, hours of use, the
+  number of sessions, every figure (AHI and the other indices, leak, pressure, breathing,
+  humidifier, heated tube and blower), and the start and length of each session. Session
+  starts appear twice: corrected to the phone's clock, and by the machine's clock. Leak and
+  the other flows are in litres per minute, and tidal volume is in millilitres.
+- `paprelay_events.csv` has one line for each breathing event of the finished nights
+  (obstructive apnoea, central apnoea, unclassified apnoea or hypopnoea). Each line gives
+  the event's night, its time corrected to the phone's clock, its time by the machine's
+  clock, what that time means (`time_is`), and its length. For an apnoea with a length,
+  the time is when it ended (`end`). The machine records no length for a hypopnoea, and
+  its time can be its start or its end (`start_or_end`). The events of the current day are
+  added when that night has ended.
 
-The first synchronisation reads the last 400 days that the machine still holds, with all
-their figures and events.
+A corrected time is empty when PAPRelay cannot correct it with confidence: when the event
+is more than a week older than the synchronisation that first copied it, or when the
+machine's clock was changed just before. The machine's own time is always there.
+
+To open the files in a spreadsheet: cells are separated by commas, and decimals use a full
+stop. Times are in ISO 8601 with their offset from UTC, for example
+`2026-11-14T23:05:00-07:00`. A night's session starts and lengths are lists in one cell,
+separated by spaces. If your spreadsheet uses commas for decimals, import the file as CSV
+with "." as the decimal separator.
+
+Upgrading from 0.2? PAPRelay 0.3.0 and later do not use the file chosen in an earlier
+version. Choose a folder on the **Sharing** page.
 
 ## If something does not work
 
 | What you see | What to do |
 |---|---|
-| "The machine did not answer." | Move the phone near the machine. Check that Bluetooth is on. PAPRelay tries again by itself. |
-| No machine is found during pairing. | Check that the machine is removed from myAir. Start again at step 2 of the setup. |
-| "The machine no longer accepts this phone." | Open **Device check**, choose **Forget machine**, and pair again. |
-| "PAPRelay cannot yet read this machine's software." | PAPRelay does not know the software of this machine. Please [report it](CONTRIBUTING.md#machines-and-software-versions). |
+| "The machine did not answer." | Move the phone near the machine and check that Bluetooth is on. PAPRelay tries again automatically. |
+| No machine is found during pairing. | Check that the machine is waiting for the phone (setup step 2). If it is, remove the machine from the myAir app, and tap **Forget** for it in the phone's Bluetooth settings. Then start again at step 2 of the setup. |
+| "The machine no longer accepts this phone." | Open **Device check**, tap **Forget machine**, and pair again. |
+| "PAPRelay cannot yet read this machine's software." | PAPRelay does not know this machine's software version yet. Please [report it](CONTRIBUTING.md#machines-and-software-versions). |
 | Last night is missing in the morning. | This is normal. The figures arrive after midday. |
-| "Not every night has been copied yet." for several days, or "PAPRelay could not read some of the data from the machine." | Open **Device check**, run it, save the report, and [report the problem](https://github.com/hahnfeld/paprelay/issues). |
+| "Not every night has been copied yet." for several days, or "PAPRelay could not read some of the data from the machine." | Open **Device check**, tap **Run device check**, then **Save report**, and [report the problem](https://github.com/hahnfeld/paprelay/issues). |
 | Health Connect shows nothing. | Open **Sharing** and check the switches. In Health Connect, allow PAPRelay to write. Phones with Android 14 or 15 have no health records. |
-| "Respiratory rate starts after a night of therapy of one hour or more" stays after several nights. | PAPRelay cannot read respiratory rate from this machine's software yet. Switch it off in **Sharing**, and please [report it](CONTRIBUTING.md#machines-and-software-versions). The nightly figures are not affected. |
-| **Breathing events** is empty. | Events appear after the next synchronisation. If the list stays empty after a night of therapy, run **Device check**, save the report, and [report it](https://github.com/hahnfeld/paprelay/issues). |
-| The files of nights and events are not in the folder. | Open **Sharing**. If it says that the files could not be written, choose the folder again. The files appear after the first finished night. |
-| PAPRelay stops after some months. | Android pauses apps that you do not open. In the app settings, turn off the switch for unused apps. |
+| "Respiratory rate starts after a night of therapy of one hour or more" is still shown after several nights. | PAPRelay cannot yet read respiratory rate from this machine's software. Switch it off in **Sharing**, and please [report it](CONTRIBUTING.md#machines-and-software-versions). The nightly figures are not affected. |
+| **Breathing events** is empty. | Events appear after the next synchronisation. If the list is still empty after a night of therapy, open **Device check**, tap **Run device check**, then **Save report**, and [report it](https://github.com/hahnfeld/paprelay/issues). |
+| The two files are not in the folder. | Open **Sharing**. If it says that PAPRelay could not write the files, choose the folder again. The files appear after the first finished night. |
+| PAPRelay stops synchronising after some months. | Android pauses apps that you do not open. In the app settings for PAPRelay, turn off **Manage app if unused** or **Pause app activity if unused** (the name depends on the phone). |
 
-**Device check** can save a report. The report is safe to share: it holds no pairing key,
-no full serial number and no Bluetooth address. Please attach it when you
+The device-check report is safe to share: it contains no pairing key, no full serial
+number and no Bluetooth address. Please attach it when you
 [report a problem](https://github.com/hahnfeld/paprelay/issues).
 
 ## Privacy
 
-- PAPRelay has no internet permission. It cannot send anything over the internet.
-- Data leaves the app in four ways only: through Health Connect, through the two files in
-  the folder that you chose, through a device-check report that you save, and when you
-  share it yourself.
-- PAPRelay reads nothing from Health Connect.
-- Uninstalling PAPRelay deletes what it stored itself. The two files in your folder and the
-  records in Health Connect stay until you delete them.
+PAPRelay has no internet access, no accounts, no analytics and no advertising. Data leaves
+the app only:
+
+- through Health Connect;
+- through the two files in the folder that you chose (if the folder is on a cloud drive,
+  the drive's own app uploads them);
+- in a device-check report that you save;
+- when you share it yourself.
+
+PAPRelay only writes to Health Connect and never reads from it. Uninstalling PAPRelay
+deletes everything it stored itself. The two files and the health records stay until you
+delete them.
 
 ## For developers
 
 - [docs/BUILDING.md](docs/BUILDING.md): build, test and install.
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how the software is made, and why.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how the software is built, and why.
 - [CONTRIBUTING.md](CONTRIBUTING.md): how to help, and the rules for changes.
 - [docs/INTENDED-USE.md](docs/INTENDED-USE.md): what PAPRelay is for.
 - [docs/DEVICE-CHECK.md](docs/DEVICE-CHECK.md): what the device check tests.
@@ -232,12 +253,12 @@ PAPRelay is free software under the GNU General Public License, version 3 or lat
 an attribution term inherited from SomnoTrace. See [LICENSE](LICENSE), [NOTICE](NOTICE) and
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
-"For personal use only" says what PAPRelay is made and tested for. It does not take away
-any right that the licence gives you.
+"For personal use only" describes what PAPRelay is made and tested for. It does not limit
+your rights under the licence.
 
-ResMed, AirSense and myAir are trademarks of ResMed. Android and Health Connect
-are trademarks of Google LLC. All other names belong to their owners. PAPRelay uses these
-names only to say what it works with.
+ResMed, AirSense and myAir are trademarks of ResMed. Android and Health Connect are
+trademarks of Google LLC. All other names belong to their owners. PAPRelay uses these names
+only to say what it works with.
 
 ## Thanks to OSCAR
 
@@ -245,5 +266,5 @@ names only to say what it works with.
 SleepyHead before it, first made CPAP data readable for the people who use these machines.
 PAPRelay's decoding was checked against the SD-card data that OSCAR reads.
 
-To study your nights in detail, use OSCAR. PAPRelay only copies the nightly figures and
-the breathing events to your phone. OSCAR's source code is at https://gitlab.com/CrimsonNape/OSCAR-code.
+PAPRelay copies the nightly figures and the breathing events to your phone. To study your
+nights in detail, use OSCAR. Its source code is at https://gitlab.com/CrimsonNape/OSCAR-code.

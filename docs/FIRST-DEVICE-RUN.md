@@ -39,6 +39,10 @@ the SD-card files are not kept in this repository.
   `DataModelVersionIdentifier`; version sections `FlowGenerator`, `BluetoothModule`,
   `CellularModule`.
 
+From other sources:
+[SomnoTrace's pairing guide](https://github.com/ilyakruchinin/somnotrace/blob/main/docs/pairing.md): the machine keeps one Bluetooth bond at
+a time, and must be released from myAir before another app can pair.
+
 ## Accuracy against the SD card
 
 The downloaded bytes were decoded and compared with the same machine's SD card for the

@@ -391,7 +391,7 @@ def picture():
 
 
 def setup():
-    s = Svg(444, "First-time setup in five steps: remove the machine from myAir; on the machine choose More, myAir App, Connect; in PAPRelay tap Pair the machine and type the code that the machine shows; wait for the ticks; tap Synchronise now.")
+    s = Svg(444, "First-time setup in five steps: remove the machine from myAir; on the machine choose More, myAir App, OK, Downloaded, Connect; in PAPRelay tap Pair the machine and type the code that the machine shows; wait for the ticks; tap Synchronise now.")
     row = 84
     top = 24
     label_x = 250
@@ -413,7 +413,7 @@ def setup():
     y = top + row
     mw = s.machine(88, y + 2, 48)
     s.waves(88 + mw + 6, y + 26, 22)
-    s.lines(label_x, y + 24, ["On the machine: More", "› myAir App › Connect"])
+    s.lines(label_x, y + 14, ["On the machine:", "More › myAir App ›", "OK, Downloaded › Connect"])
 
     # Step 3: the machine shows the code, and the code is typed into the phone.
     y = top + 2 * row

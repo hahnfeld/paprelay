@@ -67,10 +67,13 @@ encrypts nothing else. The items it can read (`GetItem`) and the logs it can dow
 
 No request changes therapy, settings or stored data. The pairing on the machine is changed
 by the key exchange (`StartKeyExchange`, `ConfirmKeyExchange`), which stores PAPRelay's
-pairing, as far as is known in place of the one before it (not yet confirmed; see
-[FIRST-DEVICE-RUN.md](FIRST-DEVICE-RUN.md)). `DiscardPairKey` would remove it; the app
-does not send it at present. **Forget machine**
-deletes the pairing on the phone only.
+pairing. `DiscardPairKey` would remove it; the app does not send it at present. **Forget
+machine** deletes the pairing on the phone only.
+
+The machine keeps one Bluetooth pairing at a time, so it must be removed from the myAir app
+before PAPRelay can pair (source: [SomnoTrace's pairing guide](https://github.com/ilyakruchinin/somnotrace/blob/main/docs/pairing.md),
+"Before You Start"). Whether pairing myAir again later drops PAPRelay's pairing is still
+open (see [FIRST-DEVICE-RUN.md](FIRST-DEVICE-RUN.md#still-open)).
 
 ### Values
 
