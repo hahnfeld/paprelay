@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 232" width="480" height="232" role="img" aria-label="The machine sends data to the phone by Bluetooth. The phone passes it on to Health Connect, to two files in a folder, or to another app. PAPRelay does not use the internet.">
-<title>The machine sends data to the phone by Bluetooth. The phone passes it on to Health Connect, to two files in a folder, or to another app. PAPRelay does not use the internet.</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 232" width="480" height="232" role="img" aria-label="The machine sends data to the phone by Bluetooth. The phone sends it to Health Connect, to two files in a folder, or to another app. The night so far stays on the phone. There is no internet connection.">
+<title>The machine sends data to the phone by Bluetooth. The phone sends it to Health Connect, to two files in a folder, or to another app. The night so far stays on the phone. There is no internet connection.</title>
 <style>
   .paper { fill: #ffffff; stroke: #d0d7de; stroke-width: 1; }
   .ink { fill: none; stroke: #1f2328; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
@@ -67,4 +67,5 @@
 <path class="line" d="M29.2 206.6C21.4 206.6 21.4 196.9 29.2 197.3C29.2 188.4 43 188.4 43.6 195.4C53.2 195.1 53.2 206.6 44.8 206.6Z"/>
 <path class="badline" d="M24.4 186L49.6 212.6"/>
 <text class="s" x="64" y="206" text-anchor="start">No internet</text>
+<text class="s" x="456" y="206" text-anchor="end">“So far” stays on the phone</text>
 </svg>

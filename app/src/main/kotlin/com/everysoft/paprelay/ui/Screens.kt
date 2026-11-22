@@ -98,6 +98,7 @@ import com.everysoft.paprelay.BuildConfig
 import com.everysoft.paprelay.R
 import com.everysoft.paprelay.core.nights.Night
 import com.everysoft.paprelay.core.nights.NightFigure
+import com.everysoft.paprelay.core.nights.NightPreview
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import com.everysoft.paprelay.sync.SyncOutcome
@@ -231,6 +232,10 @@ fun HomeScreen(
     onOpenCheck: () -> Unit,
     onOpenNights: () -> Unit,
     onOpenEvents: () -> Unit,
+    /** The night not yet summed up, so far, and how many breathing events it has; null for none. */
+    preview: NightPreview? = null,
+    previewEvents: Int = 0,
+    onOpenPreviewEvents: (Long) -> Unit = {},
     onOpenChoices: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenHealthConnect: () -> Unit,
@@ -267,7 +272,14 @@ fun HomeScreen(
         val free = !sync.running && !busy
 
         if (paired && syncEnabled) {
-            // What the app is for: the latest finished night, in the machine's own figures.
+            // What the app is for: the latest finished night, in the machine's own figures; and, before
+            // the machine has summed up the night after it, what is known of that one so far.
+            // The night not yet summed up comes first, dated and marked "so far"; the newest finished
+            // night stays below it, always.
+            if (preview != null) {
+                Spacer(Modifier.height(20.dp))
+                PreviewSummary(preview, previewEvents, onOpenEvents = { onOpenPreviewEvents(preview.date.toEpochDay()) })
+            }
             nights.firstOrNull { it.complete }?.let { night ->
                 Spacer(Modifier.height(20.dp))
                 NightSummary(night)
@@ -509,6 +521,26 @@ private fun NightSummary(night: Night) {
         )
         val details = listOfNotNull(leak?.let { stringResource(R.string.night_leak, it) }, pressure?.let { stringResource(R.string.night_pressure, it) })
         if (details.isNotEmpty()) Secondary(details.joinToString(" · "), Modifier.padding(top = 2.dp))
+    }
+}
+
+/**
+ * Last night before the machine has summed it up: how long the mask was on so far, how many
+ * breathing events the machine has logged (a count, no rate), and when its own figures come.
+ */
+@Composable
+private fun PreviewSummary(preview: NightPreview, events: Int, onOpenEvents: () -> Unit) {
+    val date = remember(preview.date) { dayFormatter().format(preview.date) }
+    Column(Modifier.fillMaxWidth()) {
+        Text(
+            stringResource(R.string.night_of_so_far, date),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.semantics { heading() },
+        )
+        PreviewHeadline(preview, MaterialTheme.typography.titleLarge)
+        if (events > 0) DestinationRow(GlyphKind.TICKS, pluralStringResource(R.plurals.preview_events, events, events), onOpenEvents)
+        Secondary(stringResource(R.string.preview_note), Modifier.padding(top = 2.dp))
     }
 }
 

@@ -22,7 +22,7 @@ Most of the logic that can be wrong is there, or behind interfaces that the test
 
 ## How the data flows
 
-![From the machine through the link, the protocol, the decoders and the plans to the sync engine, which keeps the nights and the breathing events on the phone and writes to Health Connect, to two files in a folder and to the screen.](images/flow.svg)
+![From the machine through the link, the protocol, the decoders and the plans to the sync engine, which keeps the nights, the breathing events and the mask-on times on the phone and writes to Health Connect, to two files in a folder and to the screen. The night "so far", from the mask-on times, is shown on the screen only.](images/flow.svg)
 
 | Step | Where | What happens |
 |---|---|---|
@@ -40,15 +40,50 @@ PAPRelay can request four of the machine's stored logs:
 |---|---|---|
 | `Summary` | One record for each day, midday to midday: usage, indices, percentiles | The sync engine, for the nightly figures |
 | `TherapyOneMinutePeriodic` | One sample for each minute of therapy | The sync engine, for respiratory rate |
-| `UsageEvents-TherapyStatusEvents` | Mask on and off | The device check only (downloaded and verified) |
+| `UsageEvents-TherapyStatusEvents` | Mask on and off | The sync engine, for the morning preview; and the device check |
 | `TherapyEvents-RespiratoryEvents` | Each breathing event | The sync engine, for the list of events; and the device check |
 
 PAPRelay passes on a day's summary only after that day has ended, at midday by the
 machine's clock. This is why a night's figures arrive in the afternoon.
 
-The mask-on and mask-off log is not synchronised: each session's start and length come
-from the daily summary, where they were compared with the SD card, and the log itself was
-not compared.
+The nights' sessions come from the daily summary, where they were compared with the SD
+card. The mask-on and mask-off log is read only for the morning preview (below). Its
+`MASK_ON` and `MASK_OFF` are confirmed: `UsageCheck`, run by the real-data probe, found every
+session of the first device run's capture to match the summary's sessions. Mask on is a
+session's start; the log's other kinds are not used, and with either of the two
+unconfirmed the sync would not ask for the log at all.
+
+### The morning preview
+
+The machine sums a night up only after the next midday. Until then `NightPreview` (core)
+gives the night after the newest finished one, midday to midday by the machine's clock at
+the offset of the night before: its mask-on sessions from the usage log, the whole minutes
+of use so far (a session still on is counted up to when the log was last read whole, and
+said to have not ended then; marks that do not pair up give no sum), and the night's
+breathing events, which are kept as all events are. A record of the log that cannot be
+read is kept as a gap, from the last record read before it to the first read after; a night
+a gap reaches gets no total, and a session still on there no time beyond its start. A
+mask-off at the start of the night ends the night before's session only when a mask-on
+before midday is there for it to close. A failing record holds the place to resume from
+for at most the two days the preview can need. Nothing is worked out from them: no index, no
+rate. The usage marks are kept in `usage.json` (the last night or two, each once,
+corrected by `ClockCorrection` like the events) and read from a little before where the
+last run reached. Reading them is the last step of a run; a failure of it keeps nothing
+else from the phone, and only a lost link is said.
+
+The preview is for the screen only. It is not a `Night`, so it never reaches the health
+records or the table of nights, and its events lie after the newest finished night, which
+`EventReport.shown` leaves out of the events table. When the machine's own night for the
+date arrives, the preview moves on to the next night. Home shows the newest finished night
+at all times, with the preview, dated and marked "so far", above it.
+
+Known limits:
+
+- A mask-on with no mask-off yet is counted up to the last read. After a power cut, which
+  may leave no mask-off, the time can be too long until a mask-off or the machine's own
+  night arrives.
+- The preview's day is the night before's offset and 24 hours. On a day the clocks change,
+  its far end is an hour off until the machine's own night arrives.
 
 A run reads the logs in this order: the summaries (the nights), the per-minute log if
 respiratory rate is switched on, then the breathing events. Whatever stops respiratory rate
@@ -249,10 +284,11 @@ The app keeps these files in its private storage. Android backup is switched off
 | `nonces.txt` | Hashes of the session nonces already seen, so that a recorded session cannot be replayed | Missing: it starts empty. Unreadable: the session fails with a storage error. Damaged lines are dropped. |
 | `sync.json` | The ledger, the point to resume from, the last report, the Sharing settings | Missing: PAPRelay starts as if new, with the Sharing settings at their defaults. Damaged: reported, not replaced. The user chooses **Start again**, which deletes the file. |
 | `nights.json` | The nights, with their sessions and the plan version they were read under | Damaged: renamed and kept; the list is built again from the machine. Written by a version before 0.3.0: deleted, and built again. |
+| `usage.json` | The mask-on and mask-off marks of the last night or two, the point to resume from, and when the log was last read whole | Missing or damaged: dropped, and read again from the machine. Nothing else depends on it. |
 | `events.json` | The breathing events of the kinds passed on, one line each, the point to resume from, and the set of kinds its history was read under | Damaged: renamed and kept; the list is built again from the machine. Bounded by the nights kept and by 250,000 events. |
 | `raw/`, `check/` | The downloaded bytes of recent runs and of the last device check, unencrypted | Not needed for synchronising. Deleted by **Forget machine**. |
 
-The five named files are each replaced whole and atomically (`AtomicFiles`). A crash leaves the old state
+The six named files are each replaced whole and atomically (`AtomicFiles`). A crash leaves the old state
 or the new one.
 
 ### When a run starts
@@ -339,7 +375,10 @@ single finished nights, each with a line drawing of the night and every figure b
 its rows are listed in the screen's code, not taken from `NightFigure`, and a test holds
 them to what `NightPlan` gives. Breathing events is a lazy list grouped by night, built a
 few nights at a time. It is the one page reachable from two places (Home, and a night);
-Back returns to where it was opened. Sharing happens only on the Sharing page. With no
+Back returns to where it was opened. Sharing happens only on the Sharing page. The
+morning preview, where there is one, is the last page of Nights (`NightPageItem`), takes the
+night summary's place on Home, and heads the list of events, each marked "so far"; a night
+and a preview draw their picture from the same `TimelineModel`. With no
 pairing to use, **Pair the machine** first opens a page with the steps
 (`PairStepsScreen`); the device check, and its search for the machine, starts only when
 the user says that the machine shows its serial number (as it does in pairing mode; the

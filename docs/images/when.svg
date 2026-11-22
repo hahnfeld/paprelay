@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 178" width="480" height="178" role="img" aria-label="PAPRelay synchronises when you tap the button, when the phone is near the machine, and about every hour.">
-<title>PAPRelay synchronises when you tap the button, when the phone is near the machine, and about every hour.</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 366" width="480" height="366" role="img" aria-label="PAPRelay synchronises when you tap the button, when the phone is near the machine, and about every hour. Before the machine has summed up a night, its time of use and breathing events arrive and show as the night so far. Respiratory rate goes to Health Connect, if it is switched on. At the next synchronisation after midday, the machine&#x27;s own night replaces the night so far.">
+<title>PAPRelay synchronises when you tap the button, when the phone is near the machine, and about every hour. Before the machine has summed up a night, its time of use and breathing events arrive and show as the night so far. Respiratory rate goes to Health Connect, if it is switched on. At the next synchronisation after midday, the machine&#x27;s own night replaces the night so far.</title>
 <style>
   .paper { fill: #ffffff; stroke: #d0d7de; stroke-width: 1; }
   .ink { fill: none; stroke: #1f2328; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
@@ -35,7 +35,7 @@
     .num, .on { fill: #0d1117; }
   }
 </style>
-<rect class="paper" x="0.5" y="0.5" width="479" height="177" rx="12"/>
+<rect class="paper" x="0.5" y="0.5" width="479" height="365" rx="12"/>
 <rect class="solid" x="12" y="34" width="136" height="32" rx="16"/>
 <text class="c on" x="80" y="54.5" text-anchor="middle">Synchronise now</text>
 <circle class="solid" cx="130" cy="76" r="4.2"/>
@@ -59,4 +59,12 @@
 <text class="t" x="400" y="124" text-anchor="middle">About</text>
 <text class="t" x="400" y="145" text-anchor="middle">every hour</text>
 <path class="faint" d="M160 26V152M320 26V152"/>
+<path class="faint" d="M24 172H456"/>
+<text class="b" x="40" y="202" text-anchor="start">Before the machine sums it up</text>
+<text class="s" x="40" y="224" text-anchor="start">The night so far: time of use and breathing events</text>
+<text class="b" x="40" y="258" text-anchor="start">After midday</text>
+<text class="s" x="40" y="280" text-anchor="start">At the next synchronisation, the machine's own night</text>
+<text class="s" x="40" y="300" text-anchor="start">replaces “so far”</text>
+<path class="faint" d="M24 318H456"/>
+<text class="s" x="40" y="344" text-anchor="start">Respiratory rate goes to Health Connect, if it is switched on.</text>
 </svg>

@@ -10,6 +10,7 @@ import com.everysoft.paprelay.as11.SpoolName
 import com.everysoft.paprelay.as11.SpoolRound
 import com.everysoft.paprelay.as11.decode.EventDecoder
 import com.everysoft.paprelay.as11.decode.Firmware
+import com.everysoft.paprelay.as11.decode.UsageEvent
 import com.everysoft.paprelay.as11.decode.MinuteDecoder
 import com.everysoft.paprelay.as11.decode.MinuteSignal
 import com.everysoft.paprelay.as11.decode.RecordResult
@@ -18,6 +19,7 @@ import com.everysoft.paprelay.as11.decode.SummaryDecoder
 import com.everysoft.paprelay.as11.plan.ClockCorrection
 import com.everysoft.paprelay.as11.plan.EventPlan
 import com.everysoft.paprelay.as11.plan.NightPlan
+import com.everysoft.paprelay.as11.plan.UsagePlan
 import com.everysoft.paprelay.as11.plan.RespiratoryRatePlan
 import com.everysoft.paprelay.as11.plan.SessionPlan
 import com.everysoft.paprelay.ble.BluetoothOffException
@@ -27,6 +29,8 @@ import com.everysoft.paprelay.core.MachineTime
 import com.everysoft.paprelay.core.nights.BreathingEvent
 import com.everysoft.paprelay.core.nights.FhirObservations
 import com.everysoft.paprelay.core.nights.Night
+import com.everysoft.paprelay.core.nights.UsageGap
+import com.everysoft.paprelay.core.nights.UsageMark
 import com.everysoft.paprelay.core.nights.FhirResource
 import com.everysoft.paprelay.core.sync.LedgerEntry
 import com.everysoft.paprelay.core.sync.Reconcile
@@ -146,6 +150,10 @@ class SyncEngine(
     private val records: NightRecords? = null,
     /** Where the machine's breathing events are kept, or null to leave them alone. */
     private val events: EventStore? = null,
+    /** Where the mask-on and mask-off marks of the morning preview are kept, or null to leave them alone. */
+    private val usage: UsageStore? = null,
+    /** The usage kinds that may be used: the confirmed ones. Tests name others. */
+    private val usageKinds: Set<UsageEvent> = UsagePlan.CONFIRMED,
 ) {
     private val running = Mutex()
 
@@ -363,7 +371,102 @@ class SyncEngine(
                 eventsFailure = e
             }
         }
-        (rateFailure ?: eventsFailure ?: recordsFailure)?.let { throw it }
+        // Then, once mask on and off are confirmed, the marks for the morning preview: a convenience for
+        // the screen, read last. Nothing of it is passed on, and nothing it does keeps anything else
+        // from the phone. Only a lost connection is said, as it is for the rest.
+        var usageFailure: Exception? = null
+        if (usage != null && UsagePlan.ready(usageKinds) && !connectionLost(rateFailure) && !connectionLost(eventsFailure)) {
+            try {
+                usageMarks(session, firmware, tag, machineNow, correction)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                usageFailure = e
+            }
+        }
+        (rateFailure ?: eventsFailure ?: recordsFailure ?: usageFailure?.takeIf { connectionLost(it) })?.let { throw it }
+    }
+
+    /**
+     * Reads the usage log from a little before where the last run left off, and keeps the mask-on and
+     * mask-off marks of the last night or two, each once. Anything it cannot read is left: the preview
+     * then shows less, and the next run reads it again.
+     */
+    private suspend fun usageMarks(session: MachineSession, firmware: Firmware, tag: String, machineNow: MachineTime, correction: ClockCorrection) {
+        val usageStore = usage ?: return
+        val onDisk = usageStore.read()
+        val kept = if (onDisk.machineTag == tag) onDisk else Usage.EMPTY
+        val byId = LinkedHashMap<String, UsageMark>()
+        for (mark in kept.marks) byId[mark.identity] = mark
+        var address: SpoolAddress = SpoolAddress.FromMachineTime(
+            maxOf(EARLIEST_START_MS, kept.resumeFromMs?.let { it - OVERLAP_MS } ?: (machineNow.epochMs - USAGE_WINDOW_MS)),
+        )
+        var newest: Long? = null
+        var lastBeforeTrouble: Long? = null
+        var troubled = false
+        var readToEnd = false
+        var rounds = 0
+        // Where records could not be read: after the last one read before, before the first read after.
+        val gaps = ArrayList<UsageGap>()
+        var lastRead: Long? = null
+        var gapAfter: Long? = null
+        var inGap = false
+        while (++rounds <= MAX_USAGE_ROUNDS) {
+            val round = session.pull(SpoolName.USAGE_EVENTS, address)
+            keepRaw(SpoolName.USAGE_EVENTS, round)
+            val log = try {
+                EventDecoder.usage(round.data, firmware)
+            } catch (e: SpoolDecodeException) {
+                troubled = true
+                if (!inGap) gapAfter = lastRead
+                inGap = true
+                break
+            }
+            for (entry in log.entries) {
+                when (entry) {
+                    is RecordResult.Failed -> {
+                        troubled = true
+                        if (!inGap) gapAfter = lastRead
+                        inGap = true
+                    }
+                    is RecordResult.Decoded -> {
+                        val at = entry.value.time.epochMs
+                        if (inGap) {
+                            gaps += UsageGap(gapAfter, at)
+                            inGap = false
+                        }
+                        lastRead = at
+                        newest = maxOf(newest ?: Long.MIN_VALUE, at)
+                        if (!troubled) lastBeforeTrouble = newest
+                        UsagePlan.mark(log, entry.value, correction, usageKinds)?.let { byId.putIfAbsent(it.identity, it) }
+                    }
+                }
+            }
+            val next = round.next
+            if (next == null) {
+                readToEnd = true
+                break
+            }
+            address = SpoolAddress.Continuation(next)
+        }
+        // Only what the preview can need: marks since a day before the newest finished night ended.
+        val newestEnd = nights?.let { runCatching { it.read() }.getOrNull() }?.byDate?.values
+            ?.filter { it.night.complete }?.maxOfOrNull { it.night.end.toInstant().toEpochMilli() }
+        val keepFrom = maxOf(newestEnd?.let { it - DAY_MS } ?: Long.MIN_VALUE, machineNow.epochMs - 3 * DAY_MS)
+        val marks = byId.values.filter { it.machineTime.epochMs >= keepFrom }.sortedBy { it.machineTime.epochMs }.takeLast(UsageStore.MAX_MARKS)
+        if (inGap) gaps += UsageGap(gapAfter, null)
+        // A record that cannot be read holds the place to resume from before it, but only for as long
+        // as its night can matter to the preview: a record that keeps failing must not stop the rest.
+        val resume = when {
+            !troubled || newest == null -> newest ?: kept.resumeFromMs
+            else -> minOf(maxOf(lastBeforeTrouble ?: kept.resumeFromMs ?: Long.MIN_VALUE, machineNow.epochMs - USAGE_WINDOW_MS), newest!!)
+        }
+        // The last moment the log was read to its end. Where a record of a night could not be read, the
+        // preview gives that night no total and a running session no time (see NightPreview).
+        val read = readToEnd
+        val knownUntil = if (read) machineNow.epochMs else kept.knownUntilMs
+        val knownUntilCorrected = if (read) correction.of(machineNow) else kept.knownUntilCorrectedMs
+        usageStore.write(Usage(tag, marks, resume, knownUntil, knownUntilCorrected, gaps))
     }
 
     /**
@@ -981,6 +1084,10 @@ class SyncEngine(
 
         /** How far before the newest finished night the summaries are asked for again. */
         const val NIGHT_OVERLAP_MS = 3 * DAY_MS
+
+        /** How far back the usage log is read the first time, and how many rounds a run reads of it. */
+        const val USAGE_WINDOW_MS = 2 * 24L * 60 * 60 * 1000
+        const val MAX_USAGE_ROUNDS = 10
 
         /** Marks a set of kinds whose history is being read again, and not yet to its end. */
         private const val PENDING = "reading:"

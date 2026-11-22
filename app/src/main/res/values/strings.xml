@@ -164,6 +164,32 @@
     </plurals>
     <string name="timeline_legend_sessions">Thick line: therapy.</string>
     <string name="timeline_legend_events">Tall mark: apnoea. Short mark: hypopnoea.</string>
+    <string name="timeline_legend_running">Open ring: the session had not ended when the machine was last read.</string>
+    <!-- %1$s is the time the machine was last read, such as "07:30", with * when it is by the machine\'s clock. -->
+    <string name="timeline_running">The last session had not ended at %1$s.</string>
+
+    <!-- The night not yet summed up by the machine -->
+    <!-- %1$s is a date such as "Sat, 14 Nov 2026". -->
+    <string name="night_of_so_far">Night of %1$s, so far</string>
+    <!-- %1$s is a time of use such as "5 h 12 min"; %2$s the time the machine was last read, such as "07:30". -->
+    <string name="preview_usage_running">%1$s, mask still on at %2$s</string>
+    <!-- %1$s is the time the machine was last read. -->
+    <string name="preview_running">The mask was still on at %1$s.</string>
+    <string name="preview_note">The machine adds its own figures for this night after midday.</string>
+    <string name="preview_no_time">The machine\'s record of mask on and mask off is not complete for this night. PAPRelay shows no time of use.</string>
+    <plurals name="preview_events">
+        <item quantity="one">%1$d breathing event so far</item>
+        <item quantity="other">%1$d breathing events so far</item>
+    </plurals>
+    <!-- %1$s is a time such as "05:30"; %2$s a length such as "2 h 0 min"; %3$s the time the machine was last read. -->
+    <string name="night_session_running">From %1$s · %2$s, not ended at %3$s</string>
+    <!-- %1$s is a time; %2$s a length in words; %3$s the time the machine was last read. -->
+    <string name="night_session_running_spoken">From %1$s, for %2$s so far. It had not ended at %3$s</string>
+    <!-- A session still on whose length is not known. %1$s is its start; %2$s the time the machine was last read. -->
+    <string name="night_session_open_at">From %1$s, not ended at %2$s</string>
+    <string name="night_session_open_at_spoken">From %1$s. It had not ended at %2$s</string>
+    <!-- The same, with no time of the last read known. %1$s is its start. -->
+    <string name="night_session_open">From %1$s, not ended</string>
     <plurals name="timeline_sessions">
         <item quantity="one">%1$d session</item>
         <item quantity="other">%1$d sessions</item>

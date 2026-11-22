@@ -196,11 +196,20 @@ public enum class MinuteSignal(
     MEAN_INSPIRATORY_TIME(21, 4, Scale(1, 10), PapUnit.SECONDS, false, false),
 }
 
-/** Codes in the `UsageEvents-TherapyStatusEvents` log. The numbering has gaps. */
-public enum class UsageEvent(public val code: Int) {
+/**
+ * Codes in the `UsageEvents-TherapyStatusEvents` log. The numbering has gaps.
+ *
+ * @property confirmed whether this kind's stamps have been compared with a second source and
+ *   found to mark what its name says. Mask on and mask off are: in the first device run's
+ *   capture, every session matched the summary's sessions (themselves compared with the SD
+ *   card), mask-on within a minute after the summary's start, which is stored in whole
+ *   minutes, and lengths equal within a minute (`UsageCheck`, run by the real-data probe).
+ *   Mask on is the session's start; therapy start comes a few seconds before it and is not used.
+ */
+public enum class UsageEvent(public val code: Int, public val confirmed: Boolean = false) {
     NO_USAGE(1),
-    MASK_OFF(2),
-    MASK_ON(3),
+    MASK_OFF(2, confirmed = true),
+    MASK_ON(3, confirmed = true),
     POWER_OFF(4),
     MASK_FIT_START(5),
     MASK_FIT_STOP(6),

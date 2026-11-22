@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 296" width="480" height="296" role="img" aria-label="How the data flows: from the machine over Bluetooth to the link, the protocol, the decoders and the plans, then to the sync engine, which keeps its state, the nights and the breathing events on the phone and writes to Health Connect, to two files in a folder and to the screen.">
-<title>How the data flows: from the machine over Bluetooth to the link, the protocol, the decoders and the plans, then to the sync engine, which keeps its state, the nights and the breathing events on the phone and writes to Health Connect, to two files in a folder and to the screen.</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 318" width="480" height="318" role="img" aria-label="How the data flows: from the machine over Bluetooth to the link, the protocol, the decoders and the plans, then to the sync engine, which keeps its state, the nights, the breathing events and the mask-on times on the phone and writes to Health Connect, to two files in a folder and to the screen. The night so far, from the mask-on times, is shown on the screen only.">
+<title>How the data flows: from the machine over Bluetooth to the link, the protocol, the decoders and the plans, then to the sync engine, which keeps its state, the nights, the breathing events and the mask-on times on the phone and writes to Health Connect, to two files in a folder and to the screen. The night so far, from the mask-on times, is shown on the screen only.</title>
 <style>
   .paper { fill: #ffffff; stroke: #d0d7de; stroke-width: 1; }
   .ink { fill: none; stroke: #1f2328; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
@@ -35,7 +35,7 @@
     .num, .on { fill: #0d1117; }
   }
 </style>
-<rect class="paper" x="0.5" y="0.5" width="479" height="295" rx="12"/>
+<rect class="paper" x="0.5" y="0.5" width="479" height="317" rx="12"/>
 <rect class="ink" x="21" y="35.2" width="52" height="23" rx="5.8"/>
 <rect class="ink" x="25.4" y="44.6" width="16.2" height="9.4" rx="1.8"/>
 <circle class="ink" cx="33.5" cy="39.9" r="2.3"/>
@@ -78,4 +78,5 @@
 <rect class="ink" x="399" y="198.9" width="22" height="42.2" rx="4.3"/>
 <path class="ink" d="M406.2 236.3H413.8"/>
 <text class="t" x="410" y="268" text-anchor="middle">The screen</text>
+<text class="x" x="456" y="296" text-anchor="end">“So far” (mask on and off): on the screen only</text>
 </svg>

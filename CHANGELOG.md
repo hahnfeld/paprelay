@@ -2,6 +2,20 @@
 
 Newest first. Before 1.0, any release may change behaviour.
 
+## 0.4.0 (2026-11-22)
+
+- **The night so far.** Before the machine has summed up a night (it does this after
+  the next midday), the home screen shows that night, dated and marked "so far", above the
+  newest night the machine has summed up: how long the mask was on and how many breathing
+  events the machine had logged at the last synchronisation, with a link to them. A
+  session that had not ended then says so, with that time. **Nights** shows the night as its
+  newest page, marked "so far", with its picture; **Breathing events** lists its events
+  first. No AHI or other figure is worked out, and where a record of the machine's log
+  could not be read no time of use is given. It stays in the app and is never written to
+  the files, Health Connect or the shared text. After midday, at the next synchronisation,
+  the machine's own night takes its place. The time of use comes from the machine's log of
+  mask on and mask off, confirmed against the machine's nightly sessions.
+
 ## 0.3.1 (2026-11-22)
 
 - Pairing: the steps now ask you to wait for the machine's serial number, which it shows in

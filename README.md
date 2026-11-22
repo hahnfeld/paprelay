@@ -4,7 +4,7 @@ PAPRelay is an Android app that copies the data from a ResMed AirSense 11 CPAP m
 your phone over Bluetooth. From the phone, it can send the data to Health Connect, to two
 CSV files in a folder that you choose, or to another app.
 
-![The machine sends data to the phone by Bluetooth, with no internet. The phone sends it to Health Connect, to two files in a folder, or to another app.](docs/images/overview.svg)
+![The machine sends data to the phone by Bluetooth, with no internet. The phone sends it to Health Connect, to two files in a folder, or to another app. The night so far stays on the phone.](docs/images/overview.svg)
 
 > [!IMPORTANT]
 > PAPRelay is an independent project. It is **not made, endorsed or supported by ResMed**
@@ -83,7 +83,10 @@ Keep the phone within a few metres of the machine during setup.
 
 1. The picture of the machine, the phone and Health Connect, with the two connections
    between them.
-2. Last night: hours of use and AHI, then leak and pressure.
+2. The newest night the machine has summed up: hours of use and AHI, then leak and
+   pressure. Before the machine has summed up the night after it (it does this after the
+   next midday), that night is shown above it, dated and marked **so far** (see the
+   picture below and [The night so far](#nights-and-breathing-events)).
 3. The result of the last synchronisation or, just after a device check, the result of
    the check.
 4. The **Synchronise now** button.
@@ -93,6 +96,8 @@ Keep the phone within a few metres of the machine during setup.
    - **Sharing** sets where the data goes.
    - **Device check** tests the connections and can save a report.
 6. The **i** opens **About**.
+
+![The home screen before the machine has summed up a night: the night dated and marked so far, with the time of use so far and that the mask was on at the last read, the number of breathing events so far, and that the machine adds its own figures after midday; below it, the newest night the machine has summed up. The figures are examples.](docs/images/home-morning.svg)
 
 The lines in the picture show the state of each connection:
 
@@ -108,16 +113,17 @@ The lines in the picture show the state of each connection:
 ## Nights and breathing events
 
 For the machine, a night runs from midday (12:00) to midday and has the date of the
-evening. PAPRelay shows a night only after it has ended, because the machine can still
-change the figures until then. This means that last night's figures arrive **in the
-afternoon**, not in the morning.
+evening. The machine sums a night up only after it has ended, because it can still change
+the figures until then. This means that last night's figures arrive **in the afternoon**.
+Before the machine has summed up a night (it does this after the next midday), PAPRelay
+shows the night **so far**: the time of use and the breathing events (see below).
 
-![One night runs from midday to midday. The figures arrive on the phone after the second midday.](docs/images/night.svg)
+![One night runs from midday to midday. The figures arrive on the phone after the second midday. Before then, the time of use and the events show as "so far".](docs/images/night.svg)
 
 Open **Nights** to see one night at a time, newest first. Swipe, or tap the arrows beside
 the date, to see an earlier or later night.
 
-![The picture of one night: the sessions as thick lines, a tall mark for each apnoea and a short mark for each hypopnoea.](docs/images/timeline.svg)
+![The picture of one night: the sessions as thick lines, a tall mark for each apnoea and a short mark for each hypopnoea. On a night so far, an open ring ends a session that had not ended when the machine was last read.](docs/images/timeline.svg)
 
 - The picture shows the night from midday to midday. A thick line is therapy. A tall mark
   is an apnoea, and a short mark is a hypopnoea.
@@ -134,14 +140,32 @@ apnoea with a length, the time is when it ended. The machine records no length f
 hypopnoea, and its time can be its start or its end. To see the events of one night, tap the line with the
 number of events on that night's page.
 
+**The night so far.** Before the machine has summed up a night (it does this after the
+next midday), the home screen shows that night, dated and marked "so far", above the
+newest night the machine has summed up: how long the mask was on and how many breathing
+events the machine had logged when it was last read. A session that had not ended then is
+shown with that time ("mask still on at 07:30"). This is a count, not a rate: PAPRelay works out
+no AHI or other figure. Where a record of the machine's log could not be read, no time of
+use is given. **Nights** shows the same as the newest page, marked "so far", with the
+picture of the night, and **Breathing events** lists that night's events first. After
+midday, at the next synchronisation, the machine's own night takes its place. What is shown "so far" stays in the app:
+it is not written to the files, to Health Connect or to the shared text. The time of use
+comes from the machine's log of mask on and mask off, which was checked against the
+machine's own nightly sessions.
+
 ## When it synchronises
 
-![PAPRelay synchronises when you tap the button, when the phone is near the machine, and about every hour.](docs/images/when.svg)
+![PAPRelay synchronises when you tap the button, when the phone is near the machine, and about every hour. Before the machine has summed up a night, the night so far arrives: the time of use and the breathing events. Respiratory rate goes to Health Connect, if it is switched on. At the next synchronisation after midday, the machine's own night replaces the night so far.](docs/images/when.svg)
 
 If the phone is away from the machine, PAPRelay tries again later. The machine keeps its
 recent nights, so PAPRelay copies any missing nights the next time it reaches the machine.
 
 The first synchronisation copies up to 400 days of data from the machine.
+
+Before the machine has summed up a night (it does this after the next midday), a
+synchronisation brings the night so far: the time of use and the breathing events.
+Respiratory rate, if it is switched on, goes to Health Connect as before. After midday, at
+the next synchronisation, the machine's own night replaces the night so far.
 
 ## Where the data goes
 
@@ -210,7 +234,7 @@ version. Choose a folder on the **Sharing** page.
 | No machine is found during pairing. | Check that the machine is waiting for the phone (setup step 2). If it is, remove the machine from the myAir app, and tap **Forget** for it in the phone's Bluetooth settings. Then start again at step 2 of the setup. |
 | "The machine no longer accepts this phone." | Open **Device check**, tap **Forget machine**, and pair again. |
 | "PAPRelay cannot yet read this machine's software." | PAPRelay does not know this machine's software version yet. Please [report it](CONTRIBUTING.md#machines-and-software-versions). |
-| Last night is missing in the morning. | This is normal. The figures arrive after midday. |
+| Last night shows only "so far". | This is normal before midday. The machine adds its own figures after midday, and the next synchronisation brings them. |
 | "Not every night has been copied yet." for several days, or "PAPRelay could not read some of the data from the machine." | Open **Device check**, tap **Run device check**, then **Save report**, and [report the problem](https://github.com/hahnfeld/paprelay/issues). |
 | Health Connect shows nothing. | Open **Sharing** and check the switches. In Health Connect, allow PAPRelay to write. Phones with Android 14 or 15 have no health records. |
 | "Respiratory rate starts after a night of therapy of one hour or more" is still shown after several nights. | PAPRelay cannot yet read respiratory rate from this machine's software. Switch it off in **Sharing**, and please [report it](CONTRIBUTING.md#machines-and-software-versions). The nightly figures are not affected. |
@@ -232,6 +256,8 @@ the app only:
   the drive's own app uploads them);
 - in a device-check report that you save;
 - when you share it yourself.
+
+The night so far never leaves the app.
 
 PAPRelay only writes to Health Connect and never reads from it. Uninstalling PAPRelay
 deletes everything it stored itself. The two files and the health records stay until you

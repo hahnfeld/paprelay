@@ -342,7 +342,7 @@ class Svg:
 
 
 def overview():
-    s = Svg(232, "The machine sends data to the phone by Bluetooth. The phone passes it on to Health Connect, to two files in a folder, or to another app. PAPRelay does not use the internet.")
+    s = Svg(232, "The machine sends data to the phone by Bluetooth. The phone sends it to Health Connect, to two files in a folder, or to another app. The night so far stays on the phone. There is no internet connection.")
     u = 56
     mw = s.machine(20, 66, u)
     s.text(20 + mw / 2, 66 + u + 20, "Machine", "t", "middle")
@@ -364,6 +364,7 @@ def overview():
     s.text(314, 155, "Another app", "b")
     s.cloud_off(22, 188, 30)
     s.text(64, 206, "No internet", "s")
+    s.text(456, 206, "\u201cSo far\u201d stays on the phone", "s", "end")
     return s.save("overview.svg")
 
 
@@ -468,8 +469,34 @@ def home():
     return s.save("home.svg")
 
 
+def home_morning():
+    s = Svg(352, "The home screen before the machine has summed up a night: the night, dated and marked so far, with the time of use so far and that the mask was still on at the last read, the number of breathing events so far, and that the machine adds its own figures after midday; below it, the newest night the machine has summed up.")
+    # A little wider than the afternoon picture, so that the longer lines fit as they do on a phone.
+    x, y, w = 56, 20, 340
+    # The top of the phone only: the part that differs.
+    s.add(f'<path class="ink" d="M{x} 340V{y + 28}A28 28 0 0 1 {x + 28} {y}H{x + w - 28}A28 28 0 0 1 {x + w} {y + 28}V340"/>')
+    left = x + 24
+    right = x + w - 24
+    s.text(left, y + 48, "PAPRelay", "b")
+    s.info(right - 22, y + 31, 22)
+    s.text(left, y + 92, "Night of Sun, 15 Nov 2026, so far", "x")
+    s.text(left, y + 116, "6 h 30 min, mask still on at 07:30", "b")
+    s.ticks(left, y + 144, 20)
+    s.text(left + 34, y + 158.5, "3 breathing events so far", "c")
+    s.chevron(right - 20, y + 144, 20)
+    s.lines(left, y + 196, ["The machine adds its own figures", "for this night after midday."], "x", 17)
+    # The newest night the machine has summed up, always there below it.
+    s.text(left, y + 248, "Night of Sat, 14 Nov 2026", "x")
+    s.text(left, y + 272, "7 h 12 min \u00b7 AHI 1.4", "b")
+    s.text(left, y + 294, "Leak 95%: 9.6 L/min \u00b7 Pressure 95%: 10.2 cmH\u2082O", "x")
+    # Both are part 2 of the home screen: the night so far, and the newest night below it.
+    s.add(f'<path class="faint" d="M{x + w + 8} {y + 190}H{x + w + 28}"/>')
+    s.number(x + w + 46, y + 190, 2)
+    return s.save("home-morning.svg")
+
+
 def when():
-    s = Svg(178, "PAPRelay synchronises when you tap the button, when the phone is near the machine, and about every hour.")
+    s = Svg(366, "PAPRelay synchronises when you tap the button, when the phone is near the machine, and about every hour. Before the machine has summed up a night, its time of use and breathing events arrive and show as the night so far. Respiratory rate goes to Health Connect, if it is switched on. At the next synchronisation after midday, the machine's own night replaces the night so far.")
     centres = [80, 240, 400]
     s.button(centres[0] - 68, 34, 136, 32, "Synchronise now")
     s.tap(centres[0] + 50, 76, 14)
@@ -485,11 +512,19 @@ def when():
     for cx, rows in zip(centres, captions):
         s.lines(cx, 124, rows, "t", 21, "middle")
     s.add('<path class="faint" d="M160 26V152M320 26V152"/>')
+    # What arrives when: before the machine sums a night up, the night so far; after midday, its own night.
+    s.add('<path class="faint" d="M24 172H456"/>')
+    s.text(40, 202, "Before the machine sums it up", "b")
+    s.text(40, 224, "The night so far: time of use and breathing events", "s")
+    s.text(40, 258, "After midday", "b")
+    s.lines(40, 280, ["At the next synchronisation, the machine's own night", "replaces \u201cso far\u201d"], "s", 20)
+    s.add('<path class="faint" d="M24 318H456"/>')
+    s.text(40, 344, "Respiratory rate goes to Health Connect, if it is switched on.", "s")
     return s.save("when.svg")
 
 
 def night():
-    s = Svg(200, "One night runs from midday (12:00) to midday the next day. The night's figures arrive on the phone after the second midday.")
+    s = Svg(226, "One night runs from midday (12:00) to midday the next day. The night's figures arrive on the phone after the second midday. Before then, the time of use and the breathing events show as so far.")
     x1, x2, y = 40, 322, 96
     s.add(f'<path class="ink" d="M{x1} {y}H{x2}"/>')
     middle = (x1 + x2) / 2
@@ -508,6 +543,7 @@ def night():
     pw = s.phone(x2 + 58, y - 42, 84)
     s.tick(x2 + 58 + pw, y - 32, 10)
     s.text(x2 + 58 + pw / 2, y + 68, "after 12:00", "b", "middle")
+    s.text(x1, y + 106, "Before midday: \u201cso far\u201d, the time of use and the events.", "s")
     return s.save("night.svg")
 
 
@@ -536,7 +572,7 @@ def sharing():
 
 
 def timeline():
-    s = Svg(200, "The picture of one night on the Nights page: a grey line from midday to midday, the sessions as thick lines on it, a tall mark for each apnoea and a short mark for each hypopnoea, with the hours below.")
+    s = Svg(256, "The picture of one night on the Nights page: a grey line from midday to midday, the sessions as thick lines on it, a tall mark for each apnoea and a short mark for each hypopnoea, with the hours below. On a night shown so far, a session that had not ended when the machine was last read ends in an open ring.")
     x1, x2, base = 40, 440, 82
     s.add(f'<path class="line" d="M{x1} {base}H{x2}"/>')
 
@@ -557,6 +593,13 @@ def timeline():
     # The legend under the hours, as in the app.
     s.text(x1, base + 58, "Thick line: therapy. Tall mark: apnoea. Short mark: hypopnoea.", "s")
     s.text(x1, base + 78, "Placed by the machine's clock, from midday to midday.", "x")
+    # On a night "so far": a session still on ends in an open ring.
+    y = base + 122
+    s.add(f'<path class="line" d="M{x1} {y}H{x1 + 150}"/>')
+    s.add(f'<path class="ink" d="M{x1 + 30} {y}H{x1 + 110}" style="stroke-width: 9"/>')
+    s.add(f'<circle class="hole" cx="{x1 + 110}" cy="{y}" r="8"/>')
+    s.add(f'<circle class="ink" cx="{x1 + 110}" cy="{y}" r="5.5"/>')
+    s.lines(x1 + 170, y - 10, ["So far: an open ring is a session", "that had not ended when the", "machine was last read."], "x", 17)
     return s.save("timeline.svg")
 
 
@@ -572,7 +615,7 @@ def modules():
 
 
 def flow():
-    s = Svg(296, "How the data flows: from the machine over Bluetooth to the link, the protocol, the decoders and the plans, then to the sync engine, which keeps its state, the nights and the breathing events on the phone and writes to Health Connect, to two files in a folder and to the screen.")
+    s = Svg(318, "How the data flows: from the machine over Bluetooth to the link, the protocol, the decoders and the plans, then to the sync engine, which keeps its state, the nights, the breathing events and the mask-on times on the phone and writes to Health Connect, to two files in a folder and to the screen. The night so far, from the mask-on times, is shown on the screen only.")
     mw = s.machine(20, 28, 36)
     s.text(20 + mw / 2, 84, "Machine", "s", "middle")
     s.link(20 + mw + 6, 98, 46, "active")
@@ -595,11 +638,12 @@ def flow():
         else:
             s.phone(cx - 12, 196, 48)
         s.text(cx, 268, title, "t", "middle")
+    s.text(456, 296, "\u201cSo far\u201d (mask on and off): on the screen only", "x", "end")
     return s.save("flow.svg")
 
 
 def main():
-    written = [draw() for draw in (overview, picture, setup, home, when, night, timeline, sharing, modules, flow)]
+    written = [draw() for draw in (overview, picture, setup, home, home_morning, when, night, timeline, sharing, modules, flow)]
     stale = sorted(path.name for path in OUT.glob("*.svg") if path.name not in written)
     print(f"wrote {len(written)} diagrams to {OUT}")
     if stale:

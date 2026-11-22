@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 200" width="480" height="200" role="img" aria-label="The picture of one night on the Nights page: a grey line from midday to midday, the sessions as thick lines on it, a tall mark for each apnoea and a short mark for each hypopnoea, with the hours below.">
-<title>The picture of one night on the Nights page: a grey line from midday to midday, the sessions as thick lines on it, a tall mark for each apnoea and a short mark for each hypopnoea, with the hours below.</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 256" width="480" height="256" role="img" aria-label="The picture of one night on the Nights page: a grey line from midday to midday, the sessions as thick lines on it, a tall mark for each apnoea and a short mark for each hypopnoea, with the hours below. On a night shown so far, a session that had not ended when the machine was last read ends in an open ring.">
+<title>The picture of one night on the Nights page: a grey line from midday to midday, the sessions as thick lines on it, a tall mark for each apnoea and a short mark for each hypopnoea, with the hours below. On a night shown so far, a session that had not ended when the machine was last read ends in an open ring.</title>
 <style>
   .paper { fill: #ffffff; stroke: #d0d7de; stroke-width: 1; }
   .ink { fill: none; stroke: #1f2328; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
@@ -35,7 +35,7 @@
     .num, .on { fill: #0d1117; }
   }
 </style>
-<rect class="paper" x="0.5" y="0.5" width="479" height="199" rx="12"/>
+<rect class="paper" x="0.5" y="0.5" width="479" height="255" rx="12"/>
 <path class="line" d="M40 82H440"/>
 <path class="line" d="M40 82V91"/>
 <text class="x" x="40" y="112" text-anchor="middle">12</text>
@@ -58,4 +58,11 @@
 <path class="thin" d="M330 56V70"/>
 <text class="s" x="40" y="140" text-anchor="start">Thick line: therapy. Tall mark: apnoea. Short mark: hypopnoea.</text>
 <text class="x" x="40" y="160" text-anchor="start">Placed by the machine's clock, from midday to midday.</text>
+<path class="line" d="M40 204H190"/>
+<path class="ink" d="M70 204H150" style="stroke-width: 9"/>
+<circle class="hole" cx="150" cy="204" r="8"/>
+<circle class="ink" cx="150" cy="204" r="5.5"/>
+<text class="x" x="210" y="194" text-anchor="start">So far: an open ring is a session</text>
+<text class="x" x="210" y="211" text-anchor="start">that had not ended when the</text>
+<text class="x" x="210" y="228" text-anchor="start">machine was last read.</text>
 </svg>

@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 200" width="480" height="200" role="img" aria-label="One night runs from midday (12:00) to midday the next day. The night&#x27;s figures arrive on the phone after the second midday.">
-<title>One night runs from midday (12:00) to midday the next day. The night&#x27;s figures arrive on the phone after the second midday.</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 226" width="480" height="226" role="img" aria-label="One night runs from midday (12:00) to midday the next day. The night&#x27;s figures arrive on the phone after the second midday. Before then, the time of use and the breathing events show as so far.">
+<title>One night runs from midday (12:00) to midday the next day. The night&#x27;s figures arrive on the phone after the second midday. Before then, the time of use and the breathing events show as so far.</title>
 <style>
   .paper { fill: #ffffff; stroke: #d0d7de; stroke-width: 1; }
   .ink { fill: none; stroke: #1f2328; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
@@ -35,7 +35,7 @@
     .num, .on { fill: #0d1117; }
   }
 </style>
-<rect class="paper" x="0.5" y="0.5" width="479" height="199" rx="12"/>
+<rect class="paper" x="0.5" y="0.5" width="479" height="225" rx="12"/>
 <path class="ink" d="M40 96H322"/>
 <path class="ink" d="M40 87V105"/>
 <text class="b" x="40" y="128" text-anchor="middle">12:00</text>
@@ -58,4 +58,5 @@
 <circle class="ink" cx="422" cy="64" r="10"/>
 <path class="ink" d="M417.5 64L421.1 67.6L426.5 60.9"/>
 <text class="b" x="401" y="164" text-anchor="middle">after 12:00</text>
+<text class="s" x="40" y="202" text-anchor="start">Before midday: “so far”, the time of use and the events.</text>
 </svg>

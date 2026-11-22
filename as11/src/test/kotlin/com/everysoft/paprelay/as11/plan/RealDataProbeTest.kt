@@ -18,7 +18,8 @@ import kotlin.test.Test
  * Runs the 0.3.0 export over real downloads, for whoever holds them, and prints counts and
  * digests only: never a value, a time, a serial number or an address. It does nothing unless
  * `PAPRELAY_PROBE_DIR` names a directory laid out as the app's `raw` directory: the folders
- * `summary` and `respiratory_events`, each holding `.bin` files of one verified download each.
+ * `summary`, `respiratory_events` and (for the usage log) `usage_events`, each holding `.bin`
+ * files of one verified download each.
  *
  *     PAPRELAY_PROBE_DIR=/path/to/raw PAPRELAY_PROBE_SOFTWARE=SW04600.19.8.8.0.<build> \
  *         ./gradlew :as11:cleanTest :as11:test --offline --tests '*RealDataProbeTest*' -i | grep 'probe'
@@ -58,6 +59,21 @@ class RealDataProbeTest {
         val unique = events.associateBy { it.identity }.values.toList()
         println("probe events passed on: ${unique.size} (read ${events.size}) by kind ${unique.groupingBy { it.kind.key }.eachCount()}")
         println("probe events with a night: ${unique.count { EventReport.nightOf(it.machineTime.epochMs, nights) != null }}; with a length: ${unique.count { it.durationMs != null }}")
+        // The usage log against the summary's sessions: counts and the largest differences, in seconds.
+        val usage = files("usage_events").flatMap { file ->
+            val log = EventDecoder.usage(file.readBytes(), firmware)
+            println("probe usage download: records=${log.entries.size} failed=${log.failures.size}")
+            log.decoded
+        }.distinctBy { "${it.code}@${it.time.epochMs}" }
+        if (usage.isNotEmpty()) {
+            val check = UsageCheck.compare(records.flatMap { it.sessions }, usage)
+            println(
+                "probe usage vs summary: sessions=${check.sessions} withMaskOn=${check.withMaskOn} withMaskOff=${check.withMaskOff} " +
+                    "lengthAgrees=${check.lengthAgrees} maxStartDiffS=${check.maxStartDifferenceS} maxLengthDiffS=${check.maxLengthDifferenceS} " +
+                    "maskOnWithoutOff=${check.maskOnWithoutOff} maskOffWithoutOn=${check.maskOffWithoutOn} maskOnWithoutSession=${check.maskOnWithoutSession}",
+            )
+            println("probe usage other kinds: ${check.otherKinds}")
+        }
         // The tables themselves stay here; their digests show whether two runs agree.
         val nightsCsv = NightReport.csv(nights, NightPlan.FIGURES)
         val eventsCsv = EventReport.csv(unique, nights)

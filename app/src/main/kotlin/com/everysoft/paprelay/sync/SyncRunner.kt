@@ -18,6 +18,7 @@ import com.everysoft.paprelay.as11.SpoolRound
 import com.everysoft.paprelay.ble.MachineClaim
 import com.everysoft.paprelay.ble.PresenceWatch
 import com.everysoft.paprelay.core.nights.Night
+import com.everysoft.paprelay.core.nights.NightPreview
 import com.everysoft.paprelay.core.nights.NightReport
 import com.everysoft.paprelay.as11.plan.NightPlan
 import com.everysoft.paprelay.pairing.PairingState
@@ -98,10 +99,11 @@ class SyncRunner(
     private val store = SyncStore(File(context.noBackupFilesDir, "sync.json"))
     private val nightStore = NightStore(File(context.noBackupFilesDir, "nights.json"))
     private val eventStore = EventStore(File(context.noBackupFilesDir, "events.json"))
+    private val usageStore = UsageStore(File(context.noBackupFilesDir, "usage.json"))
     private val folder = ExportFolder(context)
     private val engine = SyncEngine(
         connector, sink, store, System::currentTimeMillis, ::keepRaw,
-        phoneClockWrong = ::phoneClockWrong, describe = describe, nights = nightStore, records = records, events = eventStore,
+        phoneClockWrong = ::phoneClockWrong, describe = describe, nights = nightStore, records = records, events = eventStore, usage = usageStore,
     )
 
     private val exporting = Mutex()
@@ -119,6 +121,11 @@ class SyncRunner(
 
     /** The breathing events kept on the phone; [Events.of] finds a night's. */
     val events: StateFlow<Events> = _events
+
+    private val _preview = MutableStateFlow<NightPreview?>(null)
+
+    /** The night not yet summed up by the machine, so far: for the screen only, never passed on. */
+    val preview: StateFlow<NightPreview?> = _preview
     private val presence = PresenceWatch(context)
 
     /**
@@ -409,6 +416,7 @@ class SyncRunner(
                 if (kept != null) runCatching { store.write(kept) }
                 nightStore.delete()
                 eventStore.delete()
+                usageStore.delete()
                 File(context.filesDir, RAW_DIRECTORY).deleteRecursively()
             }
         }
@@ -539,6 +547,9 @@ class SyncRunner(
         }
         withContext(Dispatchers.IO) { runCatching { nightStore.read().all } }.getOrNull()?.let { _nights.value = it }
         withContext(Dispatchers.IO) { runCatching { eventStore.read() } }.getOrNull()?.let { _events.value = it }
+        _preview.value = withContext(Dispatchers.IO) {
+            runCatching { usageStore.read().preview(nightStore.read().all) }.getOrNull()
+        }
         // The name of the chosen folder, asked for once.
         val chosen = _status.value.exportFolder
         if (chosen != null && _status.value.exportName == null) {

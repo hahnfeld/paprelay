@@ -69,6 +69,7 @@ private fun Root(app: PapRelayApp) {
     val sync by app.sync.status.collectAsState()
     val nights by app.sync.nights.collectAsState()
     val events by app.sync.events.collectAsState()
+    val preview by app.sync.preview.collectAsState()
     val forgetting by check.forgetting.collectAsState()
     val stopping by check.stopping.collectAsState()
     val checkEnd by check.ended.collectAsState()
@@ -300,6 +301,7 @@ private fun Root(app: PapRelayApp) {
         PAGE_NIGHTS -> NightScreen(
             nights = nights,
             events = events,
+            preview = preview,
             shown = nightShown,
             onShown = { nightShown = it },
             onOpenEvents = { day ->
@@ -320,7 +322,7 @@ private fun Root(app: PapRelayApp) {
             },
             onBack = { page = pairFrom },
         )
-        PAGE_EVENTS -> EventsScreen(nights = nights, events = events, startAt = eventsNight, onBack = { page = eventsFrom })
+        PAGE_EVENTS -> EventsScreen(nights = nights, events = events, preview = preview, startAt = eventsNight, onBack = { page = eventsFrom })
         PAGE_CHOICES -> ChoicesScreen(
             sync = sync,
             hasNights = nights.any { it.complete },
@@ -391,6 +393,13 @@ private fun Root(app: PapRelayApp) {
             onOpenEvents = {
                 eventsFrom = PAGE_HOME
                 eventsNight = null
+                page = PAGE_EVENTS
+            },
+            preview = preview,
+            previewEvents = preview?.let { previewEvents(events, it).size } ?: 0,
+            onOpenPreviewEvents = { day ->
+                eventsFrom = PAGE_HOME
+                eventsNight = day
                 page = PAGE_EVENTS
             },
             onOpenChoices = { page = PAGE_CHOICES },

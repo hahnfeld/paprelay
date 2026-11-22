@@ -22,7 +22,7 @@ body:
     attributes:
       label: PAPRelay version
       description: Open About in the app.
-      placeholder: "0.3.1"
+      placeholder: "0.4.0"
     validations:
       required: true
   - type: input

@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 352" width="480" height="352" role="img" aria-label="The home screen before the machine has summed up a night: the night, dated and marked so far, with the time of use so far and that the mask was still on at the last read, the number of breathing events so far, and that the machine adds its own figures after midday; below it, the newest night the machine has summed up.">
+<title>The home screen before the machine has summed up a night: the night, dated and marked so far, with the time of use so far and that the mask was still on at the last read, the number of breathing events so far, and that the machine adds its own figures after midday; below it, the newest night the machine has summed up.</title>
+<style>
+  .paper { fill: #ffffff; stroke: #d0d7de; stroke-width: 1; }
+  .ink { fill: none; stroke: #1f2328; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+  .thin { fill: none; stroke: #1f2328; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .line { fill: none; stroke: #6e7781; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+  .faint { fill: none; stroke: #afb8c1; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .dash { stroke-dasharray: 7 7; }
+  .solid { fill: #1f2328; stroke: none; }
+  .hole { fill: #ffffff; stroke: none; }
+  .bad { fill: #cf222e; stroke: none; }
+  .badline { fill: none; stroke: #cf222e; stroke-width: 2.4; stroke-linecap: round; }
+  .onbad { fill: none; stroke: #ffffff; stroke-width: 2.4; stroke-linecap: round; }
+  text { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #1f2328; }
+  .t { font-size: 16px; }
+  .b { font-size: 16px; font-weight: 600; }
+  .s { font-size: 14px; fill: #57606a; }
+  .c { font-size: 13px; }
+  .x { font-size: 12px; fill: #57606a; }
+  .num { font-size: 14px; font-weight: 700; fill: #ffffff; }
+  .on { fill: #ffffff; }
+  @media (prefers-color-scheme: dark) {
+    .paper { fill: #0d1117; stroke: #30363d; }
+    .ink, .thin { stroke: #e6edf3; }
+    .line { stroke: #8b949e; }
+    .faint { stroke: #484f58; }
+    .solid { fill: #e6edf3; }
+    .hole { fill: #0d1117; }
+    .bad { fill: #f85149; }
+    .badline { stroke: #f85149; }
+    .onbad { stroke: #0d1117; }
+    text { fill: #e6edf3; }
+    .s, .x { fill: #8b949e; }
+    .num, .on { fill: #0d1117; }
+  }
+</style>
+<rect class="paper" x="0.5" y="0.5" width="479" height="351" rx="12"/>
+<path class="ink" d="M56 340V48A28 28 0 0 1 84 20H368A28 28 0 0 1 396 48V340"/>
+<text class="b" x="80" y="68" text-anchor="start">PAPRelay</text>
+<circle class="thin" cx="361" cy="62" r="8.2"/>
+<circle class="solid" cx="361" cy="58" r="1.2"/>
+<path class="thin" d="M361 61.1V66.2"/>
+<text class="x" x="80" y="112" text-anchor="start">Night of Sun, 15 Nov 2026, so far</text>
+<text class="b" x="80" y="136" text-anchor="start">6 h 30 min, mask still on at 07:30</text>
+<path class="thin" d="M82.5 179H97.5M85 179V171.5M88.3 179V174.8M91.7 179V169M95 179V174"/>
+<text class="c" x="114" y="178.5" text-anchor="start">3 breathing events so far</text>
+<path class="line" d="M359.5 169L364.5 174L359.5 179"/>
+<text class="x" x="80" y="216" text-anchor="start">The machine adds its own figures</text>
+<text class="x" x="80" y="233" text-anchor="start">for this night after midday.</text>
+<text class="x" x="80" y="268" text-anchor="start">Night of Sat, 14 Nov 2026</text>
+<text class="b" x="80" y="292" text-anchor="start">7 h 12 min · AHI 1.4</text>
+<text class="x" x="80" y="314" text-anchor="start">Leak 95%: 9.6 L/min · Pressure 95%: 10.2 cmH₂O</text>
+<path class="faint" d="M404 210H424"/>
+<circle class="solid" cx="442" cy="210" r="13"/>
+<text class="num" x="442" y="215" text-anchor="middle">2</text>
+</svg>

@@ -67,4 +67,25 @@ class StringsTest {
         // Once connected, the prompt says that the code is on the machine now.
         assertTrue(all.getValue("passkey_shown").contains("code"))
     }
+
+    @Test
+    fun `the preview says how long and how many, and never a rate or an index`() {
+        val all = texts().toMap()
+        val preview = all.filterKeys { it.startsWith("preview_") || it.startsWith("night_of_so_far") || it.startsWith("night_session_running") || it.startsWith("night_session_open") }
+        assertTrue(preview.size >= 8, "${preview.keys}")
+        for ((name, text) in preview) {
+            for (word in listOf("AHI", "per hour", "for each hour", "index", "percentile")) {
+                assertTrue(!text.contains(word, ignoreCase = true), "$name says $word")
+            }
+        }
+        assertTrue(all.getValue("night_of_so_far").contains("so far"))
+        // Not the moment the mask went on: it was still on then.
+        assertTrue(all.getValue("preview_usage_running").contains("still on at"))
+        // "Running" is what the machine said at the last read, never the present: each says the time.
+        for (name in listOf("preview_usage_running", "preview_running", "timeline_running", "night_session_running", "night_session_running_spoken", "night_session_open_at", "night_session_open_at_spoken")) {
+            assertTrue(Regex(" at %\\d\\\$s").containsMatchIn(all.getValue(name)), name)
+            assertTrue(!all.getValue(name).contains("still running"), name)
+        }
+        assertTrue(all.getValue("preview_note").contains("midday"))
+    }
 }

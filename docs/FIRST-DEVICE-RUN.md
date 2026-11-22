@@ -118,8 +118,15 @@ codes not in the table. Codes 6, 8 and 9 did not occur in the compared history. 
 one takes a night that has it, its raw Bluetooth event bytes, and the same night on the
 card.
 
-Mask on and off (`UsageEvents-TherapyStatusEvents`): downloaded by the device check only.
-The summary's sessions give the same starts and lengths, and they were compared.
+Mask on and off (`UsageEvents-TherapyStatusEvents`): **confirmed**, and used for the
+morning preview only (the nights' sessions come from the summary). The real-data probe
+(`RealDataProbeTest`, with `UsageCheck`) compared each mask-on and mask-off pair with the
+summary's sessions of the same capture: every session in the first device run's capture
+matched the summary's sessions, mask-on within a minute after the summary's start, which
+is stored in whole minutes, and lengths equal within a minute. Each session opens with
+therapy start, then mask on a few seconds later, and closes with therapy stop and mask off
+at the same instant; mask on is taken as the start. The other kinds of the log (therapy
+start and stop, power off, mask fit, learn targets) are **not used**.
 
 ## 0.3.0 files against the SD card
 

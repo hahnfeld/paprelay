@@ -85,7 +85,9 @@ import com.everysoft.paprelay.core.nights.BreathingEventKind
 import com.everysoft.paprelay.core.nights.EventReport
 import com.everysoft.paprelay.core.nights.Night
 import com.everysoft.paprelay.core.nights.NightFigure
+import com.everysoft.paprelay.core.nights.NightPreview
 import com.everysoft.paprelay.core.nights.NightUnit
+import com.everysoft.paprelay.core.nights.PreviewSession
 import com.everysoft.paprelay.sync.Events
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -98,21 +100,37 @@ import java.util.Locale
 
 // One night at a time, with all its figures, and the list of breathing events.
 
+/** A page of the Nights screen: a night the machine has summed up, or the preview of the one after it. */
+internal sealed class NightPageItem(val date: java.time.LocalDate) {
+    class Finished(val night: Night) : NightPageItem(night.date)
+
+    class Preview(val preview: NightPreview) : NightPageItem(preview.date)
+
+    companion object {
+        /** The finished nights, oldest first, and the preview last when there is one. */
+        fun pages(nights: List<Night>, preview: NightPreview?): List<NightPageItem> =
+            nights.filter { it.complete }.sortedBy { it.date }.map { Finished(it) } +
+                listOfNotNull(preview?.takeIf { p -> nights.none { it.complete && it.date == p.date } }?.let { Preview(it) })
+    }
+}
+
 /**
- * The finished nights, one to a page, oldest to the start and newest to the end, opening on
- * [shown] (an epoch day) or, with none, on the newest. Moved between by the arrows beside the
- * date, by a swipe, or by the date's own actions in a screen reader.
+ * The finished nights, one to a page, oldest to the start and newest to the end, and after them
+ * the preview of the night not yet summed up, if there is one; opening on [shown] (an epoch day)
+ * or, with none, on the newest. Moved between by the arrows beside the date, by a swipe, or by the
+ * date's own actions in a screen reader.
  */
 @Composable
 fun NightScreen(
     nights: List<Night>,
     events: Events,
+    preview: NightPreview?,
     shown: Long?,
     onShown: (Long) -> Unit,
     onOpenEvents: (Long) -> Unit,
     onBack: () -> Unit,
 ) {
-    val pages = remember(nights) { nights.filter { it.complete }.sortedBy { it.date } }
+    val pages = remember(nights, preview) { NightPageItem.pages(nights, preview) }
     Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxSize()) {
         Box(
             Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)),
@@ -142,7 +160,7 @@ fun NightScreen(
                 Navigator(pages[settled], earlier = settled > 0, later = settled < pages.lastIndex, onEarlier = { go(settled - 1) }, onLater = { go(settled + 1) })
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 HorizontalPager(pager, Modifier.weight(1f), key = { pages[it].date.toEpochDay() }) { page ->
-                    val night = pages[page]
+                    val item = pages[page]
                     Column(
                         Modifier
                             .fillMaxSize()
@@ -150,7 +168,10 @@ fun NightScreen(
                             .padding(start = 24.dp, end = 24.dp, top = 20.dp)
                             .padding(bottom = 32.dp + WindowInsets.safeDrawing.asPaddingValues().calculateBottomPadding()),
                     ) {
-                        NightPage(night, events.of(night), onOpenEvents = { onOpenEvents(night.date.toEpochDay()) })
+                        when (item) {
+                            is NightPageItem.Finished -> NightPage(item.night, events.of(item.night), onOpenEvents = { onOpenEvents(item.date.toEpochDay()) })
+                            is NightPageItem.Preview -> PreviewPage(item.preview, previewEvents(events, item.preview), onOpenEvents = { onOpenEvents(item.date.toEpochDay()) })
+                        }
                     }
                 }
             }
@@ -169,8 +190,9 @@ private fun TitleRow(@StringRes title: Int, onBack: () -> Unit, modifier: Modifi
 
 /** The date of the night shown, between the arrows to the nights either side. */
 @Composable
-private fun Navigator(night: Night, earlier: Boolean, later: Boolean, onEarlier: () -> Unit, onLater: () -> Unit) {
-    val heading = stringResource(R.string.night_of, remember(night.date) { dayFormatter().format(night.date) })
+private fun Navigator(page: NightPageItem, earlier: Boolean, later: Boolean, onEarlier: () -> Unit, onLater: () -> Unit) {
+    val date = remember(page.date) { dayFormatter().format(page.date) }
+    val heading = stringResource(if (page is NightPageItem.Preview) R.string.night_of_so_far else R.string.night_of, date)
     val earlierLabel = stringResource(R.string.night_earlier)
     val laterLabel = stringResource(R.string.night_later)
     Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(start = 12.dp, end = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -232,7 +254,7 @@ private fun NightPage(night: Night, events: List<BreathingEvent>, onOpenEvents: 
     val sessions = night.sessionList
     if (sessions != null) {
         Spacer(Modifier.height(20.dp))
-        NightTimeline(night, events)
+        NightTimeline(TimelineModel.of(night, events))
     }
 
     val time = rememberClockFormatter()
@@ -289,6 +311,114 @@ private fun NightPage(night: Night, events: List<BreathingEvent>, onOpenEvents: 
         }
     }
     Note()
+}
+
+/** When the machine was last read, as a time of day: corrected where it can be, else by the machine's clock with *. */
+internal fun lastReadTime(preview: NightPreview, formatter: DateTimeFormatter): String =
+    preview.lastReadCorrectedMs?.let { clockTime(it, preview.zoneOffsetMinutes, formatter) }
+        ?: preview.lastReadMs?.let { clockTime(it, preview.zoneOffsetMinutes, formatter) + "*" }
+        ?: ""
+
+/** The time the mask was last seen still on, for the headline; null when no session is running or no last read is known. */
+internal fun stillOnAt(preview: NightPreview, formatter: DateTimeFormatter): String? =
+    lastReadTime(preview, formatter).takeIf { preview.running && it.isNotEmpty() && readCovers(preview) }
+
+/** True when the last read came after every running session began; an earlier one says nothing about them. */
+internal fun readCovers(preview: NightPreview, session: PreviewSession? = null): Boolean {
+    val read = preview.lastReadMs ?: return false
+    val running = if (session != null) listOf(session) else preview.sessions.filter { it.running }
+    return running.all { it.start.epochMs <= read }
+}
+
+/** The events of the night the preview is of, newest first. */
+internal fun previewEvents(events: Events, preview: NightPreview): List<BreathingEvent> = events.between(preview.startMs, preview.endMs)
+
+/**
+ * The night not yet summed up, so far: its time of use, the picture of it with its sessions and
+ * events, the sessions one by one, and the way to its events. No figure: the machine gives those
+ * after the next midday, and PAPRelay works none out.
+ */
+@Composable
+private fun PreviewPage(preview: NightPreview, events: List<BreathingEvent>, onOpenEvents: () -> Unit) {
+    PreviewHeadline(preview, MaterialTheme.typography.headlineSmall)
+    if (preview.sessions.isNotEmpty()) {
+        Spacer(Modifier.height(20.dp))
+        NightTimeline(TimelineModel.of(preview, events))
+    }
+    val time = rememberClockFormatter()
+    if (preview.sessions.isNotEmpty()) {
+        Section(R.string.night_section_use) {
+            val readAt = lastReadTime(preview, time)
+            for (session in preview.sessions) {
+                val readAt = if (readCovers(preview, session)) readAt else ""
+                val at = clockTime(session.correctedStartMs ?: session.start.epochMs, preview.zoneOffsetMinutes, time) + if (session.correctedStartMs == null) "*" else ""
+                val minutes = session.minutes
+                val shown: String
+                val said: String
+                if (minutes == null) {
+                    // On, and its time beyond its start not known: a start, and no length.
+                    shown = if (readAt.isEmpty()) stringResource(R.string.night_session_open, at) else stringResource(R.string.night_session_open_at, at, readAt)
+                    said = if (readAt.isEmpty()) stringResource(R.string.night_session_open, at.removeSuffix("*")) else stringResource(R.string.night_session_open_at_spoken, at.removeSuffix("*"), readAt.removeSuffix("*"))
+                } else {
+                    val length = stringResource(R.string.night_usage, (minutes / 60).toString(), (minutes % 60).toString())
+                    val duration = stringResource(
+                        R.string.duration_spoken,
+                        pluralStringResource(R.plurals.hours_spoken, minutes / 60, minutes / 60),
+                        pluralStringResource(R.plurals.minutes_spoken, minutes % 60, minutes % 60),
+                    )
+                    val running = session.running && readAt.isNotEmpty()
+                    shown = if (running) stringResource(R.string.night_session_running, at, length, readAt) else stringResource(R.string.night_session, at, length)
+                    said = if (running) {
+                        stringResource(R.string.night_session_running_spoken, at.removeSuffix("*"), duration, readAt.removeSuffix("*"))
+                    } else {
+                        stringResource(R.string.night_session_spoken, at.removeSuffix("*"), duration)
+                    }
+                }
+                val saidAll = said + if (session.correctedStartMs == null) ". " + stringResource(R.string.events_machine_clock_spoken) else ""
+                Text(
+                    shown,
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.padding(start = 16.dp, top = 4.dp, bottom = 4.dp).clearAndSetSemantics { contentDescription = saidAll },
+                )
+            }
+            val uncorrected = preview.sessions.count { it.correctedStartMs == null }
+            if (uncorrected > 0) Secondary(pluralStringResource(R.plurals.machine_clock_note, uncorrected), Modifier.padding(top = 4.dp))
+        }
+    }
+    if (events.isNotEmpty()) {
+        Spacer(Modifier.height(20.dp))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        DestinationRow(GlyphKind.TICKS, pluralStringResource(R.plurals.preview_events, events.size, events.size), onOpenEvents)
+    }
+    Spacer(Modifier.height(32.dp))
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    Spacer(Modifier.height(12.dp))
+    Secondary(stringResource(R.string.preview_note))
+}
+
+/**
+ * The preview's time of use, and whether the mask is still on; or, where the log's marks do not
+ * pair up, that no time is given.
+ */
+@Composable
+internal fun PreviewHeadline(preview: NightPreview, style: TextStyle) {
+    val minutes = preview.usageMinutes
+    if (minutes == null) {
+        Secondary(stringResource(R.string.preview_no_time))
+        return
+    }
+    val hours = (minutes / 60).toString()
+    val rest = (minutes % 60).toString()
+    val usage = stringResource(R.string.night_usage, hours, rest)
+    val readAt = stillOnAt(preview, rememberClockFormatter()).orEmpty()
+    // Said to be on only with the time it was last seen on; with no such time, the plain time of use.
+    val running = readAt.isNotEmpty()
+    val spoken = stringResource(R.string.night_usage_spoken, hours, rest) + if (running) ". " + stringResource(R.string.preview_running, readAt.removeSuffix("*")) else ""
+    Text(
+        if (running) stringResource(R.string.preview_usage_running, usage, readAt) else usage,
+        style = style,
+        modifier = Modifier.clearAndSetSemantics { contentDescription = spoken },
+    )
 }
 
 @Composable
@@ -506,11 +636,12 @@ private fun clockTime(epochMs: Long, offsetMinutes: Int, formatter: DateTimeForm
  * is placed by the machine's own clock, the clock the day and the sessions are measured by.
  */
 @Composable
-private fun NightTimeline(night: Night, events: List<BreathingEvent>) {
-    val start = night.start.toInstant().toEpochMilli()
-    val end = night.end.toInstant().toEpochMilli()
-    val sessions = night.sessionList.orEmpty()
-    val drawn = events.filter { it.machineTime.epochMs in start until end }
+private fun NightTimeline(model: TimelineModel) {
+    val hourMinute = rememberClockFormatter()
+    val start = model.startMs
+    val end = model.endMs
+    val bars = model.bars
+    val drawn = model.marks
     val scheme = MaterialTheme.colorScheme
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val is24 = DateFormat.is24HourFormat(LocalContext.current)
@@ -520,13 +651,15 @@ private fun NightTimeline(night: Night, events: List<BreathingEvent>) {
     }
     // Six-hour marks from the day's start; the last is its end, which is midday again.
     val marks = (0..3).map { start + it * SIX_HOURS } + end
-    val labels = marks.mapIndexed { index, at -> clockTime(if (index == 4) start else at, night.zoneOffsetMinutes, hourFormat) }
-    val sessionWords = pluralStringResource(R.plurals.timeline_sessions, sessions.size, sessions.size)
-    val description = if (drawn.isEmpty()) {
-        stringResource(R.string.timeline_description_no_events, sessionWords)
-    } else {
-        stringResource(R.string.timeline_description, sessionWords, pluralStringResource(R.plurals.timeline_events, drawn.size, drawn.size))
-    }
+    val labels = marks.mapIndexed { index, at -> clockTime(if (index == 4) start else at, model.offsetMinutes, hourFormat) }
+    val sessionWords = pluralStringResource(R.plurals.timeline_sessions, bars.size, bars.size)
+    val description = (
+        if (drawn.isEmpty()) {
+            stringResource(R.string.timeline_description_no_events, sessionWords)
+        } else {
+            stringResource(R.string.timeline_description, sessionWords, pluralStringResource(R.plurals.timeline_events, drawn.size, drawn.size))
+        }
+        ) + model.runningAt(hourMinute).takeIf { model.running && it.isNotEmpty() }?.let { " " + stringResource(R.string.timeline_running, it.removeSuffix("*")) }.orEmpty()
     val fontScale = LocalDensity.current.fontScale
     Column(Modifier.fillMaxWidth().clearAndSetSemantics { contentDescription = description }) {
         Canvas(Modifier.fillMaxWidth().height(36.dp)) {
@@ -538,14 +671,20 @@ private fun NightTimeline(night: Night, events: List<BreathingEvent>) {
             val lineY = 26.dp.toPx()
             drawLine(scheme.outline, Offset(x(start), lineY), Offset(x(end), lineY), 2.dp.toPx(), StrokeCap.Round)
             for (mark in marks) drawLine(scheme.outline, Offset(x(mark), lineY), Offset(x(mark), 31.dp.toPx()), 1.5.dp.toPx(), StrokeCap.Round)
-            for (session in sessions) {
-                val from = session.start.epochMs.coerceIn(start, end)
-                val to = (session.start.epochMs + session.minutes * 60_000L).coerceIn(start, end)
-                drawLine(scheme.onSurface, Offset(x(from), lineY), Offset(x(to), lineY), 6.dp.toPx(), StrokeCap.Round)
+            for (bar in bars) {
+                val from = bar.fromMs.coerceIn(start, end)
+                val to = bar.toMs?.coerceIn(start, end) ?: from
+                // A session whose length is not known is its open ring alone, at its start: no length implied.
+                if (bar.toMs != null) drawLine(scheme.onSurface, Offset(x(from), lineY), Offset(x(to), lineY), 6.dp.toPx(), StrokeCap.Round)
+                if (bar.running) {
+                    // Still on when the machine was last read: the bar ends in an open ring, a session not yet ended.
+                    drawCircle(scheme.surface, 6.dp.toPx(), Offset(x(to), lineY))
+                    drawCircle(scheme.onSurface, 4.dp.toPx(), Offset(x(to), lineY), style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
+                }
             }
             for (event in drawn) {
-                val top = if (event.kind.stampIsEnd) 4.dp.toPx() else 11.dp.toPx()
-                val at = x(event.machineTime.epochMs)
+                val top = if (event.tall) 4.dp.toPx() else 11.dp.toPx()
+                val at = x(event.atMs)
                 drawLine(scheme.onSurface, Offset(at, top), Offset(at, 19.dp.toPx()), 1.5.dp.toPx(), StrokeCap.Round)
             }
         }
@@ -575,7 +714,11 @@ private fun NightTimeline(night: Night, events: List<BreathingEvent>) {
         }
         Spacer(Modifier.height(4.dp))
         Text(
-            stringResource(R.string.timeline_legend_sessions) + if (drawn.isNotEmpty()) " " + stringResource(R.string.timeline_legend_events) else "",
+            listOfNotNull(
+                stringResource(R.string.timeline_legend_sessions),
+                if (model.running) stringResource(R.string.timeline_legend_running) else null,
+                if (drawn.isNotEmpty()) stringResource(R.string.timeline_legend_events) else null,
+            ).joinToString(" "),
             style = MaterialTheme.typography.bodySmall,
             color = scheme.onSurfaceVariant,
         )
@@ -585,12 +728,70 @@ private fun NightTimeline(night: Night, events: List<BreathingEvent>) {
 private const val SIX_HOURS = 6L * 60 * 60 * 1000
 
 /**
+ * What the picture of a night draws, worked out apart from the drawing so that it can be tested:
+ * the day from midday to midday, the sessions as bars, the events as marks, all by the machine's
+ * clock. The same for a night the machine has summed up and for the preview of one it has not.
+ */
+internal class TimelineModel(
+    val startMs: Long,
+    val endMs: Long,
+    val offsetMinutes: Int,
+    val bars: List<Bar>,
+    val marks: List<Mark>,
+    /** When the machine was last read, by its clock and in true time: a running session had not ended then. */
+    val lastReadMs: Long? = null,
+    val lastReadCorrectedMs: Long? = null,
+) {
+    /** The last read as a time of day, corrected where it can be, else by the machine's clock with *. */
+    fun runningAt(formatter: DateTimeFormatter): String =
+        lastReadCorrectedMs?.let { clockTime(it, offsetMinutes, formatter) }
+            ?: lastReadMs?.let { clockTime(it, offsetMinutes, formatter) + "*" }
+            ?: ""
+
+    /**
+     * A session: from its start to its end, or, still running, to the last moment it is known to have
+     * been on; [toMs] null for one still on whose time beyond its start is not known.
+     */
+    class Bar(val fromMs: Long, val toMs: Long?, val running: Boolean)
+
+    /** An event: tall for an apnoea, short for anything else. */
+    class Mark(val atMs: Long, val tall: Boolean)
+
+    val running: Boolean get() = bars.any { it.running }
+
+    companion object {
+        fun of(night: Night, events: List<BreathingEvent>): TimelineModel {
+            val start = night.start.toInstant().toEpochMilli()
+            val end = night.end.toInstant().toEpochMilli()
+            val bars = night.sessionList.orEmpty().map { Bar(it.start.epochMs, it.start.epochMs + it.minutes * 60_000L, running = false) }
+            return TimelineModel(start, end, night.zoneOffsetMinutes, bars, marks(events, start, end))
+        }
+
+        fun of(preview: NightPreview, events: List<BreathingEvent>): TimelineModel {
+            val bars = preview.sessions.map { Bar(it.start.epochMs, it.end?.epochMs, it.running) }
+            return TimelineModel(preview.startMs, preview.endMs, preview.zoneOffsetMinutes, bars, marks(events, preview.startMs, preview.endMs), preview.lastReadMs.takeIf { readCovers(preview) }, preview.lastReadCorrectedMs.takeIf { readCovers(preview) })
+        }
+
+        private fun marks(events: List<BreathingEvent>, start: Long, end: Long): List<Mark> =
+            events.filter { it.machineTime.epochMs in start until end }.map { Mark(it.machineTime.epochMs, it.kind.stampIsEnd) }
+    }
+}
+
+/**
  * The events of one night, newest first; [night] null for events outside every night kept, which
  * are each shown at the offset of the night nearest to it ([offsets], one for each event): a run of
  * them between two nights may lie nearer the one or the other.
  */
-internal class EventGroup(val night: Night?, val events: List<BreathingEvent>, val offsets: List<Int>) {
-    val key: String = "n" + (night?.date?.toEpochDay()?.toString() ?: ("x" + events.first().machineTime.epochMs))
+internal class EventGroup(
+    val night: Night?,
+    val events: List<BreathingEvent>,
+    val offsets: List<Int>,
+    /** The night's date; for the preview, the date of the night not yet summed up. */
+    val date: java.time.LocalDate? = night?.date,
+    /** True for the events of the night not yet summed up: shown "so far", and never written anywhere. */
+    val soFar: Boolean = false,
+) {
+    val key: String = "n" + (date?.toEpochDay()?.toString() ?: ("x" + events.first().machineTime.epochMs))
 }
 
 /** What the list shows, one item each, in order. */
@@ -606,10 +807,14 @@ private sealed class EventItem(val key: String) {
  * Groups the events shown (those of finished nights, as in the file: [EventReport.shown]) by the
  * night that holds each, newest night first; events outside every night are grouped by where they fall.
  */
-internal fun groupByNight(events: Events, nights: List<Night>): List<EventGroup> {
+internal fun groupByNight(events: Events, nights: List<Night>, preview: NightPreview? = null): List<EventGroup> {
     val finished = EventReport.Nights(nights.filter { it.complete })
     val shown = EventReport.shown(events.all, nights)
     val groups = ArrayList<EventGroup>()
+    // The night not yet summed up comes first, marked "so far"; its events are not among those shown above.
+    preview?.let { previewEvents(events, it) }?.takeIf { it.isNotEmpty() }?.let { soFar ->
+        groups += EventGroup(null, soFar, soFar.map { preview.zoneOffsetMinutes }, date = preview.date, soFar = true)
+    }
     var current: Night? = null
     var members = ArrayList<BreathingEvent>()
     var open = false
@@ -633,11 +838,11 @@ internal fun groupByNight(events: Events, nights: List<Night>): List<EventGroup>
  * time as it is scrolled. Opened from a night ([startAt], an epoch day), it begins at that night.
  */
 @Composable
-fun EventsScreen(nights: List<Night>, events: Events, startAt: Long?, onBack: () -> Unit) {
-    val groups by produceState<List<EventGroup>?>(null, events, nights) { value = withContext(Dispatchers.Default) { groupByNight(events, nights) } }
+fun EventsScreen(nights: List<Night>, events: Events, preview: NightPreview?, startAt: Long?, onBack: () -> Unit) {
+    val groups by produceState<List<EventGroup>?>(null, events, nights, preview) { value = withContext(Dispatchers.Default) { groupByNight(events, nights, preview) } }
     var window by rememberSaveable { mutableIntStateOf(PAGE_NIGHTS) }
     val all = groups
-    val target = remember(all, startAt) { all?.indexOfFirst { it.night?.date?.toEpochDay() == startAt }?.takeIf { it >= 0 } }
+    val target = remember(all, startAt) { all?.indexOfFirst { it.date?.toEpochDay() == startAt }?.takeIf { it >= 0 } }
     if (target != null && window <= target) window = (target / PAGE_NIGHTS + 1) * PAGE_NIGHTS
     val items = remember(all, window) {
         val out = ArrayList<EventItem>()
@@ -708,7 +913,9 @@ private const val LOAD_AHEAD = 20
 
 @Composable
 private fun GroupHeader(group: EventGroup, first: Boolean) {
-    val title = group.night?.let { stringResource(R.string.night_of, remember(it.date) { dayFormatter().format(it.date) }) } ?: stringResource(R.string.events_no_night)
+    val title = group.date?.let { date ->
+        stringResource(if (group.soFar) R.string.night_of_so_far else R.string.night_of, remember(date) { dayFormatter().format(date) })
+    } ?: stringResource(R.string.events_no_night)
     Column(Modifier.fillMaxWidth().semantics(mergeDescendants = true) { heading() }) {
         // On the page's own colour, so that the rows scrolling beneath it do not show through.
         Surface(color = MaterialTheme.colorScheme.surface) {
