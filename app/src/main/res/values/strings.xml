@@ -115,8 +115,8 @@
     <string name="machine_unpaired">Not paired</string>
     <!-- The three steps of pairing, shown as a numbered list under "Not paired". One step each. -->
     <string name="pair_step_1">Remove the machine from the myAir app.</string>
-    <string name="pair_step_2">On the machine, choose More › myAir App › Connect.</string>
-    <string name="pair_step_3">Tap Pair the machine.</string>
+    <string name="pair_step_2">On the machine, choose More, then myAir App, then Connect.</string>
+    <string name="pair_step_3">Choose Pair the machine.</string>
     <!-- The number in front of a step in a numbered list. %1$d is the number. -->
     <string name="list_number">%1$d.</string>
     <string name="machine_paired">AirSense 11 · serial ending %1$s</string>

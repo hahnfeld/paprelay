@@ -87,6 +87,17 @@ fun checkOutcome(steps: List<Step>): CheckOutcome = when {
     else -> CheckOutcome.INCOMPLETE
 }
 
+/**
+ * Whether the steps for pairing are shown under "Not paired". After a check that failed at
+ * finding or pairing the machine, its own advice says the same and they are left out; after
+ * one that failed for another reason (Health Connect, Bluetooth on the phone) they stay.
+ */
+fun pairingStepsShown(steps: List<Step>, paired: Boolean): Boolean {
+    if (paired || checkOutcome(steps) != CheckOutcome.FAILED) return true
+    val first = steps.firstOrNull { it.state == StepState.FAILED } ?: return true
+    return first.onPhone || first.id != CheckSteps.SCAN && first.id != CheckSteps.PAIR
+}
+
 /** How the two legs stand during a device check, or after one. */
 fun checkLinks(steps: List<Step>, pairing: PairingState, running: Boolean, healthAllowed: Boolean): Links = Links(
     machine = machineLink(steps, pairing, running),

@@ -180,4 +180,19 @@ class LinksTest {
         assertTrue(checkStarted(untouched, true))
         assertTrue(checkStarted(steps(StepState.NOTED), false))
     }
+
+    @Test
+    fun `the pairing steps are left out only after a failure at finding or pairing the machine`() {
+        assertTrue(pairingStepsShown(untouched, paired = false))
+        // Not found, or pairing refused: the failure's own advice says what to do.
+        assertFalse(pairingStepsShown(steps(StepState.PASSED, StepState.FAILED), paired = false))
+        assertFalse(pairingStepsShown(steps(StepState.PASSED, StepState.PASSED, StepState.FAILED), paired = false))
+        // Health Connect refused first, then not found: what is shown is the Health Connect step, so the steps stay.
+        assertTrue(pairingStepsShown(steps(StepState.FAILED, StepState.FAILED), paired = false))
+        // Bluetooth off on the phone: the steps stay.
+        assertTrue(pairingStepsShown(steps(StepState.PASSED, StepState.FAILED, onPhone = true), paired = false))
+        // Paired, or nothing failed: always.
+        assertTrue(pairingStepsShown(steps(StepState.PASSED, StepState.FAILED), paired = true))
+        assertTrue(pairingStepsShown(allPassed, paired = false))
+    }
 }

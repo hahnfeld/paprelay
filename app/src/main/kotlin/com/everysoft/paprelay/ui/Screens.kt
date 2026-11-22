@@ -259,9 +259,8 @@ fun HomeScreen(
             return@Page
         }
 
-        // Before there is a machine, a failed check says what to do; the advice on pairing would repeat it.
-        val failedUnpaired = !paired && checkOutcome(steps) == CheckOutcome.FAILED
-        MachineLine(pairing, pairingHint = !failedUnpaired)
+        // A check that failed at finding or pairing the machine says what to do; the steps would repeat it.
+        MachineLine(pairing, pairingHint = pairingStepsShown(steps, paired))
         val free = !sync.running && !busy
 
         if (paired && syncEnabled) {
