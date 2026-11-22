@@ -20,6 +20,9 @@ the SD-card files are not kept in this repository.
 
 ## Findings
 
+- In pairing mode the machine shows its serial number; the code appears once the phone
+  starts pairing. (Seen on the released 0.3.0, whose steps asked the user to wait for the
+  code before the phone searched; 0.3.1 asks for the serial number.)
 - MTU 247 on the first request, so writes of 244 bytes are in order.
 - GATT: service `FD56` with `a6220002` (write, write-without-response) and `a6220003`
   (notify), as in the reference. One further vendor service (`948652e2-…`, three readable

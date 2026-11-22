@@ -241,12 +241,13 @@
     <string name="machine_unpaired">Not paired</string>
     <!-- The three steps of pairing, shown as a numbered list under "Not paired". One step each. -->
     <string name="pair_step_1">Remove the machine from the myAir app.</string>
-    <!-- "More", "myAir App" and "Connect" are the names in the machine's menu, and must match what the machine shows in this language. -->
-    <string name="pair_step_2">On the machine, choose More, then myAir App, then Connect.</string>
-    <string name="pair_step_3">Wait until the machine shows a code with four digits.</string>
+    <!-- "More", "myAir App", "OK, Downloaded" and "Connect" are the names on the machine's screens, and must match what the machine shows in this language. -->
+    <string name="pair_step_2">On the machine, choose More, then myAir App, then “OK, Downloaded”, then Connect.</string>
+    <!-- In pairing mode the machine shows its serial number. The code appears only later, once the phone has connected. -->
+    <string name="pair_step_3">Wait until the machine shows its serial number.</string>
     <string name="machine_unpaired_hint">Tap Pair the machine. PAPRelay then shows the steps.</string>
-    <string name="pair_picture">The machine\'s screen shows a code with four digits.</string>
-    <string name="action_code_shown">The machine shows a code</string>
+    <string name="pair_picture">The machine\'s screen shows its serial number.</string>
+    <string name="action_serial_shown">The machine shows its serial number</string>
     <!-- The number in front of a step in a numbered list. %1$d is the number. -->
     <string name="list_number">%1$d.</string>
     <string name="machine_paired">AirSense 11 · serial ending %1$s</string>
@@ -373,9 +374,11 @@
 
     <!-- Dialogs -->
     <string name="passkey_title">Type the code shown on the machine</string>
+    <!-- Shown once the phone has connected: only then does the machine show the code. -->
+    <string name="passkey_shown">The machine now shows a code with four digits.</string>
     <string name="passkey_body">Pairing replaces the myAir app\'s connection to this machine.</string>
-    <!-- "More", "myAir App" and "Connect" are the names in the machine's menu, and must match what the machine shows in this language. -->
-    <string name="passkey_no_code">No code on the machine? Tap Cancel. Then, on the machine, choose More, then myAir App, then Connect.</string>
+    <!-- "More", "myAir App", "OK, Downloaded" and "Connect" are the names on the machine's screens, and must match what the machine shows in this language. -->
+    <string name="passkey_no_code">No code on the machine? Tap Cancel. Then, on the machine, choose More, then myAir App, then “OK, Downloaded”, then Connect.</string>
     <string name="passkey_label">Code</string>
     <string name="passkey_expiry">The code works for about two minutes.</string>
     <string name="choose_title">Which machine is yours?</string>

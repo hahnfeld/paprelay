@@ -2,6 +2,12 @@
 
 Newest first. Before 1.0, any release may change behaviour.
 
+## 0.3.1 (2026-11-22)
+
+- Pairing: the steps now ask you to wait for the machine's serial number, which it shows in
+  pairing mode, and name the **OK, Downloaded** screen. The four-digit code appears on the
+  machine only after the phone connects; the code prompt then asks for it.
+
 ## 0.3.0 (2026-11-22)
 
 Nothing stored by an earlier version needs to be kept: the first synchronisation reads

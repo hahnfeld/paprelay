@@ -415,12 +415,12 @@ def setup():
     s.waves(88 + mw + 6, y + 26, 22)
     s.lines(label_x, y + 14, ["On the machine:", "More › myAir App ›", "OK, Downloaded › Connect"])
 
-    # Step 3: the machine shows the code, and the code is typed into the phone.
+    # Step 3: once the phone has connected, the machine shows the code, and it is typed into the phone.
     y = top + 2 * row
     mw = s.machine(62, y + 8, 36)
     s.bubble(62 + mw + 12, y + 10, 62, 30, "1 2 3 4", 62 + mw + 3)
     s.phone(62 + mw + 12 + 62 + 12, y - 2, 56)
-    s.lines(label_x, y + 24, ["Pair the machine,", "then type the code"])
+    s.lines(label_x, y + 14, ["Pair the machine,", "then type the code", "that it shows"])
 
     # Step 4: the device check.
     y = top + 3 * row

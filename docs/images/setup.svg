@@ -79,8 +79,9 @@
 <text class="s" x="159" y="222" text-anchor="middle">1 2 3 4</text>
 <rect class="ink" x="203" y="193.4" width="26" height="49.3" rx="5"/>
 <path class="ink" d="M211.5 237H220.5"/>
-<text class="t" x="250" y="216" text-anchor="start">Pair the machine,</text>
-<text class="t" x="250" y="237" text-anchor="start">then type the code</text>
+<text class="t" x="250" y="206" text-anchor="start">Pair the machine,</text>
+<text class="t" x="250" y="227" text-anchor="start">then type the code</text>
+<text class="t" x="250" y="248" text-anchor="start">that it shows</text>
 <rect class="ink" x="63" y="294" width="43" height="19.2" rx="4.8"/>
 <rect class="ink" x="66.5" y="301.8" width="13.5" height="7.8" rx="1.5"/>
 <circle class="ink" cx="73.2" cy="297.9" r="2"/>

@@ -13,9 +13,11 @@ entry to Health Connect and removes it again.
 ## Run it
 
 The first time, follow [First-time setup](../README.md#first-time-setup). With no machine
-paired, **Pair the machine** first shows the steps. The check, and its search for the
-machine, starts when you tap **The machine shows a code**. **Cancel** in the code prompt
-ends the check, stores nothing, and shows the steps again.
+paired, **Pair the machine** first shows the steps. In pairing mode the machine shows its
+serial number. The check, and its search for the machine, starts when you tap **The machine
+shows its serial number**. Once the phone has connected, the machine shows a four-digit
+code, and the code prompt asks for it. **Cancel** in the code prompt ends the check, stores
+nothing, and shows the steps again.
 
 Later, open **Device check** and choose **Run device check**. When the machine is already
 paired, the check does not pair again. *Find the machine* listens briefly for the paired

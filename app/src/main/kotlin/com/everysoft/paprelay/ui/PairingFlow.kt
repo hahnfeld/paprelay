@@ -7,8 +7,9 @@ import com.everysoft.paprelay.pairing.PairingState
 /**
  * Where "Pair the machine" leads, and where backing out of the code leads, apart from the screens
  * so that it can be tested. Nothing is asked of the machine until the user has seen the steps and
- * says that it shows a code: a search begun before the machine is in pairing mode finds it and asks
- * for a code it is not showing.
+ * says that it is in pairing mode, where it shows its serial number. The four-digit code appears
+ * on the machine only after the phone has connected and started pairing; the code prompt asks for
+ * it then. A search begun before the machine is in pairing mode does not find it.
  */
 internal object PairingFlow {
     /** What a tap on the button that starts a check does. */

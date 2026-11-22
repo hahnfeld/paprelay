@@ -651,8 +651,10 @@ private fun NumberedSteps(steps: List<Int>, modifier: Modifier = Modifier) {
 
 /**
  * What to do on the machine before pairing, shown before anything is asked of it: the steps at
- * reading size, and a drawing of the machine showing its code. Only when the user says that the
- * code is there does the device check, and with it the search for the machine, begin.
+ * reading size, and a drawing of the machine in pairing mode, which shows its serial number. Only
+ * when the user says that the serial number is there does the device check, and with it the
+ * search for the machine, begin. The code appears on the machine later, once the phone has
+ * connected and started pairing, and is typed into the code prompt.
  */
 @Composable
 fun PairStepsScreen(unreadable: Boolean, free: Boolean, stopping: Boolean, onStart: () -> Unit, onBack: () -> Unit) {
@@ -663,19 +665,20 @@ fun PairStepsScreen(unreadable: Boolean, free: Boolean, stopping: Boolean, onSta
         }
         NumberedSteps(listOf(R.string.pair_step_1, R.string.pair_step_2, R.string.pair_step_3))
         Spacer(Modifier.height(24.dp))
-        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { MachineCodePicture() }
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { MachineSerialPicture() }
         Spacer(Modifier.height(28.dp))
-        Button(onClick = onStart, enabled = free) { Text(stringResource(R.string.action_code_shown)) }
+        Button(onClick = onStart, enabled = free) { Text(stringResource(R.string.action_serial_shown)) }
         if (stopping) Secondary(stringResource(R.string.action_stopping), Modifier.padding(top = 8.dp))
     }
 }
 
 /**
- * The machine from the front, in the picture's line style, with a code of four digits on its
- * screen. The digits are an example, and are not read out: the description says what it shows.
+ * The machine from the front, in the picture's line style, with a serial number on its screen, as
+ * in pairing mode. The digits are a placeholder, no real serial, and are not read out: the
+ * description says what it shows.
  */
 @Composable
-private fun MachineCodePicture(modifier: Modifier = Modifier) {
+private fun MachineSerialPicture(modifier: Modifier = Modifier) {
     val ink = MaterialTheme.colorScheme.onSurface
     val description = stringResource(R.string.pair_picture)
     Box(modifier.size(width = 180.dp, height = 112.dp).clearAndSetSemantics { contentDescription = description }) {
@@ -690,9 +693,9 @@ private fun MachineCodePicture(modifier: Modifier = Modifier) {
             drawLine(ink, Offset(24.dp.toPx(), size.height - 6.dp.toPx()), Offset(size.width - 24.dp.toPx(), size.height - 6.dp.toPx()), w, StrokeCap.Round)
         }
         Text(
-            "1 2 3 4",
+            "123456",
             // Sized in dp like the drawing around it, so that a large font does not push it out of the screen.
-            style = MaterialTheme.typography.titleLarge.copy(fontFeatureSettings = "tnum", fontSize = with(LocalDensity.current) { 22.dp.toSp() }),
+            style = MaterialTheme.typography.titleLarge.copy(fontFeatureSettings = "tnum", fontSize = with(LocalDensity.current) { 20.dp.toSp() }),
             color = ink,
             textAlign = TextAlign.Center,
             maxLines = 1,
@@ -987,6 +990,8 @@ fun PasskeyDialog(onConfirm: (String) -> Unit, onCancel: () -> Unit) {
             Column {
                 // Requested from inside the dialog's own content, once the field exists.
                 LaunchedEffect(Unit) { focus.requestFocus() }
+                Text(stringResource(R.string.passkey_shown), style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(8.dp))
                 Text(stringResource(R.string.passkey_body), style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(8.dp))
                 Text(stringResource(R.string.passkey_no_code), style = MaterialTheme.typography.bodyMedium)

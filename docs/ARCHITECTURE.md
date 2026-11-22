@@ -342,7 +342,9 @@ few nights at a time. It is the one page reachable from two places (Home, and a 
 Back returns to where it was opened. Sharing happens only on the Sharing page. With no
 pairing to use, **Pair the machine** first opens a page with the steps
 (`PairStepsScreen`); the device check, and its search for the machine, starts only when
-the user says that the machine shows a code, and backing out of the code leads to that
+the user says that the machine shows its serial number (as it does in pairing mode; the
+code appears only once the phone has connected and started pairing), and backing out of
+the code leads to that
 page again (`PairingFlow`). `PrivacyActivity` is the page that Health Connect opens for
 the privacy text. The picture at the top of the home screen and of the device check is
 `FlowDiagram.kt`; the README explains its lines. Which state each of its two lines is in is

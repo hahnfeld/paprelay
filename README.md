@@ -58,17 +58,18 @@ how to compare a downloaded file with it.
 
 Keep the phone within a few metres of the machine during setup.
 
-![The five setup steps: remove the machine from myAir; on the machine, choose More, myAir App, OK, Downloaded, Connect; in PAPRelay, tap Pair the machine and type the code; wait for the ticks; tap Synchronise now.](docs/images/setup.svg)
+![The five setup steps: remove the machine from myAir; on the machine, choose More, myAir App, OK, Downloaded, Connect; in PAPRelay, tap Pair the machine, and type the code that then appears on the machine; wait for the ticks; tap Synchronise now.](docs/images/setup.svg)
 
 1. Remove the machine from the myAir app. If the phone's Bluetooth settings list the
    machine, tap **Forget** there. Closing the myAir app is not enough.
 2. On the machine, choose **More**, then **myAir App**, then **OK, Downloaded**, then
-   **Connect**. The machine now waits for the phone.
+   **Connect**. The machine shows its serial number and waits for the phone.
 3. In PAPRelay, tap **Pair the machine**.
    - Allow **Nearby devices** (Bluetooth).
    - On Android 16 or later, also allow PAPRelay to write to Health Connect.
-   - When the machine shows a four-digit code, tap **The machine shows a code**.
-   - Type the code. It works for about two minutes.
+   - Tap **The machine shows its serial number**.
+   - When the phone has connected, the machine shows a four-digit code. Type this code in
+     PAPRelay within about two minutes.
 
    No code on the machine? Tap **Cancel** and start again at step 2.
 4. Wait while PAPRelay tests each connection. The lines in the picture appear one by one,

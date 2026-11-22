@@ -48,4 +48,23 @@ class StringsTest {
         }
         assertTrue(wrong.isEmpty(), "strings with a percent sign that will show wrongly: ${wrong.map { it.first }}")
     }
+
+    @Test
+    fun `the steps before the search ask for the serial number, and only the code prompt for the code`() {
+        // In pairing mode the machine shows its serial number. The code appears only once the phone
+        // has connected and started pairing: nothing shown before the search may tell the user to wait for it.
+        val all = texts().toMap()
+        val beforeSearch = listOf("pair_step_1", "pair_step_2", "pair_step_3", "pair_picture", "action_serial_shown", "machine_unpaired_hint", "machine_unreadable_hint")
+        for (name in beforeSearch) {
+            val text = all.getValue(name)
+            assertTrue(!text.contains("code", ignoreCase = true), "$name speaks of the code before the search")
+        }
+        assertTrue(all.getValue("pair_step_3").contains("serial number"))
+        assertTrue(all.getValue("action_serial_shown").contains("serial number"))
+        // The machine's screens are named as it shows them, OK, Downloaded included.
+        assertTrue(all.getValue("pair_step_2").contains("OK, Downloaded"))
+        assertTrue(all.getValue("passkey_no_code").contains("OK, Downloaded"))
+        // Once connected, the prompt says that the code is on the machine now.
+        assertTrue(all.getValue("passkey_shown").contains("code"))
+    }
 }
