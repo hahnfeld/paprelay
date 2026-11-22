@@ -257,8 +257,14 @@ there through Android's "save as" screen. The drive's own app does the sending.
 
 `MainActivity` holds the pages Home, Nights, Sharing, Device check and About, written with
 Jetpack Compose (`app/ui`). `PrivacyActivity` is the page that Health Connect opens for
-the privacy text. The picture at the top of the home screen is `FlowDiagram.kt`; the
-README explains its lines.
+the privacy text. The picture at the top of the home screen and of the device check is
+`FlowDiagram.kt`; the README explains its lines. Which state each of its two lines is in is
+worked out in `Links.kt`, apart from the screens, so it can be tested: during and after a
+check from the steps, otherwise from synchronising, and on the home screen from whichever of
+the two ended last. Pairing runs on the home screen, so the picture can be watched.
+
+Home reaches the other pages through rows with drawn glyphs (`Glyphs.kt`); About is the
+**i** in the top bar. All drawings are made in code; the app has no icon library.
 
 All text is in `app/src/main/res/values/strings.xml`. The top of that file has the wording
 rules.

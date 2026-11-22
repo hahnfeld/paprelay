@@ -149,6 +149,65 @@ class Svg:
             self.add(f'<circle class="hole" cx="{f(cx)}" cy="{f(cy)}" r="{f(r + 2)}"/>')
             self.add(f'<circle class="ink" cx="{f(cx)}" cy="{f(cy)}" r="{f(r)}"/>')
 
+    # ---- the glyphs of the app's navigation (app/.../ui/Glyphs.kt), on a grid of 24 scaled to [size]
+
+    def moon(self, x, y, size, cls="thin"):
+        """A crescent: one circle with a second, offset circle taken out of it."""
+        k = size / 24
+        (ax, ay, ar), (bx, by, br) = (11, 13, 8), (16, 8.5, 7)
+        # Where the two circles cross; the crescent runs along A outside B, then back along B inside A.
+        dx, dy = bx - ax, by - ay
+        d = (dx * dx + dy * dy) ** 0.5
+        a = (ar * ar - br * br + d * d) / (2 * d)
+        h = (ar * ar - a * a) ** 0.5
+        mx, my = ax + a * dx / d, ay + a * dy / d
+        p1 = (mx + h * dy / d, my - h * dx / d)
+        p2 = (mx - h * dy / d, my + h * dx / d)
+
+        def q(point):
+            return f"{f(x + point[0] * k)} {f(y + point[1] * k)}"
+
+        self.add(
+            f'<path class="{cls}" d="M{q(p1)}A{f(ar * k)} {f(ar * k)} 0 1 0 {q(p2)}'
+            f'A{f(br * k)} {f(br * k)} 0 0 1 {q(p1)}Z"/>'
+        )
+
+    def fork(self, x, y, size, cls="thin"):
+        """One source, three destinations."""
+        k = size / 24
+
+        def q(px, py):
+            return f"{f(x + px * k)} {f(y + py * k)}"
+
+        self.add(f'<circle class="solid" cx="{f(x + 4 * k)}" cy="{f(y + 12 * k)}" r="{f(2.25 * k)}"/>')
+        self.add(f'<path class="{cls}" d="M{q(6.5, 12)}L{q(19, 12)}M{q(6.5, 12)}L{q(18.6, 5.6)}M{q(6.5, 12)}L{q(18.6, 18.4)}"/>')
+        for cy in (12, 5, 19):
+            self.add(f'<circle class="hole" cx="{f(x + 20.5 * k)}" cy="{f(y + cy * k)}" r="{f(3.25 * k)}"/>')
+            self.add(f'<circle class="{cls}" cx="{f(x + 20.5 * k)}" cy="{f(y + cy * k)}" r="{f(2.25 * k)}"/>')
+
+    def checked_link(self, x, y, size, cls="thin"):
+        """A line with the picture's tick on it."""
+        k = size / 24
+
+        def q(px, py):
+            return f"{f(x + px * k)} {f(y + py * k)}"
+
+        self.add(f'<path class="{cls}" d="M{q(2, 12)}H{f(x + 22 * k)}"/>')
+        self.add(f'<circle class="hole" cx="{f(x + 12 * k)}" cy="{f(y + 12 * k)}" r="{f(7.5 * k)}"/>')
+        self.add(f'<circle class="{cls}" cx="{f(x + 12 * k)}" cy="{f(y + 12 * k)}" r="{f(5.5 * k)}"/>')
+        self.add(f'<path class="{cls}" d="M{q(9.4, 12.1)}L{q(11.2, 14)}L{q(14.8, 10.2)}"/>')
+
+    def info(self, x, y, size, cls="thin"):
+        """An "i" in a ring."""
+        k = size / 24
+        self.add(f'<circle class="{cls}" cx="{f(x + 12 * k)}" cy="{f(y + 12 * k)}" r="{f(9 * k)}"/>')
+        self.add(f'<circle class="solid" cx="{f(x + 12 * k)}" cy="{f(y + 7.6 * k)}" r="{f(1.3 * k)}"/>')
+        self.add(f'<path class="{cls}" d="M{f(x + 12 * k)} {f(y + 11 * k)}V{f(y + 16.6 * k)}"/>')
+
+    def chevron(self, x, y, size, cls="line"):
+        k = size / 24
+        self.add(f'<path class="{cls}" d="M{f(x + 9 * k)} {f(y + 6 * k)}L{f(x + 15 * k)} {f(y + 12 * k)}L{f(x + 9 * k)} {f(y + 18 * k)}"/>')
+
     def cloud_off(self, x, y, w):
         """A cloud with a line through it: no internet."""
         h = w * 0.62
@@ -363,13 +422,14 @@ def setup():
 
 
 def home():
-    s = Svg(500, "The home screen of PAPRelay, with five numbered parts: 1 the picture, 2 last night, 3 the status, 4 the Synchronise now button, 5 the other pages.")
-    x, y, w, h = 84, 20, 284, 460
+    s = Svg(590, "The home screen of PAPRelay, with six numbered parts: 1 the picture, 2 last night, 3 the status, 4 the Synchronise now button, 5 the rows for Nights, Sharing and Device check, 6 the i for About.")
+    x, y, w, h = 84, 20, 284, 550
     s.add(f'<rect class="ink" x="{x}" y="{y}" width="{w}" height="{h}" rx="28"/>')
     s.add(f'<path class="ink" d="M{x + 112} {y + h - 16}H{x + w - 112}"/>')
     left = x + 24
+    right = x + w - 24
     s.text(left, y + 48, "PAPRelay", "b")
-    s.text(x + w - 24, y + 48, "About", "s", "end")
+    s.info(right - 22, y + 31, 22)
     s.picture(left, y + 72, 40, "ok", "ok", span=44, labels="x")
     s.text(left, y + 168, "AirSense 11 · serial ending 1234", "c")
     s.text(left, y + 208, "Night of Sat, 14 Nov 2026", "x")
@@ -379,10 +439,16 @@ def home():
     s.text(left, y + 312, "Up to date.", "c")
     s.text(left, y + 330, "Last synchronised 5 minutes ago.", "x")
     s.button(left, y + 348, 150, 36, "Synchronise now")
-    s.text(left, y + 420, "Nights", "c")
-    s.text(left + 70, y + 420, "Sharing", "c")
-    s.text(left + 146, y + 420, "Device check", "c")
-    for index, at in enumerate((y + 92, y + 228, y + 318, y + 366, y + 416)):
+    # The rows that lead to the other pages: glyph, name, chevron, with a faint line above each.
+    glyphs = (s.moon, s.fork, s.checked_link)
+    for index, (draw, label) in enumerate(zip(glyphs, ("Nights", "Sharing", "Device check"))):
+        top = y + 404 + index * 42
+        s.add(f'<path class="faint" d="M{left} {top}H{right}"/>')
+        mid = top + 21
+        draw(left, mid - 10, 20)
+        s.text(left + 34, mid + 4.5, label, "c")
+        s.chevron(right - 20, mid - 10, 20)
+    for index, at in enumerate((y + 92, y + 228, y + 318, y + 366, y + 467, y + 42)):
         s.add(f'<path class="faint" d="M{x + w + 8} {at}H{x + w + 28}"/>')
         s.number(x + w + 46, at, index + 1)
     return s.save("home.svg")

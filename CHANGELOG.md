@@ -2,6 +2,18 @@
 
 Newest first. Before 1.0, any release may change behaviour.
 
+## Unreleased
+
+- Pairing runs on the home screen again. The lines in the picture fill in as each
+  connection is tested, and the ticks stay until the first synchronisation. The picture and
+  the sentence under it show the device check or the synchronisation, whichever was last.
+- The device check has one button. **Check connection only** is removed: a check of a
+  paired machine does not pair again. **Synchronise now** is no longer on that page. The
+  page shows the picture too.
+- The home screen leads to **Nights**, **Sharing** and **Device check** with rows that have
+  small drawings. About is the **i** at the top. **Sharing** has the same drawings beside
+  its items. **Nights** says when there are no nights yet.
+
 ## 0.2.2 (2026-11-20)
 
 First public release.

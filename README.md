@@ -56,20 +56,23 @@ Keep the phone within a few metres of the machine.
    for Bluetooth. On Android 16 or later, Android then asks if PAPRelay may write to Health
    Connect. Allow this too. The machine shows a code with four digits. Type the code in
    PAPRelay. The code works for about two minutes.
-4. Wait. PAPRelay tests every connection. A tick means that the connection works.
+4. Wait. PAPRelay tests every connection. The lines in the picture fill in one after the
+   other. A tick means that the connection works.
 5. Tap **Synchronise now**. After this, PAPRelay synchronises by itself.
 
 ## The home screen
 
-![The home screen with five numbered parts.](docs/images/home.svg)
+![The home screen with six numbered parts.](docs/images/home.svg)
 
 1. The picture shows the machine, the phone and Health Connect, and the two connections
    between them.
 2. Last night: hours of use and AHI, then leak and pressure.
-3. What happened the last time PAPRelay synchronised.
+3. What happened the last time PAPRelay synchronised. Just after a device check, what the
+   check found.
 4. Tap to synchronise now.
 5. **Nights** lists every night. **Sharing** sets where the data goes. **Device check**
-   tests the connections again.
+   tests the connections and saves a report.
+6. The **i** opens About.
 
 The figures in this picture are examples.
 

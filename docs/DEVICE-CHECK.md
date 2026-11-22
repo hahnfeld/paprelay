@@ -1,8 +1,9 @@
 # The device check
 
 The device check tests every connection that PAPRelay depends on, one after the other,
-with the real machine and the real phone. Pairing runs it the first time. You can run it
-again at any time from **Device check** on the home screen.
+with the real machine and the real phone. Pairing runs it the first time, on the home
+screen: the picture shows each connection as it is tested. You can run it again at any time
+from **Device check** on the home screen.
 
 The check changes none of the machine's settings or data. Pairing replaces the myAir
 app's connection to the machine. For each thing that is switched on under **Sharing**,
@@ -12,13 +13,15 @@ the check writes a made-up test entry to Health Connect and removes it again.
 
 The first time, follow [First-time setup](../README.md#first-time-setup).
 
-Later, open **Device check** and choose **Run device check**, or **Check connection only**
-for the short form. The short form skips the steps *Find the machine* and *Pair*. It
-listens briefly for the paired machine, connects to it, and runs the other steps.
+Later, open **Device check** and choose **Run device check**. When the machine is already
+paired, the check does not pair again. *Find the machine* listens briefly for the paired
+machine, and *Pair* says that the machine is already paired.
 
 **Save report** saves the result as a file. The report holds no pairing key, no code, no
 full serial number (only its last four characters), no Bluetooth address and no advertised
 name. It is made to be attached to a problem report.
+
+**Write everything again** and **Forget machine** are also on this page.
 
 ## What each step shows
 
@@ -35,7 +38,7 @@ name. It is made to be attached to a problem report.
 ## Reconnect checks
 
 These show whether synchronising resumes by itself when the phone comes home. After a
-successful full check, use **Check connection only** in each situation:
+successful check, choose **Run device check** in each situation:
 
 1. Straight away.
 2. After turning Bluetooth off and on.
