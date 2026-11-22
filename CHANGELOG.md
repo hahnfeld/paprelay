@@ -2,7 +2,7 @@
 
 Newest first. Before 1.0, any release may change behaviour.
 
-## Unreleased
+## 0.2.3 (2026-11-22)
 
 - Pairing runs on the home screen again. The lines in the picture fill in as each
   connection is tested, and the ticks stay until the first synchronisation. The picture and
