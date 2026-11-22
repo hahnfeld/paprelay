@@ -44,24 +44,6 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import com.everysoft.paprelay.R
 
-/** The state of one leg of the journey from the machine to Health Connect. */
-enum class LinkState {
-    /** Nothing connects the two ends yet. */
-    NONE,
-
-    /** Connected and idle. */
-    READY,
-
-    /** Data is moving along this leg right now. */
-    ACTIVE,
-
-    /** This leg has been shown to work. */
-    OK,
-
-    /** This leg did not work. */
-    FAILED,
-}
-
 /**
  * The whole app in one picture: machine, phone, health records, and the two
  * links between them.
@@ -77,13 +59,11 @@ enum class LinkState {
  * travel are mirrored; the drawings themselves are not.
  */
 @Composable
-fun FlowDiagram(
-    machineLink: LinkState,
-    healthLink: LinkState,
-    modifier: Modifier = Modifier,
-    /** True when something went wrong on the phone itself, such as its storage or Bluetooth being off. */
-    phoneFault: Boolean = false,
-) {
+fun FlowDiagram(links: Links, modifier: Modifier = Modifier) {
+    val machineLink = links.machine
+    val healthLink = links.health
+    // True when something went wrong on the phone itself, such as its storage or Bluetooth being off.
+    val phoneFault = links.phoneFault
     val scheme = MaterialTheme.colorScheme
     val palette = Palette(ink = scheme.onSurface, line = scheme.outline, bad = scheme.error, onBad = scheme.onError, paper = scheme.surface)
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl

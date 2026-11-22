@@ -9,7 +9,6 @@
     <string name="action_cancel">Cancel</string>
     <string name="action_confirm">Confirm</string>
     <string name="action_run_check">Run device check</string>
-    <string name="action_reconnect_check">Check connection only</string>
     <string name="action_forget">Forget machine</string>
     <string name="action_export">Save report</string>
     <string name="action_stop">Stop</string>
@@ -91,7 +90,7 @@
     <string name="action_use_this">Use this machine</string>
     <string name="action_open_settings">Open app settings</string>
 
-    <!-- The picture at the top of the main screen -->
+    <!-- The picture at the top of the main screen and the device check -->
     <string name="flow_label_machine">Machine</string>
     <string name="flow_label_phone">Phone</string>
     <string name="flow_label_health">Health Connect</string>
@@ -183,7 +182,6 @@
     <string name="detail_pairing_unreadable">This phone can no longer read its saved pairing. Pair the machine again.</string>
     <string name="detail_not_paired">No machine is paired.</string>
     <string name="detail_not_attempted">This step was not tried.</string>
-    <string name="detail_not_in_reconnect">This step is not part of a connection check.</string>
     <string name="detail_not_in_range">The machine did not answer. It may be out of range.</string>
     <string name="detail_session_ok">The connection is encrypted. The machine confirmed it.</string>
     <string name="detail_no_session">There is no secure connection.</string>

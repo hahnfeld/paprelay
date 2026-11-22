@@ -224,27 +224,13 @@ fun HomeScreen(
     onAbout: () -> Unit,
 ) {
     val paired = pairing is PairingState.Paired
-    val checkStarted = checkRunning || steps.any { it.state != StepState.PENDING }
+    val checkStarted = checkStarted(steps, checkRunning)
     Page(
         title = stringResource(R.string.app_name),
         action = { TextButton(onClick = onAbout) { Text(stringResource(R.string.about_title)) } },
     ) {
-        // The picture comes first: it says what the app does and how far it has got. With a machine
-        // paired it shows how synchronising stands; while a check runs, or before there is a
-        // machine, it shows the check. Until the pairing has been read it shows nothing in particular.
-        when {
-            pairing == PairingState.Loading -> FlowDiagram(machineLink = LinkState.NONE, healthLink = LinkState.NONE)
-            syncEnabled && paired && !checkRunning -> {
-                val links = syncLinks(sync, healthAllowed)
-                FlowDiagram(machineLink = links.machine, healthLink = links.health, phoneFault = links.phoneFault)
-            }
-            else -> FlowDiagram(
-                machineLink = machineLink(steps, pairing, checkRunning),
-                healthLink = healthLink(steps, healthAllowed),
-                // A failure that lies with the phone is marked on the phone, not on either link.
-                phoneFault = steps.any { it.state == StepState.FAILED && it.onPhone && it.id != CheckSteps.HEALTH },
-            )
-        }
+        // The picture comes first: it says what the app does and how far it has got.
+        FlowDiagram(homeLinks(pairing, steps, checkRunning, syncEnabled, sync, healthAllowed))
         Spacer(Modifier.height(28.dp))
         MachineLine(pairing)
 
@@ -572,9 +558,9 @@ fun CheckScreen(
     busy: Boolean,
     syncEnabled: Boolean,
     syncRunning: Boolean,
+    healthAllowed: Boolean,
     permissionRefused: Boolean,
-    onRunFull: () -> Unit,
-    onRunReconnect: () -> Unit,
+    onRun: () -> Unit,
     onStop: () -> Unit,
     onSync: () -> Unit,
     onExport: () -> Unit,
@@ -586,6 +572,10 @@ fun CheckScreen(
     val paired = pairing is PairingState.Paired
     val passed = !running && steps.lastOrNull()?.state == StepState.PASSED && steps.none { it.state == StepState.FAILED || it.state == StepState.CANCELLED }
     Page(title = stringResource(R.string.action_device_check), onBack = onBack) {
+        // The same picture as on the home screen, driven by the steps: its lines fill in as the check
+        // reaches each part, so the first pairing can be followed without reading the list.
+        FlowDiagram(checkLinks(steps, pairing, running, healthAllowed))
+        Spacer(Modifier.height(28.dp))
         MachineLine(pairing)
         // Why nothing here can be started just now.
         if (syncRunning) Secondary(stringResource(R.string.sync_running), Modifier.padding(top = 4.dp))
@@ -603,12 +593,10 @@ fun CheckScreen(
                 val next = passed && paired && syncEnabled
                 if (next) {
                     Button(onClick = onSync, enabled = free) { Text(stringResource(R.string.action_sync)) }
-                    OutlinedButton(onClick = onRunFull, enabled = free) { Text(stringResource(R.string.action_run_check)) }
+                    OutlinedButton(onClick = onRun, enabled = free) { Text(stringResource(R.string.action_run_check)) }
                 } else {
-                    Button(onClick = onRunFull, enabled = free) { Text(stringResource(R.string.action_run_check)) }
-                }
-                if (paired) {
-                    OutlinedButton(onClick = onRunReconnect, enabled = free) { Text(stringResource(R.string.action_reconnect_check)) }
+                    // One check for every case: with a machine already paired it skips pairing by itself.
+                    Button(onClick = onRun, enabled = free) { Text(stringResource(R.string.action_run_check)) }
                 }
             }
         }
@@ -621,8 +609,7 @@ fun CheckScreen(
         }
 
         // Nothing is listed until a check has been started: an untouched list is only noise.
-        val started = running || steps.any { it.state != StepState.PENDING }
-        if (started) {
+        if (checkStarted(steps, running)) {
             Spacer(Modifier.height(32.dp))
             Text(
                 verdict(steps, running),
@@ -660,63 +647,6 @@ fun CheckScreen(
         }
     }
 }
-
-/** How the two legs of the picture stand after a synchronisation, or during one. */
-private class SyncLinks(val machine: LinkState, val health: LinkState, val phoneFault: Boolean)
-
-private fun syncLinks(sync: SyncStatus, healthAllowed: Boolean): SyncLinks {
-    val idleHealth = if (healthAllowed) LinkState.READY else LinkState.NONE
-    if (sync.running) return SyncLinks(LinkState.ACTIVE, idleHealth, phoneFault = false)
-    if (sync.storeUnreadable) return SyncLinks(LinkState.READY, idleHealth, phoneFault = true)
-    return when (sync.lastReport?.outcome) {
-        // The Health Connect leg is ticked only when something is switched on to go there and is allowed to.
-        SyncOutcome.COMPLETE -> SyncLinks(LinkState.OK, if (healthAllowed) LinkState.OK else LinkState.NONE, phoneFault = false)
-        // Under way, with nothing wrong: no ticks until everything is across. And out of range is
-        // the ordinary state of a phone that is not at home.
-        SyncOutcome.PARTIAL, SyncOutcome.MACHINE_AWAY, null -> SyncLinks(LinkState.READY, idleHealth, phoneFault = false)
-        SyncOutcome.BLUETOOTH_OFF, SyncOutcome.BLUETOOTH_NOT_ALLOWED, SyncOutcome.PHONE_CLOCK_WRONG, SyncOutcome.INTERNAL,
-        -> SyncLinks(LinkState.READY, idleHealth, phoneFault = true)
-        SyncOutcome.HEALTH_CONNECT_NOT_ALLOWED -> SyncLinks(LinkState.READY, LinkState.NONE, phoneFault = false)
-        SyncOutcome.HEALTH_CONNECT_UNAVAILABLE, SyncOutcome.HEALTH_CONNECT_FAILED -> SyncLinks(LinkState.READY, LinkState.FAILED, phoneFault = false)
-        // Shown only with a machine paired, so this is the leftover of a run made while there was none.
-        SyncOutcome.NOT_PAIRED -> SyncLinks(LinkState.READY, idleHealth, phoneFault = false)
-        SyncOutcome.PAIRING_REJECTED, SyncOutcome.WRONG_MACHINE, SyncOutcome.SOFTWARE_NOT_CONFIRMED, SyncOutcome.CLOCK_UNRELIABLE,
-        SyncOutcome.CLOCK_CHANGED, SyncOutcome.CONNECTION_LOST, SyncOutcome.DATA_NOT_UNDERSTOOD,
-        -> SyncLinks(LinkState.FAILED, idleHealth, phoneFault = false)
-    }
-}
-
-/**
- * The machine-to-phone leg, from the steps that travel along it.
- *
- * A failure that lies with the phone itself (its storage, Bluetooth being off)
- * is not drawn as a broken link to the machine: the machine was never the
- * problem. A tick needs both a passed check and a pairing that still exists.
- */
-private fun machineLink(steps: List<Step>, pairing: PairingState, running: Boolean): LinkState {
-    val leg = steps.filter { it.id != CheckSteps.HEALTH }
-    val healthDone = steps.firstOrNull { it.id == CheckSteps.HEALTH }?.state.let { it != StepState.PENDING && it != StepState.RUNNING }
-    val machineFailed = leg.any { it.state == StepState.FAILED && !it.onPhone }
-    val paired = pairing is PairingState.Paired
-    return when {
-        leg.any { it.state == StepState.RUNNING } -> LinkState.ACTIVE
-        // Between two steps of a run, such as the pause after pairing.
-        running && healthDone && !machineFailed && leg.any { it.state == StepState.PENDING } -> LinkState.ACTIVE
-        machineFailed -> LinkState.FAILED
-        paired && leg.lastOrNull()?.state == StepState.PASSED -> LinkState.OK
-        paired -> LinkState.READY
-        else -> LinkState.NONE
-    }
-}
-
-/** The phone-to-Health-Connect leg. */
-private fun healthLink(steps: List<Step>, allowed: Boolean): LinkState =
-    when (steps.firstOrNull { it.id == CheckSteps.HEALTH }?.state) {
-        StepState.RUNNING -> LinkState.ACTIVE
-        StepState.PASSED -> LinkState.OK
-        StepState.FAILED -> LinkState.FAILED
-        else -> if (allowed) LinkState.READY else LinkState.NONE
-    }
 
 /** One line that says how the whole check went. Shown only once a check has started. */
 @Composable

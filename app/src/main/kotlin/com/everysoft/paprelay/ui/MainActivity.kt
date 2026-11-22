@@ -158,8 +158,7 @@ private fun Root(app: PapRelayApp) {
     fun proceed() {
         askingPermission = false
         when (pending) {
-            PENDING_CHECK -> check.start(true)
-            PENDING_RECONNECT -> check.start(false)
+            PENDING_CHECK -> check.start()
             // A choice is switched on only once Health Connect allows what it needs: one that is on
             // and cannot write would only stand there saying so. Switching it on stores it and starts a run.
             PENDING_RECORDS -> if (app.healthRecords.allowed) app.sync.setHealthRecords(true) else refusedChoice = PENDING_RECORDS
@@ -296,9 +295,9 @@ private fun Root(app: PapRelayApp) {
             busy = forgetting,
             syncEnabled = app.sync.enabled,
             syncRunning = sync.running,
+            healthAllowed = healthAllowed,
             permissionRefused = permissionRefused,
-            onRunFull = { request(PENDING_CHECK) },
-            onRunReconnect = { request(PENDING_RECONNECT) },
+            onRun = { request(PENDING_CHECK) },
             onStop = { check.cancel() },
             onSync = {
                 page = PAGE_HOME
@@ -414,6 +413,5 @@ private const val PAGE_CHOICES = "choices"
 
 private const val PENDING_SYNC = "sync"
 private const val PENDING_CHECK = "check"
-private const val PENDING_RECONNECT = "reconnect"
 private const val PENDING_RECORDS = "records"
 private const val PENDING_RESPIRATORY = "respiratory"

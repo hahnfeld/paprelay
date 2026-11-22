@@ -172,14 +172,12 @@ class DeviceCheck(
 
     /**
      * Starts a run; ignored if one is in progress. It outlives the screen that
-     * started it and stops on its own after [OVERALL_LIMIT_MS] at most.
-     *
-     * @param full false to skip scanning and pairing and only prove that the
-     *   stored pairing still opens a session (used after toggling Bluetooth or
-     *   rebooting, to learn whether the machine still recognises the phone).
+     * started it and stops on its own after [OVERALL_LIMIT_MS] at most. With a
+     * machine already paired it looks for that machine and connects to it,
+     * without pairing again.
      */
     @Synchronized
-    fun start(full: Boolean) {
+    fun start() {
         // A cancelled run is still unwinding until it completes; wait for that. And a run
         // must not begin on a pairing that is in the middle of being forgotten.
         if (job?.isCompleted == false || _forgetting.value) return
@@ -196,9 +194,9 @@ class DeviceCheck(
                     report.setLength(0)
                     report.appendLine("PAPRelay device check  ${Instant.now()}")
                     report.appendLine("app ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) ${BuildConfig.GIT_COMMIT}  android ${Build.VERSION.RELEASE} sdk ${Build.VERSION.SDK_INT}")
-                    report.appendLine("phone ${Build.MANUFACTURER} ${Build.MODEL}  mode ${if (full) "full" else "reconnect"}")
+                    report.appendLine("phone ${Build.MANUFACTURER} ${Build.MODEL}")
                 }
-                val finished = withTimeoutOrNull(OVERALL_LIMIT_MS) { execute(full) }
+                val finished = withTimeoutOrNull(OVERALL_LIMIT_MS) { execute() }
                 if (finished == null) closeOpenSteps(StepState.FAILED, Message(R.string.detail_took_too_long))
             } catch (e: CancellationException) {
                 closeOpenSteps(StepState.CANCELLED, Message(R.string.detail_stopped))
@@ -264,7 +262,7 @@ class DeviceCheck(
         }
     }
 
-    private suspend fun execute(full: Boolean) {
+    private suspend fun execute() {
         step(HEALTH) {
             // Two things can be written: each night's figures as health records, where the phone keeps
             // them, and respiratory rate. What is switched on is proved; what is switched off is left alone.
@@ -330,7 +328,7 @@ class DeviceCheck(
             skipAll(listOf(SESSION, IDENTITY, CLOCK, DOWNLOAD), Message(R.string.detail_pairing_state_unknown))
             return
         }
-        if (full && state !is PairingState.Paired) {
+        if (state !is PairingState.Paired) {
             // Prove a pairing can be stored before the user is asked anything or one is spent on the machine.
             try {
                 store.selfTest()
@@ -343,104 +341,98 @@ class DeviceCheck(
             }
         }
 
+        // The machine heard in the scan, if it was; with a machine already paired, null when it was not heard.
         var target: BluetoothDevice? = null
-        // True once a full check has scanned for an already-paired machine; `target` then says whether it was seen.
-        var scannedForPaired = false
         // False if every attempt to scan for the paired machine was refused, so that nothing is known about it.
         var looked = true
-        if (full) {
-            val alreadyPaired = (state as? PairingState.Paired)?.pairing
-            val scanned = step(SCAN) {
-                if (!scanner.bluetoothEnabled) throw CheckFailure(Message(R.string.detail_bluetooth_off), onPhone = true)
-                // For a paired machine the scan ends the moment its address is heard, and whatever it
-                // sends is recorded: once paired, a machine need not announce itself the way it
-                // does while it waits to be paired.
-                val heard = try {
-                    scanner.scan(
-                        if (alreadyPaired != null) PAIRED_SCAN_MS else SCAN_MS,
-                        platformFilter = false,
-                        stopAtAddress = alreadyPaired?.address,
-                    )
-                } catch (e: As11TransportException) {
-                    // Without a pairing there is nothing to do but report it. With one, a scan that
-                    // could not run (Android refuses too many in a short time) is only a missed
-                    // look: the connection that follows needs no scan. Bluetooth being off is not that.
-                    if (alreadyPaired == null || phoneBluetoothOff(e)) throw e
-                    note("  scan could not run: ${code(e)}")
-                    null
-                }
-                val mainScanRan = heard != null
-                val found = heard.orEmpty()
-                found.take(MAX_LISTED).forEachIndexed { index, sighting -> note("  machine ${index + 1}: ${describe(sighting)}") }
-                if (found.size > MAX_LISTED) note("  and ${found.size - MAX_LISTED} more, not listed")
-                // Whether the system's own scan filters can see this machine decides how background
-                // discovery has to work: by service while unpaired, by address once paired.
-                // Recorded in the report only.
-                val filtered = try {
-                    if (alreadyPaired != null) {
-                        scanner.scan(FILTER_SCAN_MS, platformFilter = false, stopAtAddress = alreadyPaired.address, addressFilter = true)
-                    } else {
-                        scanner.scan(FILTER_SCAN_MS, platformFilter = true)
-                    }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    if (phoneBluetoothOff(e)) throw e
-                    null
-                }
-                note("  system ${if (alreadyPaired != null) "address" else "service"} filter: ${filtered?.let { "saw ${it.size} machine(s)" } ?: "could not run"}")
-
+        val alreadyPaired = (state as? PairingState.Paired)?.pairing
+        val scanned = step(SCAN) {
+            if (!scanner.bluetoothEnabled) throw CheckFailure(Message(R.string.detail_bluetooth_off), onPhone = true)
+            // For a paired machine the scan ends the moment its address is heard, and whatever it
+            // sends is recorded: once paired, a machine need not announce itself the way it
+            // does while it waits to be paired.
+            val heard = try {
+                scanner.scan(
+                    if (alreadyPaired != null) PAIRED_SCAN_MS else SCAN_MS,
+                    platformFilter = false,
+                    stopAtAddress = alreadyPaired?.address,
+                )
+            } catch (e: As11TransportException) {
+                // Without a pairing there is nothing to do but report it. With one, a scan that
+                // could not run (Android refuses too many in a short time) is only a missed
+                // look: the connection that follows needs no scan. Bluetooth being off is not that.
+                if (alreadyPaired == null || phoneBluetoothOff(e)) throw e
+                note("  scan could not run: ${code(e)}")
+                null
+            }
+            val mainScanRan = heard != null
+            val found = heard.orEmpty()
+            found.take(MAX_LISTED).forEachIndexed { index, sighting -> note("  machine ${index + 1}: ${describe(sighting)}") }
+            if (found.size > MAX_LISTED) note("  and ${found.size - MAX_LISTED} more, not listed")
+            // Whether the system's own scan filters can see this machine decides how background
+            // discovery has to work: by service while unpaired, by address once paired.
+            // Recorded in the report only.
+            val filtered = try {
                 if (alreadyPaired != null) {
-                    // Nothing to choose: the question is only whether the paired machine is there.
-                    scannedForPaired = true
-                    val inScan = found.indexOfFirst { it.device.address.equals(alreadyPaired.address, ignoreCase = true) }
-                    // Heard by either scan is heard; the filtered one's sighting is as good as the other's.
-                    val mine = found.getOrNull(inScan)
-                        ?: filtered?.firstOrNull { it.device.address.equals(alreadyPaired.address, ignoreCase = true) }
-                            ?.also { note("  paired machine, by the address filter only: ${describe(it)}") }
-                    if (mine == null) {
-                        // Not a failure: a paired machine has been seen to accept a direct connection
-                        // while no scan could hear it. The next step finds out.
-                        // The filtered scan alone is too short a look to conclude the machine is away.
-                        looked = mainScanRan
-                        note(
-                            if (mainScanRan) {
-                                "  paired machine not heard in a scan; ${found.size} other AirSense-like device(s) in range"
-                            } else {
-                                "  paired machine not heard; the scan could not run, so nothing is known about what is in range"
-                            },
-                        )
-                        throw Observation(Message(R.string.detail_paired_not_seen))
-                    }
-                    // In a building with several machines the report must say which line is this one.
-                    note("  paired machine heard${if (inScan in 0 until MAX_LISTED) " (machine ${inScan + 1} above)" else ""}: looks like a machine=${mine.advertisement.looksLikeAirSense}")
-                    // Beyond the lines listed above, it has not been described yet.
-                    if (inScan >= MAX_LISTED) note("  paired machine: ${describe(mine)}")
-                    target = mine.device
-                    Message(R.string.detail_paired_found, signal(mine.rssi))
+                    scanner.scan(FILTER_SCAN_MS, platformFilter = false, stopAtAddress = alreadyPaired.address, addressFilter = true)
                 } else {
-                    target = when (found.size) {
-                        0 -> throw CheckFailure(Message(R.string.detail_none_found))
-                        1 -> found[0].device
-                        else -> found[choose(found)].device
-                    }
-                    if (found.size == 1) {
-                        Message(R.string.detail_one_found, signal(found[0].rssi))
-                    } else {
-                        Message(R.string.detail_many_found)
-                    }
+                    scanner.scan(FILTER_SCAN_MS, platformFilter = true)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (phoneBluetoothOff(e)) throw e
+                null
+            }
+            note("  system ${if (alreadyPaired != null) "address" else "service"} filter: ${filtered?.let { "saw ${it.size} machine(s)" } ?: "could not run"}")
+
+            if (alreadyPaired != null) {
+                // Nothing to choose: the question is only whether the paired machine is there.
+                val inScan = found.indexOfFirst { it.device.address.equals(alreadyPaired.address, ignoreCase = true) }
+                // Heard by either scan is heard; the filtered one's sighting is as good as the other's.
+                val mine = found.getOrNull(inScan)
+                    ?: filtered?.firstOrNull { it.device.address.equals(alreadyPaired.address, ignoreCase = true) }
+                        ?.also { note("  paired machine, by the address filter only: ${describe(it)}") }
+                if (mine == null) {
+                    // Not a failure: a paired machine has been seen to accept a direct connection
+                    // while no scan could hear it. The next step finds out.
+                    // The filtered scan alone is too short a look to conclude the machine is away.
+                    looked = mainScanRan
+                    note(
+                        if (mainScanRan) {
+                            "  paired machine not heard in a scan; ${found.size} other AirSense-like device(s) in range"
+                        } else {
+                            "  paired machine not heard; the scan could not run, so nothing is known about what is in range"
+                        },
+                    )
+                    throw Observation(Message(R.string.detail_paired_not_seen))
+                }
+                // In a building with several machines the report must say which line is this one.
+                note("  paired machine heard${if (inScan in 0 until MAX_LISTED) " (machine ${inScan + 1} above)" else ""}: looks like a machine=${mine.advertisement.looksLikeAirSense}")
+                // Beyond the lines listed above, it has not been described yet.
+                if (inScan >= MAX_LISTED) note("  paired machine: ${describe(mine)}")
+                target = mine.device
+                Message(R.string.detail_paired_found, signal(mine.rssi))
+            } else {
+                target = when (found.size) {
+                    0 -> throw CheckFailure(Message(R.string.detail_none_found))
+                    1 -> found[0].device
+                    else -> found[choose(found)].device
+                }
+                if (found.size == 1) {
+                    Message(R.string.detail_one_found, signal(found[0].rssi))
+                } else {
+                    Message(R.string.detail_many_found)
                 }
             }
-            if (!scanned) {
-                // One cause, one failure: nothing after this could succeed, so nothing is attempted.
-                skipAll(listOf(PAIR, SESSION, IDENTITY, CLOCK, DOWNLOAD), Message(R.string.detail_not_attempted))
-                return
-            }
-        } else {
-            skip(SCAN, Message(R.string.detail_not_in_reconnect))
+        }
+        if (!scanned) {
+            // One cause, one failure: nothing after this could succeed, so nothing is attempted.
+            skipAll(listOf(PAIR, SESSION, IDENTITY, CLOCK, DOWNLOAD), Message(R.string.detail_not_attempted))
+            return
         }
 
-        if (full && state !is PairingState.Paired) {
+        if (state !is PairingState.Paired) {
             val machine = target
             if (machine == null) {
                 skipAll(listOf(PAIR, SESSION, IDENTITY, CLOCK, DOWNLOAD), Message(R.string.detail_not_attempted))
@@ -468,7 +460,7 @@ class DeviceCheck(
             // The machine needs a few seconds before it will accept a new connection.
             if (state is PairingState.Paired) delay(RECONNECT_PAUSE_MS)
         } else {
-            skip(PAIR, Message(if (state is PairingState.Paired) R.string.detail_already_paired else R.string.detail_not_in_reconnect))
+            skip(PAIR, Message(R.string.detail_already_paired))
         }
 
         val paired = (state as? PairingState.Paired)?.pairing
@@ -482,22 +474,9 @@ class DeviceCheck(
         var client: As11Client? = null
         try {
             step(SESSION) {
-                // Prefer a device seen advertising: it carries the right address type. A full
-                // check has just scanned, so that answer is used rather than asking again.
-                val seen: BluetoothDevice? = when {
-                    target != null -> target
-                    scannedForPaired -> null
-                    else -> try {
-                        scanner.scan(SCAN_MS, platformFilter = false, stopAtAddress = paired.address)
-                            .firstOrNull { it.device.address.equals(paired.address, ignoreCase = true) }?.device
-                    } catch (e: As11TransportException) {
-                        // A scan that could not run is a missed look; the connection needs none.
-                        if (phoneBluetoothOff(e)) throw e
-                        note("  scan could not run: ${code(e)}")
-                        looked = false
-                        null
-                    }
-                }
+                // Prefer a device seen advertising: it carries the right address type. The check
+                // has just scanned, so that answer is used rather than asking again.
+                val seen: BluetoothDevice? = target
                 note(
                     "  paired machine " + when {
                         seen != null -> "seen advertising"
